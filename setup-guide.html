@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>800M TRAINING — セットアップ手順</title>
+<style>
+  :root{
+    --bg:#050507;--surface:#0c0d10;--surface-2:#131519;--border:#1f2126;--border-2:#2b2e34;
+    --volt:#a0d601;--volt-ink:#060700;--amber:#edc604;
+    --text:#fff;--text-2:#8b8d92;--text-3:#5a5c61;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;
+    font-family:"Helvetica Neue",-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP","Yu Gothic UI",sans-serif;
+    line-height:1.75;padding:28px 18px 64px;
+  }
+  .wrap{max-width:720px;margin:0 auto}
+  header{display:flex;flex-direction:column;gap:2px;margin-bottom:26px}
+  header b{font-size:24px;font-weight:900;letter-spacing:-.02em;line-height:1}
+  header span{font-size:9px;letter-spacing:.42em;color:var(--text-2);font-weight:700}
+  header svg{width:38px;height:12px;margin-top:8px}
+  h1{font-size:19px;font-weight:800;margin:30px 0 10px;letter-spacing:-.01em}
+  h2{font-size:14px;font-weight:700;margin:22px 0 8px;color:var(--volt)}
+  p{font-size:14px;color:var(--text-2);margin-bottom:10px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:14px}
+  ol{margin:0 0 4px 20px;font-size:14px}
+  ol>li{margin-bottom:14px}
+  ul{margin:6px 0 6px 20px;font-size:13.5px;color:var(--text-2)}
+  ul li{margin-bottom:4px}
+  code{
+    background:var(--surface-2);border:1px solid var(--border-2);border-radius:5px;
+    padding:2px 6px;font-size:12.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--volt)
+  }
+  a{color:var(--volt)}
+  .files{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+  .files span{
+    font-family:ui-monospace,monospace;font-size:11.5px;background:var(--surface-2);
+    border:1px solid var(--border-2);border-radius:6px;padding:3px 8px;color:var(--text-2)
+  }
+  .note{border-left:3px solid var(--amber);padding-left:12px;margin:14px 0;font-size:13.5px;color:var(--text-2)}
+  .step-order{counter-reset:s;list-style:none;margin-left:0}
+  .step-order li{counter-increment:s;position:relative;padding-left:34px;margin-bottom:12px;font-size:14px}
+  .step-order li:before{
+    content:counter(s);position:absolute;left:0;top:1px;width:22px;height:22px;border-radius:50%;
+    background:var(--volt);color:var(--volt-ink);font-size:12px;font-weight:800;
+    display:flex;align-items:center;justify-content:center
+  }
+  .step-order b{color:var(--text)}
+  footer{margin-top:34px;font-size:11.5px;color:var(--text-3);border-top:1px solid var(--border);padding-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <b>800M</b><span>TRAINING</span>
+    <svg viewBox="0 0 34 11"><path d="M0 9.4C7.4 9.4 13 7.2 20.4 1.2c2-1.6 3.4-.4 1.8 1.4C17 8.4 10.6 11 3 11z" fill="var(--volt)"/></svg>
+  </header>
+
+  <h1>iPhone で使えるようにする手順</h1>
+  <p>
+    このフォルダの中身を無料のWebサーバーに置くだけで使えます。プログラミングの知識は不要で、
+    ファイルをドラッグ＆ドロップするだけです。いちばん簡単な GitHub Pages（無料）で説明します。
+  </p>
+
+  <div class="card">
+    <h2>手順1 — PCでの公開作業（最初の1回だけ・5〜10分）</h2>
+    <ol>
+      <li>
+        <a href="https://github.com" target="_blank" rel="noopener">github.com</a> で無料アカウントを作る（お持ちなら不要）
+      </li>
+      <li>
+        右上の <code>+</code> → <code>New repository</code><br>
+        Repository name は <code>train800</code>（名前は何でもOK）／ <b>Public</b> を選択 →
+        <code>Create repository</code>
+      </li>
+      <li>
+        作成後の画面にある <code>uploading an existing file</code> をクリックし、
+        このフォルダの中身を<b>全部</b>ドラッグ＆ドロップ →
+        <code>Commit changes</code> を押す
+        <div class="files">
+          <span>index.html</span><span>bundle.js</span><span>styles.css</span><span>sw.js</span>
+          <span>manifest.webmanifest</span><span>icon-180.png</span><span>icon-192.png</span><span>icon-512.png</span>
+        </div>
+      </li>
+      <li>
+        リポジトリの <code>Settings</code> → 左メニューの <code>Pages</code> →
+        Branch を <code>main</code> / <code>(root)</code> にして <code>Save</code>
+      </li>
+      <li>
+        1〜2分待つとURLが表示されます<br>
+        例）<code>https://あなたのID.github.io/train800/</code>
+      </li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>手順2 — iPhoneでの設定</h2>
+    <ol>
+      <li>上のURLを <b>Safari</b> で開く</li>
+      <li>画面下の共有ボタン（□に↑）→ <b>「ホーム画面に追加」</b></li>
+      <li>
+        ホーム画面のアイコンから起動する<br>
+        以後はアプリと同じ感覚で使えます。一度開けば<b>オフラインでも動作</b>します。
+      </li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>使い始めの順番</h2>
+    <ul class="step-order">
+      <li><b>プロフィール</b> — PB（1:49.51 / 49.0 / 3:56）と暑熱耐性 low を入力</li>
+      <li><b>目標・レース</b> — 目標 1:48.90 と本命レースの日程・ラウンド構成を入力</li>
+      <li><b>記録</b> — 「有酸素の実測データ」にペース走を1本入力（例: 8km / 30:40 / 平均HR 186）。
+        これを入れるまで有酸素の設定は「推定値」のままです</li>
+      <li><b>目標・レース</b> — 「プランを自動生成」を押す</li>
+      <li><b>カレンダー</b> — チーム練習など動かせない日を「固定セッション」で登録</li>
+    </ul>
+    <p style="margin-top:12px">
+      毎日の運用は、朝に安静時HR・睡眠・張り・疲労を記録（30秒）、練習後にRPE・達成度・ラップを記録（1分）。
+      これだけでCFEが更新され、以降のメニューのペースが自動で組み変わります。
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>データの保管について</h2>
+    <div class="note">
+      データはあなたのiPhoneの中だけに保存されます（外部への送信は一切ありません）。
+      その代わり、<b>機種変更やSafariのデータ消去で消えます</b>。
+      アプリ内の「データ管理」→「バックアップをダウンロード」を定期的に実行してください。
+      同じ画面からバックアップの復元もできます。
+    </div>
+  </div>
+
+  <footer>
+    800M TRAINING（PWA版）／ このファイルは手順の説明用です。アプリの動作には不要なので、
+    アップロードしてもしなくても構いません。
+  </footer>
+
+</div>
+</body>
+</html>
