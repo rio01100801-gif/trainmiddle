@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>800M TRAINING — デザイン仕様（PC / スマホ）</title>
+<style>
+:root{
+  --bg:#050507;
+  --surface:#0c0d10;
+  --surface-2:#131519;
+  --border:#1f2126;
+  --border-2:#2b2e34;
+  --volt:#a0d601;
+  --volt-ink:#060700;
+  --volt-dim:rgba(160,214,1,.12);
+  --amber:#edc604;
+  --red:#f2564d;
+  --text:#ffffff;
+  --text-2:#8b8d92;
+  --text-3:#5a5c61;
+  --r:14px;
+  --font:"Helvetica Neue",-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP","Yu Gothic UI",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:#000;color:var(--text);font-family:var(--font);
+  -webkit-font-smoothing:antialiased;padding:28px;
+}
+.num{font-variant-numeric:tabular-nums;letter-spacing:-.03em}
+.stage{display:flex;gap:28px;align-items:flex-start;justify-content:center;flex-wrap:wrap}
+.caption{font-size:11px;color:var(--text-3);letter-spacing:.14em;margin-bottom:8px;text-transform:uppercase}
+
+/* ---------- shared atoms ---------- */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px}
+.card-t{font-size:11.5px;color:var(--text-2);letter-spacing:.02em;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.hero{font-size:44px;font-weight:800;line-height:1}
+.unit{font-size:14px;font-weight:600;color:var(--text-2);margin-left:4px}
+.sub{font-size:11.5px;color:var(--text-3);margin-top:6px;line-height:1.5}
+.volt{color:var(--volt)}
+.amber{color:var(--amber)}
+.red{color:var(--red)}
+.chip{
+  display:inline-flex;align-items:center;gap:5px;font-size:9.5px;font-weight:700;
+  letter-spacing:.1em;padding:3px 8px;border-radius:5px;
+  background:var(--volt-dim);color:var(--volt);border:1px solid rgba(160,214,1,.28)
+}
+.btn{
+  display:flex;align-items:center;justify-content:space-between;width:100%;
+  background:var(--volt);color:var(--volt-ink);border:0;border-radius:9px;
+  padding:11px 14px;font-size:13px;font-weight:800;cursor:pointer;font-family:var(--font)
+}
+.link{font-size:11.5px;color:var(--text-2);border-top:1px solid var(--border);padding-top:9px;margin-top:11px;display:flex;justify-content:space-between}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+.delta{font-size:12px;font-weight:700}
+
+/* ---------- PC ---------- */
+.pc{width:1150px;background:var(--bg);border:1px solid var(--border);border-radius:16px;overflow:hidden;display:flex;min-height:900px}
+.side{width:176px;background:#010102;border-right:1px solid var(--border);padding:18px 12px;display:flex;flex-direction:column;flex-shrink:0}
+.logo{display:flex;flex-direction:column;gap:2px;padding:0 6px 22px}
+.logo b{font-size:19px;font-weight:900;letter-spacing:-.02em;line-height:1}
+.logo span{font-size:8.5px;letter-spacing:.42em;color:var(--text-2);font-weight:700}
+.mark{width:34px;height:11px;margin-top:7px}
+.nav a{
+  display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:9px;
+  font-size:12.5px;color:var(--text-2);text-decoration:none;margin-bottom:2px;font-weight:600
+}
+.nav a.on{background:var(--surface-2);color:var(--text)}
+.nav a.on svg{stroke:var(--volt)}
+.nav svg{width:15px;height:15px;stroke:var(--text-3);fill:none;stroke-width:1.9}
+.prof{margin-top:auto;border-top:1px solid var(--border);padding-top:14px}
+.prof .row{display:flex;align-items:center;gap:8px}
+.av{width:26px;height:26px;border-radius:50%;background:var(--surface-2);border:1px solid var(--border-2)}
+.prof .nm{font-size:12px;font-weight:700}
+.prof .kv{font-size:10.5px;color:var(--text-3);margin-top:7px;line-height:1.7}
+.prof .kv b{color:var(--text-2);font-weight:600}
+.ghost{
+  display:block;width:100%;margin-top:11px;background:transparent;border:1px solid var(--border-2);
+  color:var(--text-2);border-radius:8px;padding:7px;font-size:11px;font-weight:700;font-family:var(--font);cursor:pointer
+}
+.main{flex:1;padding:20px 22px;display:flex;flex-direction:column;gap:13px;min-width:0}
+.top{display:flex;align-items:center;gap:16px}
+.top h1{font-size:23px;font-weight:800;letter-spacing:-.01em}
+.top .date{font-size:12.5px;font-weight:600}
+.top .date small{display:block;font-size:10.5px;color:var(--text-3);font-weight:400;margin-top:2px}
+.sel{
+  margin-left:auto;background:var(--surface);border:1px solid var(--border);border-radius:9px;
+  padding:8px 12px;font-size:11.5px;min-width:180px;display:flex;justify-content:space-between;align-items:center
+}
+.sel small{display:block;color:var(--text-3);font-size:10px;margin-bottom:2px}
+.bell{position:relative;width:34px;height:34px;border:1px solid var(--border);border-radius:9px;display:flex;align-items:center;justify-content:center}
+.badge{
+  position:absolute;top:-5px;right:-5px;background:var(--volt);color:var(--volt-ink);
+  font-size:9px;font-weight:900;width:15px;height:15px;border-radius:50%;display:flex;align-items:center;justify-content:center
+}
+.g3{display:grid;grid-template-columns:1.55fr 1fr 1fr;gap:13px}
+.g2{display:grid;grid-template-columns:2.35fr 1fr;gap:13px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:13px}
+.menu-card{display:flex;gap:18px;align-items:center}
+.menu-l{flex:1;min-width:0}
+.spec{display:flex;gap:22px;margin-top:12px;flex-wrap:wrap}
+.spec div{font-size:10.5px;color:var(--text-3)}
+.spec b{display:block;font-size:12.5px;color:var(--text);font-weight:700;margin-top:3px}
+.gauge{text-align:center;flex-shrink:0;width:150px}
+.gauge .lbl{font-size:10.5px;color:var(--text-2);margin-bottom:6px}
+.wk{display:grid;grid-template-columns:repeat(7,1fr);gap:7px}
+.day{border:1px solid var(--border);border-radius:11px;padding:11px 6px;text-align:center;background:var(--surface-2)}
+.day.today{border-color:var(--volt);background:rgba(160,214,1,.06)}
+.day .d{font-size:10.5px;color:var(--text-3);margin-bottom:9px}
+.day.today .d{color:var(--volt);font-weight:700}
+.ring{
+  width:34px;height:34px;border-radius:50%;border:1.6px solid var(--border-2);
+  display:flex;align-items:center;justify-content:center;margin:0 auto 8px;
+  font-size:12.5px;font-weight:800;color:var(--text-2)
+}
+.ring.q{border-color:var(--text-2);color:var(--text)}
+.ring.hi{background:var(--volt);border-color:var(--volt);color:var(--volt-ink)}
+.ring.off{border-style:dashed;font-size:9.5px;color:var(--text-3)}
+.day .cat{font-size:9.5px;color:var(--text-3);margin-bottom:3px}
+.day .w{font-size:10.5px;font-weight:600}
+.warnlist{list-style:none;font-size:11.5px;color:var(--text-2);line-height:1.9;margin-top:4px}
+.warnlist li{padding-left:11px;position:relative;overflow-wrap:anywhere;line-height:1.65;margin-bottom:5px}
+.warnlist li:before{content:"";position:absolute;left:0;top:8px;width:3px;height:3px;border-radius:50%;background:var(--amber)}
+.bars{display:flex;gap:2.5px;margin-top:8px}
+.bars i{height:5px;flex:1;border-radius:2px;background:var(--border-2)}
+.bars i.f{background:var(--volt)}
+.foot{display:flex;justify-content:space-between;font-size:10px;color:var(--text-3);padding-top:6px}
+
+/* ---------- MOBILE ---------- */
+.phone{
+  width:392px;background:var(--bg);border:9px solid #17181b;border-radius:44px;
+  padding:0;overflow:hidden;box-shadow:0 0 0 1px #2b2e34
+}
+.status{display:flex;justify-content:space-between;align-items:center;padding:11px 22px 5px;font-size:12.5px;font-weight:700}
+.mhead{display:flex;align-items:center;padding:8px 16px 12px;gap:12px;border-bottom:1px solid var(--border)}
+.mhead .ml{display:flex;flex-direction:column;align-items:center;flex:1}
+.mhead .ml b{font-size:15px;font-weight:900;letter-spacing:-.02em;line-height:1}
+.mhead .ml span{font-size:6.5px;letter-spacing:.4em;color:var(--text-2);font-weight:700}
+.mbody{padding:13px 14px 12px;display:flex;flex-direction:column;gap:11px;min-height:668px}
+.m2{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+.mwk{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;text-align:center}
+.mwk .d{font-size:9px;color:var(--text-3);line-height:1.5;margin-bottom:6px}
+.mwk .today .d{color:var(--volt);font-weight:700}
+.mring{width:27px;height:27px;border-radius:50%;border:1.5px solid var(--border-2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:var(--text-2);margin:0 auto}
+.mring.q{border-color:var(--text-2);color:var(--text)}
+.mring.hi{background:var(--volt);border-color:var(--volt);color:var(--volt-ink)}
+.mring.off{border-style:dashed;font-size:8px;color:var(--text-3)}
+.row-btn{display:flex;align-items:center;justify-content:space-between;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:13px 15px}
+.tabs{display:flex;border-top:1px solid var(--border);background:#010102;padding:9px 0 18px}
+.tab{flex:1;text-align:center;font-size:9.5px;color:var(--text-3);font-weight:600}
+.tab.on{color:var(--volt)}
+.tab svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.9;display:block;margin:0 auto 3px}
+</style>
+</head>
+<body>
+
+<div class="stage">
+
+  <!-- ===================== PC ===================== -->
+  <div>
+  <div class="caption">PC / デスクトップ（1150px〜）</div>
+  <div class="pc">
+    <aside class="side">
+      <div class="logo">
+        <b>800M</b>
+        <span>TRAINING</span>
+        <!-- 独自マーク（トラックのバンクをモチーフ） -->
+        <svg class="mark" viewBox="0 0 34 11"><path d="M0 9.4C7.4 9.4 13 7.2 20.4 1.2c2-1.6 3.4-.4 1.8 1.4C17 8.4 10.6 11 3 11z" fill="var(--volt)"/></svg>
+      </div>
+      <nav class="nav">
+        <a class="on" href="#"><svg viewBox="0 0 24 24"><path d="M3 10l9-7 9 7v10a1 1 0 01-1 1h-5v-7H9v7H4a1 1 0 01-1-1z"/></svg>ホーム</a>
+        <a href="#"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>カレンダー</a>
+        <a href="#"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>分析</a>
+        <a href="#"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg>設定</a>
+      </nav>
+      <div class="prof">
+        <div class="row"><div class="av"></div><div class="nm">伊藤 吏央</div></div>
+        <div class="kv">800m PB <b>1:49.51</b><br>目標 <b>1:48.00</b></div>
+        <button class="ghost">プロフィール</button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <div class="top">
+        <h1>ホーム</h1>
+        <div class="date num">2025/07/24（木）<small>最終更新 19:12</small></div>
+        <div class="sel"><div><small>シーズンフェーズ</small><b style="font-size:12.5px">Specific 期</b></div><span style="color:var(--text-3)">▾</span></div>
+        <div class="bell"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8b8d92" stroke-width="1.9"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0"/></svg><span class="badge num">2</span></div>
+      </div>
+
+      <!-- row 1 -->
+      <div class="g3">
+        <div class="card">
+          <div class="card-t">CFE（推定800mタイム）<span style="color:var(--text-3)">ⓘ</span></div>
+          <div style="display:flex;align-items:baseline;gap:10px">
+            <div class="hero num">1:49.5</div>
+            <div class="delta volt num">−2.1 ▼</div>
+          </div>
+          <div class="sub">28日で2.1秒改善。数値が<b style="color:var(--text-2)">下がる</b>ほど速い</div>
+          <svg viewBox="0 0 300 74" style="width:100%;height:74px;margin-top:8px">
+            <line x1="26" y1="8" x2="300" y2="8" stroke="#1f2126"/>
+            <line x1="26" y1="36" x2="300" y2="36" stroke="#1f2126"/>
+            <line x1="26" y1="64" x2="300" y2="64" stroke="#1f2126"/>
+            <text x="0" y="11" fill="#5a5c61" font-size="8">1:53</text>
+            <text x="0" y="39" fill="#5a5c61" font-size="8">1:51</text>
+            <text x="0" y="67" fill="#5a5c61" font-size="8">1:49</text>
+            <path d="M34 14 L64 18 L94 16 L124 26 L154 24 L184 36 L214 40 L244 48 L274 52 L296 58"
+                  fill="none" stroke="var(--volt)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+            <circle cx="296" cy="58" r="3.4" fill="var(--volt)" stroke="#0c0d10" stroke-width="2"/>
+          </svg>
+          <div style="display:flex;justify-content:space-between;font-size:8.5px;color:#5a5c61;padding-left:26px">
+            <span>6/24</span><span>7/1</span><span>7/8</span><span>7/15</span><span>7/22</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-t">次のレースまで</div>
+          <div style="display:flex;align-items:baseline"><div class="hero volt num">14</div><div class="unit">日</div></div>
+          <div class="sub" style="margin-top:10px">全日本実業団選手権 準決勝<br><span class="num">2025/08/07（木）</span></div>
+          <div class="link"><span>ラウンド構成を見る</span><span>→</span></div>
+        </div>
+
+        <div class="card">
+          <div class="card-t">疲労シグナル</div>
+          <div style="display:flex;align-items:center;gap:9px">
+            <span class="dot" style="background:var(--amber)"></span>
+            <span style="font-size:27px;font-weight:800" class="amber">注意</span>
+          </div>
+          <div class="sub" style="margin-top:10px">総合疲労 <b style="color:var(--text)" class="num">3 / 5</b><br>強度は維持し、量を30%減</div>
+          <div class="link"><span>コンディション詳細</span><span>→</span></div>
+        </div>
+      </div>
+
+      <!-- row 2 -->
+      <div class="g2">
+        <div class="card menu-card">
+          <div class="menu-l">
+            <div class="card-t" style="margin-bottom:8px">今日のメニュー <span class="chip">HIGH LACTATE</span></div>
+            <div style="font-size:34px;font-weight:800" class="num">300m × 5</div>
+            <div style="font-size:13px;color:var(--text-2);margin-top:5px" class="num">39.2 – 40.0 秒　r=5分</div>
+            <div class="spec">
+              <div>設定根拠<b>GRP 95–97%</b></div>
+              <div>基準タイム<b class="num">1:49.0</b></div>
+              <div>800m転移度<b>5 / 5</b></div>
+              <div>リスク<b class="amber">高</b></div>
+            </div>
+            <button class="btn" style="margin-top:14px">メニューの根拠を確認 <span>→</span></button>
+          </div>
+          <div class="gauge">
+            <div class="lbl">セッション準備度</div>
+            <svg viewBox="0 0 100 100" style="width:118px;height:118px">
+              <circle cx="50" cy="50" r="41" fill="none" stroke="#1f2126" stroke-width="9"/>
+              <circle cx="50" cy="50" r="41" fill="none" stroke="var(--volt)" stroke-width="9"
+                      stroke-dasharray="211 257" stroke-linecap="round" transform="rotate(-90 50 50)"/>
+              <text x="50" y="56" text-anchor="middle" fill="#fff" font-size="25" font-weight="800" font-family="Helvetica Neue">82</text>
+              <text x="50" y="69" text-anchor="middle" fill="#8b8d92" font-size="10">/ 100</text>
+            </svg>
+            <div style="font-size:10.5px;color:var(--text-3);line-height:1.6;margin-top:2px">
+              信号 黄 −10 ／ 間隔 4日 +0<br>ACWR 1.32 −8
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-t"><span class="amber">⚠</span> ルール警告</div>
+          <div style="display:flex;align-items:baseline"><div class="hero amber num">2</div><div class="unit">件</div></div>
+          <ul class="warnlist">
+            <li>RULE-16 ACWR 1.32（やや高い）</li>
+            <li>RULE-10 暑熱下の高乳酸（設定 −1〜2%）</li>
+          </ul>
+          <div class="link"><span>すべての警告</span><span>→</span></div>
+        </div>
+      </div>
+
+      <!-- week -->
+      <div class="card">
+        <div class="card-t" style="display:flex;justify-content:space-between;margin-bottom:12px">
+          <span>今週のスケジュール</span><span style="color:var(--text-3)">カレンダーを見る →</span>
+        </div>
+        <div class="wk">
+          <div class="day"><div class="d">月 7/21</div><div class="ring">A</div><div class="cat">aerobic</div><div class="w num">40分 E</div></div>
+          <div class="day"><div class="d">火 7/22</div><div class="ring q">R</div><div class="cat">race_economy</div><div class="w num">600m×3</div></div>
+          <div class="day"><div class="d">水 7/23</div><div class="ring">A</div><div class="cat">aerobic</div><div class="w num">40分 E</div></div>
+          <div class="day today"><div class="d">木 7/24</div><div class="ring hi">H</div><div class="cat" style="color:var(--volt)">high_lactate</div><div class="w num">300m×5</div></div>
+          <div class="day"><div class="d">金 7/25</div><div class="ring">A</div><div class="cat">aerobic</div><div class="w num">40分 E</div></div>
+          <div class="day"><div class="d">土 7/26</div><div class="ring q">N</div><div class="cat">neural</div><div class="w num">150m×6</div></div>
+          <div class="day"><div class="d">日 7/27</div><div class="ring off">OFF</div><div class="cat">休養</div><div class="w num">—</div></div>
+        </div>
+      </div>
+
+      <!-- metrics -->
+      <div class="g4">
+        <div class="card" style="padding:13px">
+          <div class="card-t" style="margin-bottom:6px">今週の負荷（ACWR）</div>
+          <div style="display:flex;align-items:flex-end;justify-content:space-between">
+            <div><div style="font-size:26px;font-weight:800" class="amber num">1.32</div>
+              <div style="font-size:9.5px;color:var(--text-3);margin-top:3px">適正 0.8 – 1.3</div></div>
+            <svg viewBox="0 0 74 32" style="width:74px;height:32px">
+              <line x1="0" y1="20" x2="74" y2="20" stroke="#2b2e34" stroke-dasharray="2 2"/>
+              <path d="M2 26 L14 24 L26 25 L38 20 L50 18 L62 15 L72 12" fill="none" stroke="var(--amber)" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+          </div>
+        </div>
+        <div class="card" style="padding:13px">
+          <div class="card-t" style="margin-bottom:6px">週間800m転移度</div>
+          <div style="display:flex;align-items:baseline;gap:5px"><div style="font-size:26px;font-weight:800" class="volt num">4.2</div><div class="unit">/ 5</div></div>
+          <div style="font-size:9.5px;color:var(--text-3);margin-top:3px">特異的セッション中心</div>
+          <div class="bars"><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i></i></div>
+        </div>
+        <div class="card" style="padding:13px">
+          <div class="card-t" style="margin-bottom:6px">高乳酸頻度（28日）</div>
+          <div style="display:flex;align-items:baseline;gap:5px"><div style="font-size:26px;font-weight:800" class="num">4</div><div class="unit">回</div></div>
+          <div style="font-size:9.5px;color:var(--text-3);margin-top:3px">週1ペース・適正</div>
+          <div class="bars"><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i></i><i></i></div>
+        </div>
+        <div class="card" style="padding:13px">
+          <div class="card-t" style="margin-bottom:6px">経済走RPE（同一設定）</div>
+          <div style="display:flex;align-items:baseline;gap:5px"><div style="font-size:26px;font-weight:800" class="volt num">6→5</div></div>
+          <div style="font-size:9.5px;color:var(--volt);margin-top:3px">低下＝経済性の改善</div>
+          <div class="bars"><i class="f"></i><i class="f"></i><i class="f"></i><i></i><i></i></div>
+        </div>
+      </div>
+
+      <div class="foot">
+        <span>© 2025 800m Training Tool ／ データはローカルに保存されています</span>
+        <span>一貫した計画が、結果をつくる。</span>
+      </div>
+    </div>
+  </div>
+  </div>
+
+  <!-- ===================== MOBILE ===================== -->
+  <div>
+  <div class="caption">スマートフォン（〜768px）</div>
+  <div class="phone">
+    <div class="status num"><span>9:41</span><span style="letter-spacing:2px;font-size:11px">▮▮▮ ᯤ ▰</span></div>
+    <div class="mhead">
+      <svg width="18" height="18" viewBox="0 0 24 24" stroke="#8b8d92" stroke-width="2" fill="none"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      <div class="ml"><b>800M</b><span>TRAINING</span></div>
+      <div style="position:relative">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8b8d92" stroke-width="1.9"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0"/></svg>
+        <span class="badge num" style="width:13px;height:13px;font-size:8px">2</span>
+      </div>
+    </div>
+
+    <div class="mbody">
+      <div class="card">
+        <div class="card-t" style="justify-content:space-between;margin-bottom:8px">
+          <span>今日のメニュー</span><span class="chip">HIGH LACTATE</span>
+        </div>
+        <div style="font-size:31px;font-weight:800" class="num">300m × 5</div>
+        <div style="font-size:12.5px;color:var(--text-2);margin-top:5px" class="num">39.2 – 40.0 秒　r=5分</div>
+        <div style="display:flex;gap:16px;margin-top:9px">
+          <div style="font-size:10px;color:var(--text-3)">設定根拠<b style="display:block;font-size:12px;color:#fff;margin-top:2px">GRP 95–97%</b></div>
+          <div style="font-size:10px;color:var(--text-3)">準備度<b style="display:block;font-size:12px;margin-top:2px" class="volt num">82 / 100</b></div>
+          <div style="font-size:10px;color:var(--text-3)">転移度<b style="display:block;font-size:12px;color:#fff;margin-top:2px">5 / 5</b></div>
+        </div>
+        <button class="btn" style="margin-top:12px">メニューの根拠を確認 <span>→</span></button>
+      </div>
+
+      <div class="m2">
+        <div class="card" style="padding:13px">
+          <div class="card-t" style="margin-bottom:7px">疲労シグナル</div>
+          <div style="display:flex;align-items:center;gap:7px">
+            <span class="dot" style="background:var(--amber)"></span>
+            <span style="font-size:20px;font-weight:800" class="amber">注意</span>
+          </div>
+          <div style="font-size:10.5px;color:var(--text-3);margin-top:7px">総合疲労 <b style="color:#fff" class="num">3/5</b><br>量を30%減</div>
+        </div>
+        <div class="card" style="padding:13px">
+          <div class="card-t" style="margin-bottom:7px">次のレースまで</div>
+          <div style="display:flex;align-items:baseline"><div style="font-size:30px;font-weight:800" class="volt num">14</div><div class="unit">日</div></div>
+          <div style="font-size:10.5px;color:var(--text-3);margin-top:7px">実業団選手権<br><span class="num">08/07（木）</span></div>
+        </div>
+      </div>
+
+      <div class="row-btn">
+        <span style="font-size:12.5px;color:var(--text-2)"><span class="amber">⚠</span>　ルール警告</span>
+        <span><b class="amber num" style="font-size:17px">2</b><span style="font-size:11px;color:var(--text-3)"> 件 ›</span></span>
+      </div>
+
+      <div class="card">
+        <div class="card-t" style="justify-content:space-between;margin-bottom:11px">
+          <span>今週のスケジュール</span><span style="color:var(--text-3)">›</span>
+        </div>
+        <div class="mwk">
+          <div><div class="d">月<br>7/21</div><div class="mring">A</div></div>
+          <div><div class="d">火<br>7/22</div><div class="mring q">R</div></div>
+          <div><div class="d">水<br>7/23</div><div class="mring">A</div></div>
+          <div class="today"><div class="d">木<br>7/24</div><div class="mring hi">H</div></div>
+          <div><div class="d">金<br>7/25</div><div class="mring">A</div></div>
+          <div><div class="d">土<br>7/26</div><div class="mring q">N</div></div>
+          <div><div class="d">日<br>7/27</div><div class="mring off">OFF</div></div>
+        </div>
+      </div>
+
+      <div class="card" style="padding:13px">
+        <div class="card-t" style="margin-bottom:7px">CFE（推定800mタイム）</div>
+        <div style="display:flex;align-items:baseline;gap:9px">
+          <div style="font-size:27px;font-weight:800" class="num">1:49.5</div>
+          <div class="delta volt num">−2.1 ▼</div>
+        </div>
+        <svg viewBox="0 0 300 40" style="width:100%;height:40px;margin-top:6px">
+          <path d="M4 8 L37 11 L70 9 L103 17 L136 15 L169 23 L202 26 L235 31 L268 33 L296 36"
+                fill="none" stroke="var(--volt)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+          <circle cx="296" cy="36" r="3.4" fill="var(--volt)" stroke="#0c0d10" stroke-width="2"/>
+        </svg>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab on"><svg viewBox="0 0 24 24"><path d="M3 10l9-7 9 7v10a1 1 0 01-1 1h-5v-7H9v7H4a1 1 0 01-1-1z"/></svg>ホーム</div>
+      <div class="tab"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>カレンダー</div>
+      <div class="tab"><svg viewBox="0 0 24 24"><path d="M12 3v18M5 8v13M19 12v9"/></svg>記録</div>
+      <div class="tab"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>分析</div>
+    </div>
+  </div>
+  </div>
+
+</div>
+</body>
+</html>

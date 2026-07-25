@@ -1,0 +1,13 @@
+node_modules/
+.next/
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+harness/bundle.js
+harness/out.css
+harness/fixtures.json
+harness/node_modules/
+tsconfig.tsbuildinfo
+.claude/settings.local.json

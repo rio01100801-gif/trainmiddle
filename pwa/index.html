@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>FORGE</title>
+<meta name="description" content="FORGE — 800m Performance System">
+<meta name="theme-color" content="#0a0a0a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FORGE">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icon-180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
+<link rel="stylesheet" href="./styles.css">
+<style>
+  /* 起動時スプラッシュ（bundle読込までの間） */
+  #splash {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 6px;
+    background: #0a0a0a; z-index: 99;
+  }
+  #splash b { font-size: 26px; font-weight: 900; color: #fff; letter-spacing: -0.02em; }
+  #splash span { font-size: 8px; letter-spacing: 0.28em; color: #6b7280; font-weight: 700; }
+</style>
+</head>
+<body>
+<div id="splash"><b>FORGE</b><span>800M PERFORMANCE</span></div>
+<div id="root"></div>
+<script src="./bundle.js"></script>
+<script>
+  // Reactがマウントしたらスプラッシュを外す。
+  //
+  // 必ず即時関数で包むこと。bundle.js もこのスクリプトも「クラシックスクリプト」で、
+  // トップレベルの let/const は同じレキシカルスコープを共有する。
+  // 素で const t と書くと、minifierが bundle 側に付けた1文字変数と衝突して
+  // "Identifier 't' has already been declared" でこのスクリプト全体が落ち、
+  // スプラッシュが永久に消えなくなる（アプリ自体は動いているのに真っ暗に見える）。
+  (function () {
+    var timer = setInterval(function () {
+      var root = document.getElementById("root");
+      var splash = document.getElementById("splash");
+      if (root && root.children.length > 0) {
+        if (splash) splash.remove();
+        clearInterval(timer);
+      }
+    }, 60);
+  })();
+</script>
+</body>
+</html>

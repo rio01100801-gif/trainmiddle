@@ -1,0 +1,2212 @@
+/**
+ * サービス層: API/CLI から呼ばれるワークフロー。
+ * 4-5 の処理フローを固定順で実行する:
+ *   ① CFE更新 → ② 全未実施セッションのペース再計算 → ③ 波及（下げ方向のみ）
+ *   → ④ ルールエンジン再検証（常に最後。ルールが最終権限） → ⑤ 変更差分の提示
+ */
+import type {
+  DailyCheck,
+  Goal,
+  Race,
+  RuleViolation,
+  Session,
+  SessionChange,
+  SessionResult,
+  SkipReason,
+} from "./core/types";
+import type { Store } from "./db/store";
+import { addDays, diffDays, fmtTime, weekStart } from "./core/dates";
+import {
+  applyStaleness,
+  baseTime,
+  goalFeasibility,
+  updateCfeFromResult,
+  initCfe,
+  revertCfeForSession,
+} from "./core/cfe";
+import { buildAerobicProfile, GRP_RATIOS, specificPace } from "./core/pace";
+import { runRuleEngine, weeklySummary, RuleContext, isQuality } from "./core/rules";
+import { generatePlan } from "./core/periodization";
+import { assignExpectedPaces, diagnoseRounds, generateRecoverySessions, RoundResult } from "./core/rounds";
+import {
+  handleSkip,
+  propagate,
+  propagateRedSignal,
+  resolveConflicts,
+} from "./core/propagation";
+import { effectiveSignal, judgeSignal } from "./core/signal";
+import { computeReadiness, type Readiness } from "./core/readiness";
+import { acwr, dailyLoads } from "./core/load";
+import { diagnose } from "./core/diagnosis";
+import { evaluateEnvironment } from "./core/environment";
+import {
+  assessCurrentFitness,
+  toSessionAndResult,
+  toFitnessMarker as pastToMarker,
+  type FitnessAssessment,
+  type PastEntry,
+} from "./core/backfill";
+import {
+  computeReady,
+  parseBulkText,
+  type ParsedRow,
+  type PhraseRule,
+} from "./core/bulkImport";
+import { checkPastEntry, hasBlockingIssue, type SanityIssue } from "./core/sanity";
+import { cfeRange, spreadOf } from "./core/backfill";
+import { groupBySamePrescription } from "./core/samePrescription";
+import { planRaceSplits, type RaceLapSample } from "./core/racePlan";
+import { findPreviousEntry, inferAchievement, type PreviousEntry } from "./core/workoutLog";
+import {
+  hrvDeviation,
+  parseAppleHealthExport,
+  toDailyCheck,
+  toFitnessMarker,
+  type HealthProvider,
+  type SyncRecord,
+} from "./core/healthImport";
+import { analyzeRace, RaceAnalysisOutput } from "./core/raceAnalysis";
+import { validateWeekTemplate } from "./core/weekTemplate";
+import {
+  adjustPrescription,
+  dailyAdjustment,
+  executionSamples,
+  executionTrend,
+  jogEfficiency,
+  repsOf,
+  type DailyAdjustment,
+  type ExecutionTrend,
+  type JogEfficiency,
+  type PrescriptionProposal,
+} from "./core/adaptive";
+import { heatPaceAdjustment, type HeatPaceAdjustment } from "./core/heatPace";
+import { parsePrescription, type PrescriptionStructure } from "./core/prescription";
+import {
+  assessLimiter,
+  categoryWeights,
+  LIMITER_LABELS,
+  type CategoryWeight,
+  type LimiterAssessment,
+} from "./core/limiter";
+import {
+  splitSamplesFromMarkers,
+  splitSamplesFromPast,
+  splitTrend,
+  type SplitTrend,
+} from "./core/split600";
+import { assessContactTime, type ContactAssessment, type ContactSample } from "./core/contactTime";
+import { buildWeeklyReview, type WeeklyReview } from "./core/weeklyReview";
+import {
+  BACKUP_FORMAT,
+  BACKUP_VERSION,
+  isBackupFile,
+  mergeByDate,
+  mergeById,
+  shouldRemindBackup,
+  type BackupFile,
+  type RestoreMode,
+  type RestoreReport,
+} from "./core/backup";
+import {
+  planTaper,
+  shouldSuppressVolumeAdjustment,
+  taperNotice,
+  taperStage,
+  TAPER_STAGE_LABELS,
+  type TaperAdjustment,
+  type TaperStage,
+} from "./core/taper";
+import {
+  abortCriteria,
+  evaluateReps,
+  prescriptionWithCriteria,
+  type AbortCriteria,
+  type RepEvaluation,
+} from "./core/abort";
+
+// ---------------------------------------------------------------------------
+
+/**
+ * 2-1. 暑熱条件フラグが立っている日付の集合。
+ * この日の実測は能力推定（LT・CFE）から除外される。
+ */
+export function heatFlaggedDates(repo: Store): Set<string> {
+  const set = new Set<string>();
+  for (const r of repo.listResults()) {
+    if (r.heatFlagged) {
+      set.add(r.date);
+      continue;
+    }
+    const env = evaluateEnvironment({
+      tempC: r.weatherTempC,
+      humidityPct: r.humidityPct,
+    });
+    if (env?.isHeatFlagged) set.add(r.date);
+  }
+  return set;
+}
+
+/** 日付ごとの気温マップ（RULE-10 の判定に使う） */
+function dayTempsFromResults(repo: Store): Record<string, number> {
+  const map: Record<string, number> = {};
+  for (const r of repo.listResults()) {
+    if (r.weatherTempC !== undefined) map[r.date] = r.weatherTempC;
+  }
+  return map;
+}
+
+export function buildRuleContext(repo: Store, evaluationDate: string): RuleContext {
+  const athlete = repo.getAthlete();
+  if (!athlete) throw new Error("選手プロフィールが未登録です");
+  const allSessions = repo.listSessions();
+  // 過去データから作られたセッションは負荷計算には使うが、
+  // ルールの評価対象からは外す（過ぎた日の構成は今から直せないため。
+  // 過去の構成そのものの診断は diagnosePastStructure が別に行う）。
+  const sessions = allSessions.filter((s) => !s.backfilled);
+  const results = repo.listResults();
+  const resultsMap = new Map(results.map((r) => [r.sessionId, r]));
+  const loads = dailyLoads({
+    sessions: allSessions,
+    resultsBySessionId: resultsMap,
+    strengthSessions: repo.listStrengths(),
+  });
+  const markers = repo.listMarkers();
+  const aerobic = buildAerobicProfile(
+    markers,
+    evaluationDate,
+    repo.getCfe()?.estimated800mSec,
+    heatFlaggedDates(repo)
+  );
+  return {
+    sessions,
+    strengthSessions: repo.listStrengths(),
+    races: repo.listRaces(),
+    goal: repo.getGoal(),
+    athlete,
+    dailyChecks: repo.listDailyChecks(),
+    heatBlocks: repo.listHeatBlocks(),
+    ltPaceSecPerKm: aerobic.isEstimated ? undefined : aerobic.ltPaceSecPerKm,
+    dayTempsC: dayTempsFromResults(repo),
+    evaluationDate,
+    currentAcwr: acwr(loads, evaluationDate).acwr,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// セットアップ / プラン生成
+// ---------------------------------------------------------------------------
+
+export function setupCfeIfNeeded(repo: Store, today: string): void {
+  if (repo.getCfe()) return;
+  const athlete = repo.getAthlete();
+  if (!athlete) return;
+  const recentRace = repo
+    .listMarkers()
+    .filter((m) => m.type === "race" && m.resultLapsSec.length > 0)
+    .map((m) => ({
+      date: m.date,
+      timeSec: m.resultLapsSec.reduce((a, b) => a + b, 0),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .at(-1);
+  repo.saveCfe(initCfe(athlete.pb800mSec, today, recentRace));
+}
+
+export function regeneratePlan(repo: Store, startDate: string): {
+  sessionCount: number;
+  strengthCount: number;
+  violations: RuleViolation[];
+  /** 3-1: 曜日テンプレート自体の問題（生成前に気づけるように別枠で返す） */
+  templateViolations: RuleViolation[];
+  customMenusUsed: number;
+  /** M-7: 制限因子で振り替えた枠。黙って配分を変えないための記録 */
+  limiterSwaps: { date: string; from: string; to: string; note: string }[];
+  limiterNote?: string;
+} {
+  const athlete = repo.getAthlete();
+  const goal = repo.getGoal();
+  if (!athlete || !goal) throw new Error("プロフィールと目標を先に登録してください");
+  setupCfeIfNeeded(repo, startDate);
+  const cfe = applyStaleness(repo.getCfe()!, startDate);
+  repo.saveCfe(cfe);
+
+  const races = repo.listRaces().map((r) => assignExpectedPaces(r, goal.targetTimeSec));
+  for (const r of races) repo.saveRace(r);
+
+  const aerobic = buildAerobicProfile(
+    repo.listMarkers(),
+    startDate,
+    cfe.estimated800mSec,
+    heatFlaggedDates(repo)
+  );
+  repo.deleteAllPlannedSessions();
+  repo.deleteAllPlannedStrengths();
+
+  const weekTemplate = repo.getWeekTemplate();
+  const customMenus = repo.listCustomMenus();
+
+  // M-7: 制限因子から配分の重みを決める
+  const limiter = assessLimiter(athlete, goal.targetTimeSec);
+  const limiterWeights = categoryWeights(limiter.limiter);
+
+  const plan = generatePlan({
+    athlete,
+    goal,
+    races,
+    cfeSec: cfe.estimated800mSec,
+    aerobicProfile: aerobic,
+    startDate,
+    weekTemplate,
+    customMenus,
+    limiterWeights,
+  });
+
+  // 3-2: 使われた自作メニューの使用実績を更新する
+  const usedCounts = new Map<string, string>();
+  for (const u of plan.usedCustomMenus) {
+    const prev = usedCounts.get(u.menuId);
+    if (!prev || u.date > prev) usedCounts.set(u.menuId, u.date);
+  }
+  for (const [menuId, lastDate] of usedCounts) {
+    const m = customMenus.find((x) => x.id === menuId);
+    if (m) {
+      repo.saveCustomMenu({
+        ...m,
+        timesUsed: (m.timesUsed ?? 0) + 1,
+        lastUsedDate: lastDate,
+      });
+    }
+  }
+  // 固定セッション(is_fixed)は deleteAllPlannedSessions の対象だが、
+  // ユーザー登録の固定枠は status を "modified" 扱いにしない設計のため、
+  // ここでは生成分のみ保存する（固定枠はUIから個別登録）。
+  repo.saveSessions(plan.sessions);
+  repo.saveStrengths(plan.strengthSessions);
+
+  // ラウンド間回復プロトコルを生成
+  for (const r of races) {
+    if (r.rounds.length >= 2) repo.saveSessions(generateRecoverySessions(r));
+  }
+
+  const violations = runRuleEngine(buildRuleContext(repo, startDate));
+  return {
+    sessionCount: plan.sessions.length,
+    strengthCount: plan.strengthSessions.length,
+    violations,
+    templateViolations: weekTemplate ? validateWeekTemplate(weekTemplate) : [],
+    customMenusUsed: usedCounts.size,
+    limiterSwaps: plan.limiterSwaps,
+    limiterNote:
+      plan.limiterSwaps.length > 0
+        ? `制限因子は「${LIMITER_LABELS[limiter.limiter]}」と判定しました。` +
+          `${plan.limiterSwaps.length}枠を振り替えています（${plan.limiterSwaps[0].from} → ${plan.limiterSwaps[0].to} ほか）`
+        : undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// ② 全未実施セッションのペース再計算
+// ---------------------------------------------------------------------------
+
+export function repaceFutureSessions(
+  repo: Store,
+  fromDate: string
+): SessionChange[] {
+  const goal = repo.getGoal();
+  const cfe = repo.getCfe();
+  if (!goal || !cfe) return [];
+  const changes: SessionChange[] = [];
+  const sessions = repo
+    .listSessions()
+    .filter((s) => s.status === "planned" && s.date >= fromDate && !s.isFixed);
+
+  for (const s of sessions) {
+    if (!(s.category in GRP_RATIOS)) continue; // 有酸素系はCFEから逆算しない（4-5-2）
+    const grpBase = baseTime(cfe.estimated800mSec, goal.targetTimeSec, s.phase);
+    const newPaces = s.targetPaces.map((tp) =>
+      specificPace(grpBase, s.category, tp.distanceM)
+    );
+    if (newPaces.length === 0) continue;
+    const before = s.targetPaces[0];
+    const after = newPaces[0];
+    if (Math.abs(before.targetSecFast - after.targetSecFast) < 0.05) continue;
+    const direction = after.targetSecFast < before.targetSecFast ? "up" : "down";
+    changes.push({
+      sessionId: s.id,
+      field: "targetPaces",
+      before: `${before.targetSecFast.toFixed(1)}〜${before.targetSecSlow.toFixed(1)}秒/${before.distanceM}m`,
+      after: `${after.targetSecFast.toFixed(1)}〜${after.targetSecSlow.toFixed(1)}秒/${after.distanceM}m`,
+      reason: `CFE更新(${fmtTime(cfe.estimated800mSec)})に伴う基準タイム再計算`,
+      triggeredBy: "CFE",
+      direction,
+      action: "modify",
+    });
+    repo.saveSession({ ...s, targetPaces: newPaces });
+  }
+  return changes;
+}
+
+// ---------------------------------------------------------------------------
+// 練習結果の登録（4-5 フロー全体）
+// ---------------------------------------------------------------------------
+
+export interface ProcessResultOutput {
+  cfeBefore: number;
+  cfeAfter: number;
+  cfeApplied: boolean;
+  guardrailNotes: string[];
+  changes: SessionChange[];
+  violations: RuleViolation[];
+  economySignalNote?: string;
+}
+
+export function processResult(
+  repo: Store,
+  result: SessionResult,
+  opts: { isRace?: boolean; raceTimeSec?: number } = {}
+): ProcessResultOutput {
+  const session = repo.getSession(result.sessionId);
+  if (!session) throw new Error("セッションが見つかりません");
+  const athlete = repo.getAthlete()!;
+
+  // 2-1: 環境条件から暑熱フラグを自動判定して記録に埋め込む
+  const env = evaluateEnvironment({
+    tempC: result.weatherTempC,
+    humidityPct: result.humidityPct,
+  });
+  // 1-2: 構造化記録があれば達成度を実測から機械的に決める（手入力より優先）
+  const inferred = result.interval ? inferAchievement(result.interval) : undefined;
+
+  /*
+   * M-1: 同じセッションの記録を直して入れ直したときは「上書き」にする。
+   * 新しいidで積むと記録が二重に残り、負荷も達成度も二重に数えられる。
+   * CFEも同じ練習で2回動いてしまい、±1.5秒のガードレールが実質±3秒になる。
+   */
+  const existing = repo.resultForSession(result.sessionId);
+  result = {
+    ...result,
+    id: existing?.id ?? result.id,
+    heatFlagged: env?.isHeatFlagged ?? result.heatFlagged,
+    achievement: inferred ?? result.achievement,
+    completedReps:
+      result.completedReps ?? (result.interval ? result.interval.results.length : undefined),
+    prescribedReps: result.prescribedReps ?? result.interval?.reps,
+  };
+
+  repo.saveResult(result);
+  repo.saveSession({ ...session, status: "completed" });
+
+  // 直近の next_day_legs 連続状況
+  const allResults = repo
+    .listResults()
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const prevLegs = allResults
+    .filter((r) => r.id !== result.id)
+    .slice(-2)
+    .map((r) => r.nextDayLegs)
+    .filter((l): l is NonNullable<typeof l> => !!l);
+  const heavyStreak =
+    [...prevLegs, result.nextDayLegs].filter((l) => l === "heavy").length >= 2 &&
+    result.nextDayLegs === "heavy"
+      ? 2
+      : 0;
+
+  // ① CFE更新
+  let cfe = applyStaleness(repo.getCfe()!, result.date);
+  // 修正の保存なら、前回この練習で動かしたぶんを取り消してから入れ直す
+  if (existing) cfe = revertCfeForSession(cfe, result.sessionId);
+  const before = cfe.estimated800mSec;
+  const update = updateCfeFromResult(cfe, session, result, {
+    tempC: result.weatherTempC,
+    heavyLegsStreak: heavyStreak,
+    isRace: opts.isRace,
+    raceTimeSec: opts.raceTimeSec,
+  });
+  cfe = update.cfe;
+  repo.saveCfe(cfe);
+
+  // ② ペース再計算
+  const repaceChanges = repaceFutureSessions(repo, result.date);
+
+  // ③ 波及（下げ方向のみ強く）
+  const upcoming = repo.listSessions().filter((s) => s.status === "planned");
+  const propChanges = propagate({
+    session,
+    result,
+    upcomingSessions: upcoming,
+    athlete,
+    recentNextDayLegs: prevLegs,
+  });
+
+  // 衝突解決（4-5-5）: 下げ方向優先・ルール最優先
+  const changes = resolveConflicts([...propChanges, ...repaceChanges]);
+
+  // 波及の適用（category置換系のみ自動反映、他は提案として記録）
+  for (const c of changes) {
+    if (c.action === "replace_with_off" || c.action === "replace_with_aerobic") {
+      const target = repo.getSession(c.sessionId);
+      if (target && !target.isFixed) {
+        repo.saveSession({
+          ...target,
+          category: c.action === "replace_with_off" ? "off" : "aerobic",
+          name: c.action === "replace_with_off" ? "完全休養（自動置換）" : "回復ジョグ（自動置換）",
+          status: "modified",
+        });
+      }
+    }
+    repo.logChange(c);
+  }
+
+  // ④ ルールエンジン再検証（常に最後）
+  const violations = runRuleEngine(buildRuleContext(repo, result.date));
+
+  // 経済走の特別シグナル（4-5-6）
+  let economySignalNote: string | undefined;
+  if (session.category === "race_economy") {
+    economySignalNote =
+      "経済走は「同じ設定でより楽に感じるか」で評価します。分析画面のRPE推移を確認してください。";
+  }
+
+  return {
+    cfeBefore: before,
+    cfeAfter: cfe.estimated800mSec,
+    cfeApplied: update.applied,
+    guardrailNotes: update.guardrailNotes,
+    changes,
+    violations,
+    economySignalNote,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// スキップ処理（4-5-4）
+// ---------------------------------------------------------------------------
+
+export function processSkip(
+  repo: Store,
+  sessionId: string,
+  reason: SkipReason
+): { decision: ReturnType<typeof handleSkip>; violations: RuleViolation[] } {
+  const session = repo.getSession(sessionId);
+  if (!session) throw new Error("セッションが見つかりません");
+
+  // 直前の質練習がスキップされていたか（SKIP-04）
+  const prevQuality = repo
+    .listSessions()
+    .filter((s) => isQuality(s.category) && s.date < session.date)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .at(-1);
+  const races = repo.listRaces().filter((r) => r.priority !== "C");
+  const nearest = races
+    .map((r) => diffDays(session.date, r.dateStart))
+    .filter((d) => d >= 0)
+    .sort((a, b) => a - b)[0];
+
+  const decision = handleSkip(session, reason, {
+    previousQualitySkipped: prevQuality?.status === "skipped",
+    daysToNearestRace: nearest,
+  });
+
+  if (decision.action === "delete") {
+    repo.saveSession({ ...session, status: "skipped" });
+  } else if (decision.action === "postpone") {
+    // 最大2日後ろ倒し → ルール再実行で違反が出れば削除推奨（ここでは1候補を試す）
+    const newDate = addDays(session.date, Math.min(2, decision.maxPostponeDays ?? 2));
+    repo.saveSession({ ...session, date: newDate, status: "modified" });
+    const violations = runRuleEngine(buildRuleContext(repo, session.date));
+    const affected = violations.filter(
+      (v) => v.level === "ERROR" && v.sessionIds.includes(session.id)
+    );
+    if (affected.length > 0) {
+      // 後ろ倒しで違反 → 削除を推奨し、元に戻してskipped扱い
+      repo.saveSession({ ...session, status: "skipped" });
+      return {
+        decision: {
+          ...decision,
+          action: "delete_recommended",
+          message:
+            decision.message +
+            ` 後ろ倒し(${newDate})を試行しましたがルール違反(${affected.map((v) => v.rule).join(",")})が発生するため削除しました。`,
+        },
+        violations,
+      };
+    }
+    return { decision, violations };
+  } else {
+    repo.saveSession({ ...session, status: "skipped" });
+  }
+  const violations = runRuleEngine(buildRuleContext(repo, session.date));
+  return { decision, violations };
+}
+
+// ---------------------------------------------------------------------------
+// 日次コンディション（4-5-8）
+// ---------------------------------------------------------------------------
+
+export function processDailyCheck(
+  repo: Store,
+  check: DailyCheck
+): { signal: string; action: string; reasons: string[]; changes: SessionChange[] } {
+  const checks = repo.listDailyChecks();
+  const withHr = checks.filter((c) => c.restingHr !== undefined).slice(-28);
+  const baseline =
+    withHr.length >= 5
+      ? [...withHr.map((c) => c.restingHr!)].sort((a, b) => a - b)[
+          Math.floor(withHr.length / 2)
+        ]
+      : undefined;
+  const judged = judgeSignal(check, baseline);
+  repo.saveDailyCheck({ ...check, signal: judged.signal });
+
+  // 黄3連続 → 赤扱い（4-5-8）
+  const eff = effectiveSignal(repo.listDailyChecks());
+  let changes: SessionChange[] = [];
+  if (eff.signal === "red") {
+    // PROP-06: 直後3日間の質練習を置換
+    changes = propagateRedSignal(check.date, repo.listSessions());
+    for (const c of changes) {
+      const s = repo.getSession(c.sessionId);
+      if (s && !s.isFixed) {
+        repo.saveSession({
+          ...s,
+          category: "aerobic",
+          name: "回復ジョグ（赤信号による自動置換）",
+          status: "modified",
+        });
+      }
+      repo.logChange(c);
+    }
+  }
+  return {
+    signal: eff.signal,
+    action: eff.escalated ? `${judged.action}（黄3日連続のため赤扱い）` : judged.action,
+    reasons: judged.reasons,
+    changes,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// レース結果（4-5-7 + 4-7-4）
+// ---------------------------------------------------------------------------
+
+export function processRaceResult(
+  repo: Store,
+  raceId: string,
+  rounds: (RoundResult & { front400Sec?: number; back400Sec?: number; rpe?: number })[],
+  date: string
+): {
+  cfeBefore: number;
+  cfeAfter: number;
+  roundsDiagnosis: ReturnType<typeof diagnoseRounds>;
+  analysis?: RaceAnalysisOutput;
+  changes: SessionChange[];
+  violations: RuleViolation[];
+} {
+  const athlete = repo.getAthlete()!;
+  const goal = repo.getGoal();
+  const roundsDiag = diagnoseRounds(rounds);
+
+  // FitnessMarkerとして各ラウンドを記録
+  for (const r of rounds) {
+    repo.saveMarker({
+      id: `race-${raceId}-${r.roundType}-${date}`,
+      date,
+      type: "race",
+      description: `${raceId} ${r.roundType}`,
+      resultLapsSec: r.laps ?? [r.timeSec],
+      lapDistancesM: r.laps ? r.laps.map(() => 800 / r.laps!.length) : [800],
+      rpe: r.rpe,
+    });
+  }
+
+  // ① CFEを大きく更新（最速ラウンド・信頼度1.0・±3秒ガード）
+  let cfe = applyStaleness(repo.getCfe()!, date);
+  const before = cfe.estimated800mSec;
+  let delta = roundsDiag.fastestTimeSec - cfe.estimated800mSec;
+  if (Math.abs(delta) > 3.0) delta = Math.sign(delta) * 3.0;
+  cfe = {
+    estimated800mSec: cfe.estimated800mSec + delta,
+    confidence: 1.0,
+    lastUpdated: date,
+    history: [
+      ...cfe.history,
+      {
+        date,
+        before,
+        after: cfe.estimated800mSec + delta,
+        source: `レース結果（最速ラウンド ${fmtTime(roundsDiag.fastestTimeSec)}）`,
+      },
+    ],
+  };
+  repo.saveCfe(cfe);
+
+  // ② ラップからの課題再診断（決勝または最速ラウンド）
+  const peak = rounds.find((r) => r.roundType === "final") ?? rounds[0];
+  let analysis: RaceAnalysisOutput | undefined;
+  if (goal && peak.front400Sec !== undefined && peak.back400Sec !== undefined) {
+    const target = repo.listRaces().find((r) => r.id === goal.targetRaceId);
+    const weeks = target ? Math.max(0, diffDays(date, target.dateStart) / 7) : 8;
+    analysis = analyzeRace({
+      front400Sec: peak.front400Sec,
+      back400Sec: peak.back400Sec,
+      targetTimeSec: goal.targetTimeSec,
+      rpe: peak.rpe,
+      athlete,
+      cfeAfterRaceSec: cfe.estimated800mSec,
+      weeksToTargetRace: weeks,
+    });
+  }
+
+  // ペース再計算 + ルール再検証
+  const changes = repaceFutureSessions(repo, date);
+  for (const c of changes) repo.logChange(c);
+  const violations = runRuleEngine(buildRuleContext(repo, date));
+
+  return {
+    cfeBefore: before,
+    cfeAfter: cfe.estimated800mSec,
+    roundsDiagnosis: roundsDiag,
+    analysis,
+    changes,
+    violations,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Apple Health 取り込み
+// ---------------------------------------------------------------------------
+
+export interface HealthImportSummary {
+  sync: SyncRecord;
+  /** 取り込みで疲労シグナルが変わった日 */
+  signalChanges: { date: string; signal: string }[];
+  hrvNote?: string;
+  ltUpdated: boolean;
+}
+
+/**
+ * Apple Health のエクスポート(export.xml)を取り込み、
+ * 分析エンジンの入力（DailyCheck / FitnessMarker）に変換して保存する。
+ *
+ * 主観入力（脚の疲労・モチベーション）は上書きしない。
+ * センサーで測れるもの（安静時HR・睡眠）だけを埋める。
+ */
+export function importAppleHealth(
+  repo: Store,
+  xml: string,
+  today: string,
+  opts: { days?: number } = {}
+): HealthImportSummary {
+  const days = opts.days ?? 120;
+  const cutoffDate = addDays(today, -days);
+  const parsed = parseAppleHealthExport(xml, { cutoffDate });
+
+  // --- 日次データ → DailyCheck ---
+  const existing = new Map(repo.listDailyChecks().map((c) => [c.date, c]));
+  let dailyCount = 0;
+  for (const h of parsed.daily) {
+    if (h.restingHr === undefined && h.sleepHours === undefined) continue;
+    const merged = toDailyCheck(h, existing.get(h.date));
+    const baseline = baselineRestingHr(repo, h.date);
+    const judged = judgeSignal(merged, baseline);
+    repo.saveDailyCheck({ ...merged, signal: judged.signal });
+    dailyCount++;
+  }
+
+  // --- ワークアウト → FitnessMarker（LT推定の材料） ---
+  let workoutCount = 0;
+  for (const w of parsed.workouts) {
+    const fm = toFitnessMarker(w);
+    if (!fm) continue;
+    repo.saveMarker(fm);
+    workoutCount++;
+  }
+
+  // --- HRV のベースライン比較 ---
+  const todayHrv = parsed.daily.find((d) => d.date === today)?.hrvSdnnMs;
+  const hrv = hrvDeviation(todayHrv, parsed.daily);
+
+  const sync: SyncRecord = {
+    provider: "apple_health",
+    syncedAt: new Date().toISOString(),
+    workouts: workoutCount,
+    dailyChecks: dailyCount,
+    fromDate: parsed.fromDate,
+    toDate: parsed.toDate,
+    note:
+      parsed.missing.length > 0
+        ? `取得できなかった項目: ${parsed.missing.join("・")}（無視して続行しました）`
+        : undefined,
+  };
+  repo.saveSync(sync);
+
+  const signalChanges = repo
+    .listDailyChecks()
+    .filter((c) => c.signal && c.signal !== "green" && c.date >= cutoffDate)
+    .map((c) => ({ date: c.date, signal: c.signal! }));
+
+  return {
+    sync,
+    signalChanges,
+    hrvNote: hrv.note,
+    ltUpdated: workoutCount > 0,
+  };
+}
+
+/** 安静時HRのベースライン（直近28日の中央値） */
+function baselineRestingHr(repo: Store, onDate: string): number | undefined {
+  const withHr = repo
+    .listDailyChecks()
+    .filter(
+      (c) =>
+        c.restingHr !== undefined && c.date < onDate && diffDays(c.date, onDate) <= 28
+    )
+    .map((c) => c.restingHr!)
+    .sort((a, b) => a - b);
+  if (withHr.length < 5) return undefined;
+  return withHr[Math.floor(withHr.length / 2)];
+}
+
+// ---------------------------------------------------------------------------
+// ダッシュボード
+// ---------------------------------------------------------------------------
+
+/** 当日（または直近の未実施日）のメインセッションと、その準備度を返す */
+export function todaySession(
+  repo: Store,
+  today: string
+): { session?: Session; readiness?: Readiness } {
+  const all = repo.listSessions();
+  const candidates = all
+    .filter((s) => s.date === today && s.category !== "off" && s.status !== "skipped")
+    .sort((a, b) => sessionPriority(b) - sessionPriority(a));
+  const session = candidates[0];
+  if (!session) return {};
+
+  const checks = repo.listDailyChecks();
+  const eff = effectiveSignal(checks.filter((c) => c.date <= today));
+
+  const loads = dailyLoads({
+    sessions: all,
+    resultsBySessionId: new Map(repo.listResults().map((r) => [r.sessionId, r])),
+    strengthSessions: repo.listStrengths(),
+  });
+
+  const lastQuality = all
+    .filter((s) => isQuality(s.category) && s.date < today && s.status === "completed")
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .at(-1);
+
+  const resultsBySession = new Map(repo.listResults().map((r) => [r.sessionId, r]));
+  const recentQualityResults = all
+    .filter((s) => isQuality(s.category) && s.date < today && resultsBySession.has(s.id))
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 3)
+    .map((s) => resultsBySession.get(s.id)!);
+
+  let errorViolationCount = 0;
+  try {
+    errorViolationCount = runRuleEngine(buildRuleContext(repo, today)).filter(
+      (v) => v.level === "ERROR" && v.sessionIds.includes(session.id)
+    ).length;
+  } catch {
+    errorViolationCount = 0;
+  }
+
+  const readiness = computeReadiness({
+    session,
+    athlete: repo.getAthlete()!,
+    signal: eff.signal,
+    signalEscalated: eff.escalated,
+    acwr: acwr(loads, today).acwr,
+    daysSinceLastQuality: lastQuality ? diffDays(lastQuality.date, today) : undefined,
+    recentQualityResults,
+    errorViolationCount,
+  });
+
+  return { session, readiness };
+}
+
+/** 「今日のメニュー」に出すべき主役セッションの優先度（質練習 > neural > 有酸素） */
+function sessionPriority(s: Session): number {
+  if (isQuality(s.category)) return 3;
+  if (s.category === "neural") return 2;
+  return 1;
+}
+
+export function dashboard(repo: Store, today: string) {
+  const athlete = repo.getAthlete();
+  const goal = repo.getGoal();
+  const cfe = repo.getCfe();
+  const ctx = buildRuleContext(repo, today);
+  const violations = runRuleEngine(ctx);
+  const summary = weeklySummary(ctx, weekStart(today));
+  // 負荷は「実際にやった練習」で数える。
+  // ctx.sessions はルール評価用に過去データ入力ぶんを除いてあるので、
+  // ここでそれを使うと過去データを入れてもACWRが埋まらない。
+  const loads = dailyLoads({
+    sessions: repo.listSessions(),
+    resultsBySessionId: new Map(repo.listResults().map((r) => [r.sessionId, r])),
+    strengthSessions: ctx.strengthSessions,
+  });
+  const acwrNow = acwr(loads, today);
+  const targetRace = goal
+    ? repo.listRaces().find((r) => r.id === goal.targetRaceId)
+    : undefined;
+  const feasibility =
+    goal && cfe && targetRace
+      ? goalFeasibility(
+          cfe.estimated800mSec,
+          goal.targetTimeSec,
+          Math.max(0, diffDays(today, targetRace.dateStart) / 7)
+        )
+      : undefined;
+  const aerobicProfile = buildAerobicProfile(
+    repo.listMarkers(),
+    today,
+    cfe?.estimated800mSec,
+    heatFlaggedDates(repo)
+  );
+  const diag = athlete ? diagnose(athlete, goal?.targetTimeSec) : undefined;
+  const phase = targetRace
+    ? ctx.sessions.find((s) => s.date >= today && s.status === "planned")?.phase
+    : undefined;
+
+  const checks = repo.listDailyChecks().filter((c) => c.date <= today);
+  const signal = effectiveSignal(checks);
+  const latestCheck = checks.sort((a, b) => a.date.localeCompare(b.date)).at(-1);
+  const today_ = todaySession(repo, today);
+
+  // CFE の前回比（下がる＝改善なので、符号の意味をUIに渡す）
+  const hist = cfe?.history ?? [];
+  const cfeDelta =
+    hist.length >= 2 ? hist[hist.length - 1].after - hist[0].after : undefined;
+
+  // --- 改修A: ホーム再構成で必要になる派生値をここで用意する ---
+  // UIに計算を持ち込まない（同じ数字が画面ごとに違う、という事故を防ぐ）。
+  const allSessions = repo.listSessions();
+  const resultsAll = repo.listResults();
+  const resultBySession = new Map(resultsAll.map((r) => [r.sessionId, r]));
+
+  // 今日のセッションの記録状況（TODAYの主アクションの出し分けに使う）
+  const todayResult = today_.session ? resultBySession.get(today_.session.id) : undefined;
+  const todayIsOff =
+    !today_.session &&
+    allSessions.some((s) => s.date === today && s.category === "off");
+
+  // 前回ポイント練習からの経過（RECOVERY 副指標）
+  const lastQuality = allSessions
+    .filter((s) => isQuality(s.category) && s.date < today && s.status === "completed")
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .at(-1);
+  const daysSinceQuality = lastQuality ? diffDays(lastQuality.date, today) : undefined;
+
+  // 故障ログの未回復件数（RECOVERY 副指標・新規表示）
+  const openInjuries = repo
+    .listInjuries()
+    .filter((i) => i.status !== "recovered");
+
+  // 当日・翌日のセッションに関する警告だけをTODAYに出す（A-3）。
+  // 将来日の警告でホームを占有させない（現行の問題点3）。
+  const tomorrow = addDays(today, 1);
+  const todaySessionIds = new Set(
+    allSessions.filter((s) => s.date === today || s.date === tomorrow).map((s) => s.id)
+  );
+  const todayViolations = violations.filter(
+    (v) =>
+      v.dates.some((dt) => dt === today || dt === tomorrow) ||
+      v.sessionIds.some((id) => todaySessionIds.has(id))
+  );
+
+  // 日付ごとの警告件数（カレンダーのバッジ用・C-2）
+  const violationsByDate: Record<string, number> = {};
+  for (const v of violations) {
+    for (const dt of v.dates) violationsByDate[dt] = (violationsByDate[dt] ?? 0) + 1;
+  }
+
+  return {
+    athlete,
+    goal,
+    cfe,
+    cfeDelta,
+    // H: 表示専用のレンジ。計算には使わない
+    cfeRange: cfe ? cfeRange(cfe.estimated800mSec, cfe.confidence, cfeSpreadForDashboard(repo, today)) : undefined,
+    racePlan: raceSplitPlanInternal(repo),
+    todayResult,
+    todayIsOff,
+    daysSinceQuality,
+    openInjuryCount: openInjuries.length,
+    todayViolations,
+    violationsByDate,
+    diagnosis: diag,
+    currentPhase: phase,
+    signal: signal.signal,
+    signalEscalated: signal.escalated,
+    overallFatigue: latestCheck?.overallFatigue,
+    todaySession: today_.session,
+    readiness: today_.readiness,
+    aerobicProfile,
+    ltRefreshHint: aerobicProfile.refreshHint,
+    lastSync: repo.listSyncs(1)[0],
+    injuries: repo.listInjuries(),
+    daysToRace: targetRace ? diffDays(today, targetRace.dateStart) : undefined,
+    weekSessions: repo.listSessions(weekStart(today), addDays(weekStart(today), 6)),
+    weekStrengths: repo.listStrengths(weekStart(today), addDays(weekStart(today), 6)),
+    violations,
+    weeklySummary: summary,
+    acwr: acwrNow,
+    feasibility,
+    targetRace,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 過去データの遡り入力と現在地の再測定
+// ---------------------------------------------------------------------------
+
+/**
+ * 過去データを1件登録する。
+ *
+ * ここで意図的にやらないこと: CFEの更新と未来セッションへの波及。
+ * processResult（通常の結果記録）はこの2つを必ず行うが、過去データを
+ * それに流すと、±1.5秒のガードレールが件数ぶん適用されてCFEが際限なく動き、
+ * さらに過去日付を起点にした変更提案が大量に出る。
+ * 過去データは「保存」と「負荷・LTへの反映」までにとどめ、
+ * 現在地の算出は assessFitness で全件まとめて1回だけ行う。
+ */
+export function addPastEntry(repo: Store, entry: PastEntry): { entry: PastEntry } {
+  repo.savePastEntry(entry);
+
+  // ACWR（直近28日のうち14日以上のデータが必要）の下地として
+  // 実施済みセッション＋結果に変換して保存する。
+  const { session, result } = toSessionAndResult(entry);
+  repo.saveSession(session);
+  repo.saveResult(result);
+
+  // ジョグ・持続走はLT推定の材料になる
+  const marker = pastToMarker(entry);
+  if (marker) repo.saveMarker(marker);
+
+  return { entry };
+}
+
+export function deletePastEntry(repo: Store, id: string): void {
+  repo.deletePastEntry(id);
+  repo.deleteSession(`past-s-${id}`);
+}
+
+export interface AssessFitnessOutput extends FitnessAssessment {
+  currentCfeSec?: number;
+  /** 過去データだけを対象にしたルール診断（過去の練習構成の問題点） */
+  pastStructureIssues: RuleViolation[];
+  entryCount: number;
+}
+
+/**
+ * 登録済みの過去データ全件から現在地を1回だけ算出する（適用はしない）。
+ */
+export function assessFitness(repo: Store, today: string): AssessFitnessOutput {
+  const athlete = repo.getAthlete();
+  if (!athlete) throw new Error("選手プロフィールが未登録です");
+  const entries = repo.listPastEntries();
+  const cfe = repo.getCfe();
+  const assessment = assessCurrentFitness(entries, athlete, today, {
+    currentCfeSec: cfe?.estimated800mSec,
+  });
+
+  return {
+    ...assessment,
+    currentCfeSec: cfe?.estimated800mSec,
+    pastStructureIssues: diagnosePastStructure(repo, today),
+    entryCount: entries.length,
+  };
+}
+
+/**
+ * 過去の練習構成そのものをルールエンジンにかける。
+ *
+ * 現在地の把握には「今どれくらい走れるか」だけでなく
+ * 「どういう積み方をしてきたか」も要る。高乳酸が週2回入っていた、
+ * 質練習が連日だった、といった構造上の問題は不振の原因になり得るので、
+ * プランの違反とは別枠で見せる。
+ */
+export function diagnosePastStructure(repo: Store, today: string): RuleViolation[] {
+  const backfilled = repo.listSessions().filter((s) => s.backfilled);
+  if (backfilled.length === 0) return [];
+  const base = buildRuleContext(repo, today);
+  return runRuleEngine({
+    ...base,
+    sessions: backfilled,
+    // 過去の構成診断では、これから組むプランを対象にしたルール
+    // （テーパー・レース前後）は意味がないので races/goal を外す
+    races: [],
+    goal: undefined,
+  }).filter((v) => v.level !== "INFO");
+}
+
+/**
+ * 算出した現在地をCFEへ反映する（本人の承認後に呼ぶ）。
+ * 逐次更新のガードレールは通さず、履歴に根拠を残して一度で置き換える。
+ */
+export function applyAssessedCfe(
+  repo: Store,
+  today: string
+): { before?: number; after: number; changes: SessionChange[] } {
+  const a = assessFitness(repo, today);
+  if (a.estimated800mSec === undefined) {
+    throw new Error("現在地を推定できる実測がありません");
+  }
+  const cur = repo.getCfe();
+  const before = cur?.estimated800mSec;
+  const after = a.estimated800mSec;
+  repo.saveCfe({
+    estimated800mSec: after,
+    confidence: a.confidence,
+    lastUpdated: today,
+    history: [
+      ...(cur?.history ?? []),
+      {
+        date: today,
+        before: before ?? after,
+        after,
+        source: `過去データ${a.samples.length}件からの再測定（${a.samples
+          .slice(0, 3)
+          .map((s) => `${s.date} ${s.label}`)
+          .join(" / ")}${a.samples.length > 3 ? " ほか" : ""}）`,
+      },
+    ],
+  });
+
+  // CFEが変わればすべての設定ペースが変わる
+  const changes = repaceFutureSessions(repo, today);
+  return { before, after, changes };
+}
+
+
+// ---------------------------------------------------------------------------
+// D-3「前回と同じ」
+// ---------------------------------------------------------------------------
+
+/**
+ * 指定セッションと同じカテゴリの、直近の記録を返す。
+ * 呼び出し側（記録フォーム）はこれを初期値として読み込み、
+ * どこから読んだかを必ず画面に出す。
+ */
+export function previousEntryFor(
+  repo: Store,
+  sessionId: string
+): PreviousEntry | undefined {
+  const session = repo.getSession(sessionId);
+  if (!session) return undefined;
+  return findPreviousEntry(
+    repo.listSessions(),
+    repo.listResults(),
+    session.category,
+    session.date,
+    session.id
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// F-2 一括入力
+// ---------------------------------------------------------------------------
+
+/** 解釈済みの1行を PastEntry に変換する（登録は呼び出し側で行う） */
+export function rowToPastEntry(row: ParsedRow, index: number): PastEntry | undefined {
+  if (!row.date || !row.kind) return undefined;
+  const base: PastEntry = {
+    id: `pe-bulk-${row.date}-${index}`,
+    date: row.date,
+    kind: row.kind,
+    avgHr: row.avgHr,
+    note: [row.note, row.supplementNote].filter(Boolean).join(" ／ ") || undefined,
+  };
+  if (row.kind === "race" || row.kind === "timetrial") {
+    return {
+      ...base,
+      distanceM: row.raceDistanceM,
+      timeSec: row.raceTimeSec,
+      // 区間ラップを落とさない。これがレース配分シミュレータの唯一の材料で、
+      // 落とすと「ラップが足りません」と言われ続けることになる
+      lapsSec: row.lapsSec,
+      lapDistanceM:
+        row.lapsSec && row.raceDistanceM
+          ? Math.round(row.raceDistanceM / row.lapsSec.length)
+          : undefined,
+    };
+  }
+  if (row.kind === "interval") {
+    return {
+      ...base,
+      category: row.category,
+      repDistanceM: row.repDistanceM,
+      reps: row.reps,
+      repTimesSec: row.repTimesSec,
+    };
+  }
+  if (row.kind === "off") return base;
+  if (row.kind === "strength") return base;
+  return {
+    ...base,
+    distanceKm: row.distanceKm,
+    // 0.1分（6秒）まで丸める。1840秒を割った 30.666666666666668 のような値を
+    // そのまま保存すると、一覧にもバックアップJSONにも出てしまう
+    durationMin:
+      row.durationSec !== undefined ? Math.round((row.durationSec / 60) * 10) / 10 : undefined,
+  };
+}
+
+export interface BulkImportResult {
+  imported: number;
+  skipped: number;
+  entries: PastEntry[];
+  /** そのうち補強として StrengthSession に入れた件数 */
+  strengthCount: number;
+}
+
+/**
+ * 解釈済みの行をまとめて登録する。
+ *
+ * ready でない行は登録しない。「とりあえず入れておく」を許すと、
+ * 推測混じりのデータが CFE と ACWR に流れて、あとから切り分けられなくなる。
+ */
+export function importBulkRows(
+  repo: Store,
+  rows: ParsedRow[]
+): BulkImportResult {
+  const entries: PastEntry[] = [];
+  const athlete = repo.getAthlete();
+  let skipped = 0;
+  let strengthCount = 0;
+
+  rows.forEach((row, i) => {
+    if (!computeReady(row)) {
+      skipped++;
+      return;
+    }
+
+    // 補強は SessionCategory を増やさず、既存の StrengthSession へ流す。
+    // 走練習と同じ経路に入れると ACWR で二重計上される。
+    if (row.kind === "strength") {
+      repo.saveStrength({
+        id: `past-st-${row.date}-${i}`,
+        date: row.date!,
+        timeOfDay: "pm",
+        type: row.strengthType ?? "strength",
+        loadLevel: "moderate",
+        exercises: row.note ? [row.note] : [],
+        durationMin: row.durationSec !== undefined ? Math.round(row.durationSec / 60) : undefined,
+        contactCount: row.contactCount,
+        status: "completed",
+        note: "過去データの一括入力",
+      });
+      strengthCount++;
+      return;
+    }
+
+    const e = rowToPastEntry(row, i);
+    if (!e) {
+      skipped++;
+      return;
+    }
+    // 保存直前にもう一度検査する（画面で編集された値が入ってくるため）
+    if (hasBlockingIssue(checkPastEntry(e, athlete))) {
+      skipped++;
+      return;
+    }
+    addPastEntry(repo, e);
+    entries.push(e);
+  });
+  return { imported: entries.length + strengthCount, skipped, entries, strengthCount };
+}
+
+/**
+ * テキストを解釈して返すだけ（保存しない）。プレビュー用。
+ *
+ * 現在のCFEからGRP（秒/m）を作って渡す。
+ * 「1000(3:15-25)×4」の設定タイムがGRPの何%かでカテゴリが決まるので、
+ * これがあるかどうかで「未確定」の数が大きく変わる。
+ */
+export function previewBulkText(repo: Store, text: string, today: string): ParsedRow[] {
+  const cfe = repo.getCfe();
+  const athlete = repo.getAthlete();
+  const rows = parseBulkText(text, today, {
+    grpSecPerM: cfe ? cfe.estimated800mSec / 800 : undefined,
+    phrases: repo.listPhrases(),
+  });
+  // 読めてしまった間違いを検査する。読めなかったものより危ない
+  return rows.map((row) => {
+    const entry = rowToPastEntry(row, 0);
+    if (!entry) return row;
+    const issues = checkPastEntry(entry, athlete);
+    if (issues.length === 0) return row;
+    return {
+      ...row,
+      issues: [...row.issues, ...issues.map((i) => `${i.severity === "error" ? "要確認" : "注意"}: ${i.message}`)],
+      ready: row.ready && !hasBlockingIssue(issues),
+    };
+  });
+}
+
+/** 表記辞書 */
+export function listPhrases(repo: Store): PhraseRule[] {
+  return repo.listPhrases();
+}
+export function savePhrase(repo: Store, p: PhraseRule): void {
+  repo.savePhrase(p);
+}
+export function deletePhrase(repo: Store, id: string): void {
+  repo.deletePhrase(id);
+}
+
+
+// ---------------------------------------------------------------------------
+// G / H / I
+// ---------------------------------------------------------------------------
+
+/** dashboard から使う内部ヘルパー（循環を避けるため下で定義したものを使う） */
+function cfeSpreadForDashboard(repo: Store, today: string): number {
+  const athlete = repo.getAthlete();
+  if (!athlete) return 0;
+  return spreadOf(assessCurrentFitness(repo.listPastEntries(), athlete, today));
+}
+function raceSplitPlanInternal(repo: Store) {
+  return raceSplitPlan(repo);
+}
+
+/** G: 同一処方の経時比較 */
+export function samePrescriptionGroups(repo: Store) {
+  return groupBySamePrescription(repo.listSessions(), repo.listResults());
+}
+
+/** H: CFEの予測レンジ（表示専用） */
+export function cfeRangeFor(repo: Store, today: string) {
+  const cfe = repo.getCfe();
+  if (!cfe) return undefined;
+  const athlete = repo.getAthlete();
+  let spread = 0;
+  if (athlete) {
+    const a = assessCurrentFitness(repo.listPastEntries(), athlete, today);
+    spread = spreadOf(a);
+  }
+  return cfeRange(cfe.estimated800mSec, cfe.confidence, spread);
+}
+
+/** I: レース配分。過去データのレース区間ラップを材料にする */
+export function raceSplitPlan(repo: Store) {
+  const goal = repo.getGoal();
+  if (!goal) return undefined;
+  const samples: RaceLapSample[] = repo
+    .listPastEntries()
+    .filter(
+      (e) =>
+        (e.kind === "race" || e.kind === "timetrial") &&
+        e.distanceM === 800 &&
+        (e.lapsSec?.length ?? 0) >= 2
+    )
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((e) => ({ date: e.date, distanceM: e.distanceM!, lapsSec: e.lapsSec! }));
+  return planRaceSplits(goal.targetTimeSec, samples);
+}
+
+// ---------------------------------------------------------------------------
+// M-2 / M-3 / M-9 適応的な処方
+// ---------------------------------------------------------------------------
+
+/** 提案を辞退した記録のキー。辞退したものは出し直さない */
+function proposalRejectKey(sessionId: string): string {
+  return `adaptive:rejected:${sessionId}`;
+}
+
+/** 安静時心拍の平常値（直近28日の中央値）。当日の値と比べる基準にする */
+function restingHrBaseline(checks: DailyCheck[], today: string): number | undefined {
+  const hrs = checks
+    .filter((c) => c.restingHr !== undefined && c.date < today && diffDays(c.date, today) <= 28)
+    .map((c) => c.restingHr!)
+    .sort((a, b) => a - b);
+  if (hrs.length < 5) return undefined;
+  return hrs[Math.floor(hrs.length / 2)];
+}
+
+export interface AdaptiveContext {
+  trend: ExecutionTrend;
+  jog: JogEfficiency;
+  daily: DailyAdjustment;
+  heat: HeatPaceAdjustment;
+}
+
+/**
+ * ある日のある種目について、判断材料を全部そろえる。
+ * 3つの材料（直近の出来・当日のコンディション・ジョグの心拍）を必ず通す。
+ */
+export function adaptiveContext(
+  repo: Store,
+  session: Session,
+  today: string,
+  env?: { wbgt?: number; tempC?: number; humidityPct?: number }
+): AdaptiveContext {
+  const sessions = repo.listSessions();
+  const results = repo.listResults();
+  const checks = repo.listDailyChecks();
+  const athlete = repo.getAthlete();
+
+  const trend = executionTrend(
+    executionSamples(sessions, results, session.category, session.date)
+  );
+  const jog = jogEfficiency(results, today);
+  const eff = effectiveSignal(checks.filter((c) => c.date <= today));
+  let daily = dailyAdjustment(
+    checks.find((c) => c.date === today),
+    eff.signal,
+    jog,
+    restingHrBaseline(checks, today)
+  );
+
+  /*
+   * M-6 との干渉を切る。
+   * テーパー期は「直近の出来が悪いから量を落とす」のではなく「意図的に落とす」期間。
+   * 両方を掛けると二重に落ちて、レース前に必要な刺激まで消える。
+   * 設定ペースの調整（実行可能性の担保）だけを残す。
+   */
+  const goal = repo.getGoal();
+  const race = repo.listRaces().find((r) => r.id === goal?.targetRaceId);
+  const stage = race ? taperStage(session.date, race.dateStart) : "none";
+  if (shouldSuppressVolumeAdjustment(stage) && daily.repFactor !== 1) {
+    daily = {
+      ...daily,
+      repFactor: 1,
+      reasons: [
+        ...daily.reasons,
+        `${TAPER_STAGE_LABELS[stage]}のため、量の調整は調整期の設計に任せます（二重に落とさない）`,
+      ],
+    };
+  }
+  const heat = heatPaceAdjustment({
+    wbgt: env?.wbgt,
+    tempC: env?.tempC,
+    humidityPct: env?.humidityPct,
+    heatTolerance: athlete?.heatTolerance,
+    category: session.category,
+  });
+  return { trend, jog, daily, heat };
+}
+
+export interface AdaptiveProposalOutput {
+  proposal?: PrescriptionProposal;
+  context?: AdaptiveContext;
+  /** 対象セッション。無ければ提案も無い */
+  session?: Session;
+  criteria?: AbortCriteria;
+  rejected?: { at: string; reason?: string };
+}
+
+/**
+ * 次に行うポイント練習について、内容と設定を作り直した案を返す。
+ *
+ * 保存はしない。何をどれだけ動かしたかを見せて、本人が選ぶ。
+ * 黙って書き換えると、次に未達だったときに
+ * 「設定が下がったからできたのか、実力が上がったのか」が判別できなくなる。
+ */
+export function adaptiveProposal(
+  repo: Store,
+  today: string,
+  opts: { sessionId?: string; wbgt?: number; tempC?: number; humidityPct?: number } = {}
+): AdaptiveProposalOutput {
+  if (opts.sessionId) {
+    const s = repo.listSessions().find((x) => x.id === opts.sessionId);
+    return s ? buildProposal(repo, s, today, opts) : {};
+  }
+  const list = adaptiveProposals(repo, today, opts);
+  // 変わるものを優先して出す。全部据え置きなら直近のものを出す
+  return list.find((p) => p.proposal?.hasChange) ?? list[0] ?? {};
+}
+
+/**
+ * 今後のポイント練習をすべて見て、それぞれの案を返す。
+ *
+ * 「次の1本」だけを見ると、たまたま次が経済走で高乳酸の材料が使われない、
+ * ということが起きる。カテゴリごとに材料が違うので、まとめて出す。
+ */
+export function adaptiveProposals(
+  repo: Store,
+  today: string,
+  opts: { wbgt?: number; tempC?: number; humidityPct?: number; days?: number } = {}
+): AdaptiveProposalOutput[] {
+  const until = addDays(today, opts.days ?? 14);
+  return repo
+    .listSessions()
+    .filter(
+      (s) =>
+        s.status !== "completed" &&
+        s.status !== "skipped" &&
+        s.date >= today &&
+        s.date <= until &&
+        !s.isFixed &&
+        isQuality(s.category) &&
+        s.targetPaces.length > 0
+    )
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((s) => buildProposal(repo, s, today, opts));
+}
+
+function buildProposal(
+  repo: Store,
+  session: Session,
+  today: string,
+  opts: { wbgt?: number; tempC?: number; humidityPct?: number }
+): AdaptiveProposalOutput {
+  const ctx = adaptiveContext(repo, session, today, opts);
+  const proposal = adjustPrescription({
+    session,
+    trend: ctx.trend,
+    daily: ctx.daily,
+    heatFactor: ctx.heat.factor,
+    heatNote: ctx.heat.applied ? ctx.heat.note : undefined,
+  });
+  const tp = session.targetPaces[0];
+  const criteria = tp
+    ? abortCriteria(session.category, (tp.targetSecFast + tp.targetSecSlow) / 2)
+    : undefined;
+  return {
+    session,
+    proposal,
+    context: ctx,
+    criteria,
+    rejected: repo.getKv<{ at: string; reason?: string }>(proposalRejectKey(session.id)),
+  };
+}
+
+/** 提案を適用する。適用したことは変更履歴に残す */
+export function applyAdaptiveProposal(
+  repo: Store,
+  sessionId: string,
+  today: string
+): { applied: boolean; changes: SessionChange[]; violations: RuleViolation[] } {
+  const out = adaptiveProposal(repo, today, { sessionId });
+  const { session, proposal } = out;
+  if (!session || !proposal || !proposal.hasChange) {
+    return { applied: false, changes: [], violations: [] };
+  }
+  repo.saveSession({
+    ...session,
+    targetPaces: proposal.afterPaces,
+    prescription: proposal.afterPrescription,
+    status: "modified",
+  });
+  for (const c of proposal.changes) repo.logChange(c, true);
+  repo.deleteKv(proposalRejectKey(sessionId));
+  return {
+    applied: true,
+    changes: proposal.changes,
+    violations: runRuleEngine(buildRuleContext(repo, today)),
+  };
+}
+
+/** 提案を辞退する。同じ提案を出し直さない */
+export function rejectAdaptiveProposal(
+  repo: Store,
+  sessionId: string,
+  today: string,
+  reason?: string
+): void {
+  repo.saveKv(proposalRejectKey(sessionId), { at: today, reason });
+  const out = adaptiveProposal(repo, today, { sessionId });
+  for (const c of out.proposal?.changes ?? []) repo.logChange(c, false, reason ?? "本人が辞退");
+}
+
+/** 処方に中止基準を添えた文字列（表示用。保存されている処方は変えない） */
+export function prescriptionText(session: Session): string {
+  const tp = session.targetPaces[0];
+  if (!tp || !isQuality(session.category)) return session.prescription;
+  const target = (tp.targetSecFast + tp.targetSecSlow) / 2;
+  return prescriptionWithCriteria(session.prescription, target, abortCriteria(session.category, target));
+}
+
+// ---------------------------------------------------------------------------
+// M-4 セッション中の入力
+// ---------------------------------------------------------------------------
+
+export interface SessionProgress {
+  sessionId: string;
+  /** 入れた順の実施タイム（秒） */
+  reps: number[];
+  targetSec: number;
+  plannedReps: number;
+  distanceM: number;
+  updatedAt: string;
+}
+
+function progressKey(sessionId: string): string {
+  return `progress:${sessionId}`;
+}
+
+/**
+ * 走っている最中の入力を保存する。
+ *
+ * 端末を閉じても消えないこと。1本ごとに入れる使い方なので、
+ * 画面を閉じた瞬間に消えるなら誰も使わない。
+ */
+export function saveSessionProgress(
+  repo: Store,
+  sessionId: string,
+  reps: number[],
+  today: string
+): SessionProgressView {
+  const prev = repo.getKv<SessionProgress>(progressKey(sessionId));
+  const session = repo.getSession(sessionId);
+  if (!session) throw new Error("セッションが見つかりません");
+  const tp = session.targetPaces[0];
+  const p: SessionProgress = {
+    sessionId,
+    reps,
+    targetSec: prev?.targetSec ?? (tp ? (tp.targetSecFast + tp.targetSecSlow) / 2 : 0),
+    plannedReps: prev?.plannedReps ?? repsOf(session) ?? reps.length,
+    distanceM: prev?.distanceM ?? tp?.distanceM ?? 0,
+    updatedAt: today,
+  };
+  repo.saveKv(progressKey(sessionId), p);
+  return sessionProgress(repo, sessionId);
+}
+
+export interface SessionProgressView {
+  progress: SessionProgress;
+  criteria: AbortCriteria;
+  evaluation: RepEvaluation;
+}
+
+export function sessionProgress(repo: Store, sessionId: string): SessionProgressView {
+  const session = repo.getSession(sessionId);
+  if (!session) throw new Error("セッションが見つかりません");
+  const tp = session.targetPaces[0];
+  const stored = repo.getKv<SessionProgress>(progressKey(sessionId));
+  const progress: SessionProgress = stored ?? {
+    sessionId,
+    reps: [],
+    targetSec: tp ? (tp.targetSecFast + tp.targetSecSlow) / 2 : 0,
+    plannedReps: repsOf(session) ?? 0,
+    distanceM: tp?.distanceM ?? 0,
+    updatedAt: session.date,
+  };
+  const criteria = abortCriteria(session.category, progress.targetSec);
+  return {
+    progress,
+    criteria,
+    evaluation: evaluateReps(
+      progress.reps,
+      progress.targetSec,
+      progress.plannedReps,
+      criteria
+    ),
+  };
+}
+
+/**
+ * セッションを終える。入力済みの本数がそのまま記録になる。
+ * 打ち切りは「失敗」ではなく正常な運用として残す。
+ */
+export function finishSessionProgress(
+  repo: Store,
+  sessionId: string,
+  input: { rpe: number; subjective: SessionResult["subjective"]; aborted?: boolean; note?: string;
+    tempC?: number; humidityPct?: number }
+): ProcessResultOutput {
+  const view = sessionProgress(repo, sessionId);
+  const session = repo.getSession(sessionId)!;
+  const { progress } = view;
+  const aborted =
+    input.aborted ?? (progress.reps.length < progress.plannedReps && view.evaluation.verdict === "stop");
+
+  const result: SessionResult = {
+    id: `res-${sessionId}`,
+    sessionId,
+    date: session.date,
+    actualLapsSec: progress.reps,
+    lapDistancesM: progress.reps.map(() => progress.distanceM),
+    interval: {
+      reps: progress.plannedReps,
+      distanceM: progress.distanceM,
+      targetSec: progress.targetSec,
+      restType: "jog",
+      results: progress.reps.map((t, i) => ({
+        index: i + 1,
+        distanceM: progress.distanceM,
+        targetSec: progress.targetSec,
+        actualSec: t,
+      })),
+    },
+    completedReps: progress.reps.length,
+    prescribedReps: progress.plannedReps,
+    aborted,
+    abortReason: aborted ? view.evaluation.message : undefined,
+    achievement: "achieved",
+    rpe: input.rpe,
+    subjective: input.subjective,
+    note: input.note,
+    weatherTempC: input.tempC,
+    humidityPct: input.humidityPct,
+  };
+  const out = processResult(repo, result);
+  repo.deleteKv(progressKey(sessionId));
+  if (aborted) {
+    out.guardrailNotes = [
+      "打ち切りとして記録しました。失敗ではありません。中止基準にしたがって止めた本数はCFEの未達には数えません",
+      ...out.guardrailNotes,
+    ];
+  }
+  return out;
+}
+
+/** 入力途中を捨てる */
+export function discardSessionProgress(repo: Store, sessionId: string): void {
+  repo.deleteKv(progressKey(sessionId));
+}
+
+// ---------------------------------------------------------------------------
+// M-5 予定の編集・移動
+// ---------------------------------------------------------------------------
+
+export interface PlanEditResult {
+  ok: boolean;
+  error?: string;
+  applied: boolean;
+  /** この変更で新しく出た違反だけ。元からある違反を並べても判断できない */
+  newViolations: RuleViolation[];
+  /** 変更後の全違反 */
+  violations: RuleViolation[];
+  /** 違反が出るとき、代わりに置ける日 */
+  alternatives: { date: string; note: string }[];
+  session?: Session;
+}
+
+function violationKey(v: RuleViolation): string {
+  return `${v.rule}|${v.level}|${v.dates.join(",")}|${v.message}`;
+}
+
+/**
+ * セッションを差し替えた状態でルールを評価し、必ず元に戻す。
+ *
+ * 「動かせるようにする」だけでは足りない。高乳酸を前倒ししたら間隔が4日になった、
+ * ということが普通に起きる。動かした瞬間に何が壊れるかを出さないと、
+ * 自由に動かせることがそのまま質の低下になる。
+ */
+function evaluateWith(
+  repo: Store,
+  sessionId: string,
+  next: Session | undefined,
+  today: string
+): RuleViolation[] {
+  const original = repo.getSession(sessionId);
+  try {
+    if (next) repo.saveSession(next);
+    else repo.deleteSession(sessionId);
+    return runRuleEngine(buildRuleContext(repo, today));
+  } finally {
+    if (original) repo.saveSession(original);
+    else if (next) repo.deleteSession(sessionId);
+  }
+}
+
+/** 移動先の候補を探す。前後7日で、新しいERROR級の違反が出ない日 */
+function findAlternatives(
+  repo: Store,
+  session: Session,
+  baseKeys: Set<string>,
+  today: string,
+  limit = 3
+): { date: string; note: string }[] {
+  const out: { date: string; note: string }[] = [];
+  const occupied = new Set(
+    repo
+      .listSessions()
+      .filter((s) => s.id !== session.id && isQuality(s.category))
+      .map((s) => s.date)
+  );
+  const offsets = [1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6, 7, -7];
+  for (const off of offsets) {
+    const date = addDays(session.date, off);
+    if (date < today) continue;
+    if (occupied.has(date)) continue;
+    const vs = evaluateWith(repo, session.id, { ...session, date }, today);
+    const added = vs.filter((v) => v.level === "ERROR" && !baseKeys.has(violationKey(v)));
+    if (added.length === 0) {
+      out.push({
+        date,
+        note: `${off > 0 ? `${off}日後` : `${-off}日前`}。ここならERROR級の違反は出ません`,
+      });
+      if (out.length >= limit) break;
+    }
+  }
+  return out;
+}
+
+/**
+ * 予定の変更（内容・日付）。
+ *
+ * force を付けない限り、新しくERROR級の違反が出る変更は適用しない。
+ * force を付けた場合は適用するが、強行したことを変更履歴に残す。
+ */
+export function editSession(
+  repo: Store,
+  sessionId: string,
+  updates: Partial<Session>,
+  today: string,
+  opts: { force?: boolean; dryRun?: boolean } = {}
+): PlanEditResult {
+  const session = repo.getSession(sessionId);
+  if (!session) {
+    return { ok: false, error: "セッションが見つかりません", applied: false, newViolations: [], violations: [], alternatives: [] };
+  }
+  if (session.isFixed) {
+    return {
+      ok: false,
+      error: "固定セッション（チーム練習等）は変更できません（RULE-15）。前後の自由枠を組み替えてください。",
+      applied: false,
+      newViolations: [],
+      violations: [],
+      alternatives: [],
+    };
+  }
+
+  const base = runRuleEngine(buildRuleContext(repo, today));
+  const baseKeys = new Set(base.map(violationKey));
+  const next: Session = { ...session, ...updates, id: session.id, status: "modified" };
+  const after = evaluateWith(repo, sessionId, next, today);
+  const newViolations = after.filter((v) => !baseKeys.has(violationKey(v)));
+  const hasError = newViolations.some((v) => v.level === "ERROR");
+
+  const alternatives =
+    hasError && updates.date ? findAlternatives(repo, next, baseKeys, today) : [];
+
+  if (opts.dryRun || (hasError && !opts.force)) {
+    return {
+      ok: !hasError,
+      applied: false,
+      newViolations,
+      violations: after,
+      alternatives,
+      session: next,
+      error: hasError && !opts.dryRun ? "この変更はルールに反します。内容を確認してください" : undefined,
+    };
+  }
+
+  repo.saveSession(next);
+  if (updates.date && updates.date !== session.date) {
+    repo.logChange(
+      {
+        sessionId,
+        field: "date",
+        before: session.date,
+        after: updates.date,
+        reason: hasError
+          ? `本人の判断で変更（警告あり: ${newViolations.map((v) => v.rule).join(",")}）`
+          : "本人の判断で変更",
+        triggeredBy: "M-5",
+        direction: "neutral",
+        action: "modify",
+      },
+      true,
+      hasError ? "違反を承知で強行" : undefined
+    );
+  }
+  return {
+    ok: true,
+    applied: true,
+    newViolations,
+    violations: runRuleEngine(buildRuleContext(repo, today)),
+    alternatives: [],
+    session: next,
+  };
+}
+
+/** 予定を消す。実施済みの記録は消さない */
+export function deletePlannedSession(repo: Store, sessionId: string, today: string): PlanEditResult {
+  const session = repo.getSession(sessionId);
+  if (!session) {
+    return { ok: false, error: "セッションが見つかりません", applied: false, newViolations: [], violations: [], alternatives: [] };
+  }
+  if (session.isFixed) {
+    return { ok: false, error: "固定セッションは削除できません", applied: false, newViolations: [], violations: [], alternatives: [] };
+  }
+  repo.deleteSession(sessionId);
+  return {
+    ok: true,
+    applied: true,
+    newViolations: [],
+    violations: runRuleEngine(buildRuleContext(repo, today)),
+    alternatives: [],
+  };
+}
+
+/**
+ * 予定を足す。
+ * 同じ日に午前・午後の2本を残したいとき（M-1）にも使う。
+ */
+export function addSession(
+  repo: Store,
+  input: Partial<Session> & { date: string; category: Session["category"] },
+  today: string
+): PlanEditResult {
+  const base = runRuleEngine(buildRuleContext(repo, today));
+  const baseKeys = new Set(base.map(violationKey));
+  const session: Session = {
+    id: input.id ?? `s-user-${input.date}-${Date.now().toString(36)}`,
+    date: input.date,
+    category: input.category,
+    name: input.name ?? "手動で追加した練習",
+    prescription: input.prescription ?? "",
+    targetPaces: input.targetPaces ?? [],
+    transfer800m: input.transfer800m ?? 3,
+    transfer1500m: input.transfer1500m ?? 3,
+    riskLevel: input.riskLevel ?? "mid",
+    phase: input.phase ?? "Specific",
+    status: "planned",
+    isFixed: input.isFixed ?? false,
+    timeOfDay: input.timeOfDay ?? "pm",
+    distanceKm: input.distanceKm,
+    durationMin: input.durationMin,
+    paceSecPerKm: input.paceSecPerKm,
+  };
+  repo.saveSession(session);
+  const after = runRuleEngine(buildRuleContext(repo, today));
+  return {
+    ok: true,
+    applied: true,
+    newViolations: after.filter((v) => !baseKeys.has(violationKey(v))),
+    violations: after,
+    alternatives: [],
+    session,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// M-6 レース前の変則調整
+// ---------------------------------------------------------------------------
+
+export interface TaperPlanOutput {
+  stage: TaperStage;
+  stageLabel: string;
+  daysToRace?: number;
+  notice: string;
+  adjustments: TaperAdjustment[];
+  applied: boolean;
+  /** 既に辞退している場合 */
+  rejected?: { at: string; reason?: string };
+}
+
+const TAPER_REJECT_KEY = "taper:rejected";
+
+/**
+ * テーパーの調整案。
+ *
+ * 生成し直すのではなく、今ある予定に対する差分として出す。
+ * 手で直した内容を消さないため。
+ */
+export function taperPlan(repo: Store, today: string, horizonDays = 21): TaperPlanOutput {
+  const goal = repo.getGoal();
+  const race = repo.listRaces().find((r) => r.id === goal?.targetRaceId);
+  if (!race) {
+    return { stage: "none", stageLabel: "", notice: "", adjustments: [], applied: false };
+  }
+  const days = diffDays(today, race.dateStart);
+  const stage = taperStage(today, race.dateStart);
+  const sessions = repo
+    .listSessions()
+    .filter((s) => s.date >= today && s.date <= addDays(today, horizonDays));
+  const adjustments = planTaper(sessions, race.dateStart, today);
+  return {
+    stage,
+    stageLabel: TAPER_STAGE_LABELS[stage],
+    daysToRace: days >= 0 ? days : undefined,
+    notice: taperNotice(stage, days),
+    adjustments,
+    applied: false,
+    rejected: repo.getKv<{ at: string; reason?: string }>(TAPER_REJECT_KEY),
+  };
+}
+
+/** 調整を適用する。適用したものだけ差分として履歴に残す */
+export function applyTaperPlan(
+  repo: Store,
+  today: string,
+  sessionIds?: string[]
+): { applied: number; violations: RuleViolation[] } {
+  const plan = taperPlan(repo, today);
+  let applied = 0;
+  for (const a of plan.adjustments) {
+    if (!a.next) continue;
+    if (sessionIds && !sessionIds.includes(a.sessionId)) continue;
+    repo.saveSession(a.next);
+    repo.logChange(
+      {
+        sessionId: a.sessionId,
+        field: a.kind,
+        before: a.before,
+        after: a.after,
+        reason: a.reason,
+        triggeredBy: "M-6",
+        direction: "down",
+        action: "modify",
+      },
+      true
+    );
+    applied++;
+  }
+  repo.deleteKv(TAPER_REJECT_KEY);
+  return { applied, violations: runRuleEngine(buildRuleContext(repo, today)) };
+}
+
+export function rejectTaperPlan(repo: Store, today: string, reason?: string): void {
+  repo.saveKv(TAPER_REJECT_KEY, { at: today, reason });
+}
+
+// ---------------------------------------------------------------------------
+// M-7 制限因子 / M-8 600m通過 / M-10 接地時間 / M-11 週次レビュー / M-12 書き出し
+// ---------------------------------------------------------------------------
+
+/** M-7: 制限因子と、それを次の配分にどう反映するか */
+export function limiterAssessment(repo: Store): {
+  assessment?: LimiterAssessment;
+  weights: CategoryWeight[];
+  appliedNote: string;
+} {
+  const athlete = repo.getAthlete();
+  if (!athlete) return { weights: [], appliedNote: "" };
+  const assessment = assessLimiter(athlete, repo.getGoal()?.targetTimeSec);
+  const weights = categoryWeights(assessment.limiter);
+  // 動かす項目だけを出す。据え置き（1.0）を「0%」と並べても判断材料にならない
+  const moved = weights.filter((w) => w.weight !== 1);
+  const appliedNote =
+    moved.length === 0
+      ? "配分は変えません。どちらの側も大きくは外れていないため、今の配分のままで問題ありません"
+      : "次の4週の配分を次のように変えます: " +
+        moved
+          .map(
+            (w) =>
+              `${CATEGORY_JP_LABELS[w.category] ?? w.category} ${w.weight > 1 ? "+" : ""}${Math.round((w.weight - 1) * 100)}%（${w.note}）`
+          )
+          .join(" / ");
+  return { assessment, weights, appliedNote };
+}
+
+const CATEGORY_JP_LABELS: Record<string, string> = {
+  high_lactate: "高乳酸",
+  race_economy: "経済走",
+  modeling: "モデリング",
+  cv: "CV",
+  threshold: "閾値",
+  neural: "神経系",
+  aerobic: "有酸素",
+};
+
+/** M-8: 600m通過からの残り200m */
+export function splitAnalysis(repo: Store): SplitTrend {
+  const goal = repo.getGoal();
+  const target = goal?.targetTimeSec ?? repo.getAthlete()?.pb800mSec ?? 108.9;
+  const samples = [
+    ...splitSamplesFromPast(repo.listPastEntries()),
+    ...splitSamplesFromMarkers(repo.listMarkers()),
+  ];
+  // 同じ日の重複を落とす（過去データと実測マーカーの両方に入ることがある）
+  const seen = new Set<string>();
+  const unique = samples.filter((s) => {
+    const k = `${s.date}|${s.pass600Sec.toFixed(1)}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  return splitTrend(unique, target);
+}
+
+/** M-10: 接地時間 */
+const CONTACT_KEY = "contact:samples";
+
+export function listContactSamples(repo: Store): ContactSample[] {
+  return repo.getKv<ContactSample[]>(CONTACT_KEY) ?? [];
+}
+
+export function importContactSamples(
+  repo: Store,
+  samples: ContactSample[]
+): { imported: number; total: number } {
+  const existing = listContactSamples(repo);
+  const map = new Map(existing.map((s) => [`${s.date}|${s.contactMs}`, s]));
+  let imported = 0;
+  for (const s of samples) {
+    const k = `${s.date}|${s.contactMs}`;
+    if (!map.has(k)) imported++;
+    map.set(k, s);
+  }
+  const merged = [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
+  repo.saveKv(CONTACT_KEY, merged);
+  return { imported, total: merged.length };
+}
+
+export function contactTimeStatus(repo: Store, today: string): ContactAssessment {
+  return assessContactTime(listContactSamples(repo), today);
+}
+
+/** M-11: 週次レビュー */
+export function weeklyReview(repo: Store, today: string, weekStartDate?: string): WeeklyReview {
+  const ws = weekStartDate ?? weekStart(addDays(today, -7));
+  const athlete = repo.getAthlete();
+  const goal = repo.getGoal();
+  const loads = dailyLoads({
+    sessions: repo.listSessions(),
+    resultsBySessionId: new Map(repo.listResults().map((r) => [r.sessionId, r])),
+    strengthSessions: repo.listStrengths(),
+  });
+  let violations: RuleViolation[] = [];
+  try {
+    violations = runRuleEngine(buildRuleContext(repo, today));
+  } catch {
+    violations = [];
+  }
+  return buildWeeklyReview({
+    weekStart: ws,
+    sessions: repo.listSessions(),
+    results: repo.listResults(),
+    checks: repo.listDailyChecks(),
+    violations,
+    acwr: acwr(loads, addDays(ws, 6)).acwr,
+    cfeSec: repo.getCfe()?.estimated800mSec,
+    targetSec: goal?.targetTimeSec,
+    limiterNarrative: athlete
+      ? assessLimiter(athlete, goal?.targetTimeSec).narrative
+      : undefined,
+  });
+}
+
+/** M-12: 書き出し */
+const BACKUP_META_KEY = "backup:lastExportedAt";
+
+export function exportBackup(repo: Store, now: string): BackupFile {
+  const data: Record<string, unknown> = {
+    athlete: repo.getAthlete(),
+    goal: repo.getGoal(),
+    races: repo.listRaces(),
+    sessions: repo.listSessions(),
+    strengths: repo.listStrengths(),
+    results: repo.listResults(),
+    dailyChecks: repo.listDailyChecks(),
+    markers: repo.listMarkers(),
+    cfe: repo.getCfe(),
+    heatBlocks: repo.listHeatBlocks(),
+    heatEntries: repo
+      .listHeatBlocks()
+      .flatMap((b) => repo.listHeatEntries(b.id).map((e) => ({ blockId: b.id, entry: e }))),
+    injuries: repo.listInjuries(),
+    weekTemplate: repo.getWeekTemplate(),
+    customMenus: repo.listCustomMenus(),
+    phrases: repo.listPhrases(),
+    pastEntries: repo.listPastEntries(),
+    kv: repo.listKv<unknown>(""),
+  };
+  const counts: Record<string, number> = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (Array.isArray(v)) counts[k] = v.length;
+  }
+  repo.saveKv(BACKUP_META_KEY, now);
+  return {
+    format: BACKUP_FORMAT,
+    version: BACKUP_VERSION,
+    exportedAt: now,
+    athleteName: repo.getAthlete()?.name,
+    counts,
+    data,
+  };
+}
+
+export function backupStatus(repo: Store, today: string) {
+  const last = repo.getKv<string>(BACKUP_META_KEY);
+  return { ...shouldRemindBackup(last, today, diffDays), lastExportedAt: last };
+}
+
+/**
+ * 復元。
+ * replace = いま入っているものを消してから入れる
+ * merge   = idで突き合わせて足す（重複を作らない）
+ */
+export function importBackup(
+  repo: Store,
+  file: unknown,
+  mode: RestoreMode
+): RestoreReport {
+  if (!isBackupFile(file)) {
+    throw new Error("このファイルはFORGEの書き出しファイルではありません");
+  }
+  const report: RestoreReport = { mode, added: {}, updated: {}, warnings: [] };
+  const d = file.data as Record<string, any>;
+
+  if (mode === "replace") repo.resetAll();
+
+  if (d.athlete) repo.saveAthlete(d.athlete);
+  if (d.goal) repo.saveGoal(d.goal);
+  if (d.cfe) repo.saveCfe(d.cfe);
+  if (d.weekTemplate) repo.saveWeekTemplate(d.weekTemplate);
+
+  const put = <T extends { id: string }>(
+    name: string,
+    incoming: T[] | undefined,
+    existing: () => T[],
+    save: (x: T) => void
+  ) => {
+    if (!incoming) return;
+    const cur = mode === "replace" ? [] : existing();
+    const { merged, added, updated } = mergeById(cur, incoming);
+    report.added[name] = added;
+    report.updated[name] = updated;
+    for (const x of merged) save(x);
+  };
+
+  put("races", d.races, () => repo.listRaces(), (x) => repo.saveRace(x));
+  put("sessions", d.sessions, () => repo.listSessions(), (x) => repo.saveSession(x));
+  put("strengths", d.strengths, () => repo.listStrengths(), (x) => repo.saveStrength(x));
+  put("results", d.results, () => repo.listResults(), (x) => repo.saveResult(x));
+  put("markers", d.markers, () => repo.listMarkers(), (x) => repo.saveMarker(x));
+  put("injuries", d.injuries, () => repo.listInjuries(), (x) => repo.saveInjury(x));
+  put("customMenus", d.customMenus, () => repo.listCustomMenus(), (x) => repo.saveCustomMenu(x));
+  put("phrases", d.phrases, () => repo.listPhrases(), (x) => repo.savePhrase(x));
+  put("pastEntries", d.pastEntries, () => repo.listPastEntries(), (x) => repo.savePastEntry(x));
+  put("heatBlocks", d.heatBlocks, () => repo.listHeatBlocks(), (x) => repo.saveHeatBlock(x));
+
+  if (Array.isArray(d.dailyChecks)) {
+    const cur = mode === "replace" ? [] : repo.listDailyChecks();
+    const { merged, added, updated } = mergeByDate(cur, d.dailyChecks);
+    report.added.dailyChecks = added;
+    report.updated.dailyChecks = updated;
+    for (const c of merged) repo.saveDailyCheck(c);
+  }
+  if (Array.isArray(d.heatEntries)) {
+    for (const h of d.heatEntries) repo.saveHeatEntry(h.blockId, h.entry);
+  }
+  if (Array.isArray(d.kv)) {
+    for (const x of d.kv) repo.saveKv(x.key, x.value);
+  }
+
+  if (file.version > BACKUP_VERSION) {
+    report.warnings.push(
+      `このファイルは新しい形式（v${file.version}）です。読めない項目がある可能性があります`
+    );
+  }
+  return report;
+}
+
+// ---------------------------------------------------------------------------
+// N-2 / N-3 メニュー本文の解釈
+// ---------------------------------------------------------------------------
+
+/**
+ * 本文から構造とカテゴリを読み取る。
+ *
+ * 現在のCFEからGRPを渡すので、設定タイムが書かれていればカテゴリが一意に決まる。
+ * 表記辞書も通すので、本人が登録した語も効く。
+ * 一括入力とまったく同じ解釈になる（同じ関数を通しているため）。
+ */
+export function interpretPrescription(repo: Store, text: string): PrescriptionStructure {
+  const cfe = repo.getCfe();
+  return parsePrescription(text, {
+    grpSecPerM: cfe ? cfe.estimated800mSec / 800 : undefined,
+    phrases: repo.listPhrases(),
+  });
+}

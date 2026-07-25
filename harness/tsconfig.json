@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "jsx": "react-jsx",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "paths": {
+      "@/*": ["../src/*"],
+      "next/link": ["./stubs/link.tsx"],
+      "next/navigation": ["./stubs/navigation.ts"]
+    }
+  }
+}

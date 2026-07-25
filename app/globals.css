@@ -1,0 +1,283 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * FORGE デザイントークン
+ *
+ * 方針: 黒・白・グレーで90%、FORGE Green は10%だけ。
+ * 緑は「今日」「主アクション」「改善方向」にのみ使い、面で塗らない。
+ * ガラスモーフィズム・過剰な影は使わない。読みやすさを優先する。
+ */
+:root {
+  /*
+   * セーフエリア（iPhoneのステータスバー / ホームインジケータ）。
+   * env() を直接あちこちに書くと、抜けている箇所があっても気づけないので
+   * ここで1回だけ変数にまとめる。
+   * ホーム画面から起動した standalone 表示では上下に実際の値が入る。
+   */
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+
+  --bg: #0a0a0a;
+  --surface: #111111;
+  --surface-2: #171717;
+  --border: #1a1a1a;
+  --border-2: #262626;
+
+  /* FORGE Green。--volt は既存コードからの別名として残す */
+  --forge: #b6ff00;
+  --volt: #b6ff00;
+  --volt-ink: #0a0a0a;
+  --volt-dim: rgba(182, 255, 0, 0.1);
+
+  --amber: #ffc107;
+  --red: #ff4d4d;
+
+  --text: #ffffff;
+  --text-2: #9ca3af;
+  --text-3: #6b7280;
+
+  /*
+   * カテゴリ配色。
+   * 「カラフルなUIは禁止」なので、画面本体では使わずチャートとカレンダーの
+   * 系列識別にだけ使う。識別の主役は文字（A/H/R/N/T/C/M）で、色は補助。
+   * 彩度を落として、緑（FORGE Green）と衝突しない色相に寄せてある。
+   */
+  --cat-race-economy: #6ea8dc;
+  --cat-high-lactate: #e08a5f;
+  --cat-cv: #5fae90;
+  --cat-threshold: #cfa14e;
+  --cat-neural: #c78aa6;
+  --cat-aerobic: #7f9c74;
+  --cat-modeling: #9d95d4;
+  --cat-off: #4b4b4b;
+
+  --radius: 14px;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  font-family: "Helvetica Neue", -apple-system, BlinkMacSystemFont, "Hiragino Sans",
+    "Noto Sans JP", "Yu Gothic UI", sans-serif;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+}
+
+/* ---- 部品 ---- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+  /* 影・ぼかしは使わない（FORGE: ガラスモーフィズム禁止・過剰な影禁止） */
+  box-shadow: none;
+}
+.card-t {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* 数値を主役にする。ラベルより数値が先に目に入ること */
+.hero {
+  font-size: 46px;
+  font-weight: 800;
+  line-height: 0.95;
+  letter-spacing: -0.035em;
+  font-variant-numeric: tabular-nums;
+}
+.metric {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.metric-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  color: var(--text-3);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: var(--volt-dim);
+  color: var(--volt);
+  border: 1px solid rgba(182, 255, 0, 0.26);
+  white-space: nowrap;
+}
+.btn-volt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--volt);
+  color: var(--volt-ink);
+  border: 0;
+  border-radius: 10px;
+  padding: 13px 16px;
+  font-size: 13.5px;
+  font-weight: 800;
+  cursor: pointer;
+  min-height: 44px;
+  transition: opacity 160ms ease;
+}
+.btn-volt:active {
+  opacity: 0.82;
+}
+.btn-volt:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border-2);
+  color: var(--text-2);
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease;
+}
+.btn-ghost:hover {
+  border-color: var(--text-3);
+  color: var(--text);
+}
+
+/* フォーム要素をダーク基調に統一 */
+input,
+select,
+textarea {
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--volt);
+}
+input::placeholder {
+  color: var(--text-3);
+}
+/* ダークUIでのネイティブ日付/時刻ピッカー */
+input[type="date"],
+input[type="datetime-local"] {
+  color-scheme: dark;
+}
+select option {
+  background: var(--surface-2);
+  color: var(--text);
+}
+label {
+  color: var(--text-2);
+}
+
+table {
+  border-color: var(--border);
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-2);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---- FORGE: セグメント（ホームの3セクション / 記録タブ） ---- */
+.seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.seg button {
+  flex: 1;
+  min-height: 36px;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  padding: 0 2px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+.seg button[data-on="1"] {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* ページドット（横スワイプの現在位置） */
+.dots {
+  display: flex;
+  gap: 5px;
+  justify-content: center;
+}
+.dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--border-2);
+  transition: background 160ms ease, width 160ms ease;
+}
+.dots i[data-on="1"] {
+  background: var(--forge);
+  width: 14px;
+  border-radius: 3px;
+}
+
+/* 横スワイプのカルーセル。セクション内では縦スクロールを起こさない */
+.swipe {
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.swipe::-webkit-scrollbar {
+  display: none;
+}
+.swipe > section {
+  flex: 0 0 100%;
+  scroll-snap-align: start;
+  min-width: 0;
+}

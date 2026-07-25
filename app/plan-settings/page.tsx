@@ -1,0 +1,478 @@
+"use client";
+import { useCallback, useEffect, useState } from "react";
+import {
+  Card,
+  CATEGORY_COLORS,
+  ConfirmButton,
+  UndoBar,
+  ViolationList,
+} from "../components/ui";
+import {
+  DOW_LABELS,
+  SLOT_LABELS,
+  SOURCE_LABELS,
+  emptyWeekTemplate,
+  validateWeekTemplate,
+  type CustomMenu,
+  type CustomMenuSource,
+  type Dow,
+  type WeekdaySlot,
+  type WeekTemplate,
+} from "@/lib/core/weekTemplate";
+import type { SessionCategory } from "@/lib/core/types";
+
+const DOWS: Dow[] = [1, 2, 3, 4, 5, 6, 0]; // 月〜日で表示
+const SLOT_OPTIONS: WeekdaySlot[] = [
+  "auto",
+  "point",
+  "high_lactate",
+  "race_economy",
+  "cv",
+  "threshold",
+  "neural",
+  "aerobic",
+  "off",
+];
+
+export default function PlanSettingsPage() {
+  return (
+    <div className="flex flex-col gap-3">
+      <WeekTemplateCard />
+      <CustomMenuCard />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 3-1. 固定曜日設定
+// ---------------------------------------------------------------------------
+
+function WeekTemplateCard() {
+  const [t, setT] = useState<WeekTemplate>(emptyWeekTemplate());
+  const [msg, setMsg] = useState("");
+
+  useEffect(() => {
+    fetch("/api/plan-settings")
+      .then((r) => r.json())
+      .then((d) => d.weekTemplate && setT(d.weekTemplate));
+  }, []);
+
+  const violations = validateWeekTemplate(t);
+  const errors = violations.filter((v) => v.level === "ERROR");
+
+  const save = async () => {
+    await fetch("/api/plan-settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ weekTemplate: t }),
+    });
+    setMsg(
+      "保存しました。「目標・レース」画面で『プランを自動生成』を押すとカレンダーに反映されます。"
+    );
+  };
+
+  const setSlot = (dow: Dow, slot: WeekdaySlot) =>
+    setT((prev) => ({ ...prev, slots: { ...prev.slots, [dow]: slot } }));
+
+  return (
+    <Card title="固定曜日設定">
+      <label className="flex items-center gap-2 text-[13px] mb-3 min-h-[44px]">
+        <input
+          type="checkbox"
+          className="w-5 h-5"
+          checked={t.enabled}
+          onChange={(e) => setT({ ...t, enabled: e.target.checked })}
+        />
+        曜日ごとの枠を固定する
+      </label>
+
+      <p className="text-[11px] mb-3 leading-relaxed" style={{ color: "var(--text-2)" }}>
+        生活リズムやチームの活動日に合わせて枠を先に決めます。内容（どのカテゴリの練習にするか）は
+        フェーズに応じて自動で決まります。「ポイント練習」を指定した曜日<b style={{ color: "var(--text)" }}>以外</b>
+        には質練習が入らなくなります。
+      </p>
+
+      <div className="flex flex-col gap-1.5">
+        {DOWS.map((dow) => {
+          const slot = t.slots[dow] ?? "auto";
+          const cat = SLOT_OPTIONS.includes(slot) && slot !== "auto" && slot !== "point"
+            ? (slot as SessionCategory)
+            : undefined;
+          return (
+            <div key={dow} className="flex items-center gap-2">
+              <span
+                className="w-8 text-[13px] font-bold text-center rounded"
+                style={{
+                  color: dow === 0 ? "var(--red)" : dow === 6 ? "var(--cat-race-economy)" : "var(--text)",
+                }}
+              >
+                {DOW_LABELS[dow]}
+              </span>
+              <span
+                className="w-1.5 h-6 rounded-sm flex-shrink-0"
+                style={{
+                  background: cat ? CATEGORY_COLORS[cat] : slot === "point" ? "var(--volt)" : "transparent",
+                }}
+              />
+              <select
+                className="flex-1 min-h-[44px]"
+                disabled={!t.enabled}
+                value={slot}
+                onChange={(e) => setSlot(dow, e.target.value as WeekdaySlot)}
+              >
+                {SLOT_OPTIONS.map((o) => (
+                  <option key={o} value={o}>
+                    {SLOT_LABELS[o]}
+                  </option>
+                ))}
+              </select>
+              <label className="text-[10.5px] flex items-center gap-1" style={{ color: "var(--text-3)" }}>
+                <input
+                  type="radio"
+                  name="longrun"
+                  className="w-4 h-4"
+                  disabled={!t.enabled || slot !== "aerobic"}
+                  checked={t.longRunDow === dow}
+                  onChange={() => setT({ ...t, longRunDow: dow })}
+                />
+                長走
+              </label>
+            </div>
+          );
+        })}
+      </div>
+
+      {t.enabled && violations.length > 0 ? (
+        <div className="mt-3">
+          <ViolationList violations={violations} />
+        </div>
+      ) : null}
+
+      <div className="flex gap-2 mt-3 flex-wrap">
+        <ConfirmButton
+          label="設定を保存"
+          title="固定曜日の設定を保存しますか？"
+          message={
+            errors.length > 0
+              ? "ERROR級の問題が残っています。このまま保存すると、生成時にルール違反が出る可能性があります。"
+              : "保存後、プランを再生成すると反映されます。"
+          }
+          danger={errors.length > 0}
+          className="btn-volt justify-center min-h-[44px]"
+          onConfirm={save}
+        />
+        <ConfirmButton
+          label="設定をリセット"
+          title="固定曜日の設定をリセットしますか？"
+          className="btn-ghost min-h-[44px]"
+          onConfirm={() => {
+            setT(emptyWeekTemplate());
+            setMsg("リセットしました。保存を押すと確定します。");
+          }}
+        />
+      </div>
+      {msg ? <p className="text-[12px] mt-2">{msg}</p> : null}
+
+      <p className="text-[10.5px] mt-3 leading-relaxed" style={{ color: "var(--text-3)" }}>
+        レース前2週間のテーパー期は、安全のため固定曜日より調整設計が優先されます
+        （休養に固定した曜日でも、レース前日は刺激入れが入ります）。
+      </p>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 3-2. 自作メニュー登録
+// ---------------------------------------------------------------------------
+
+const MENU_CATEGORIES: SessionCategory[] = [
+  "high_lactate",
+  "race_economy",
+  "modeling",
+  "cv",
+  "threshold",
+  "neural",
+  "aerobic",
+];
+
+const CAT_LABELS: Record<string, string> = {
+  high_lactate: "高乳酸",
+  race_economy: "経済走",
+  modeling: "モデリング",
+  cv: "CV",
+  threshold: "閾値",
+  neural: "神経系",
+  aerobic: "ジョグ",
+};
+
+function CustomMenuCard() {
+  const [menus, setMenus] = useState<CustomMenu[]>([]);
+  const [open, setOpen] = useState(false);
+  const [undo, setUndo] = useState<CustomMenu | null>(null);
+  const [msg, setMsg] = useState("");
+  const [form, setForm] = useState({
+    name: "",
+    category: "high_lactate" as SessionCategory,
+    source: "self" as CustomMenuSource,
+    prescription: "",
+    distanceM: "",
+    note: "",
+  });
+
+  const load = useCallback(() => {
+    fetch("/api/plan-settings")
+      .then((r) => r.json())
+      .then((d) => setMenus(d.customMenus ?? []));
+  }, []);
+  useEffect(load, [load]);
+
+  const save = async () => {
+    if (!form.name || !form.prescription) {
+      setMsg("名前と内容は必須です");
+      return;
+    }
+    await fetch("/api/plan-settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        customMenu: {
+          name: form.name,
+          category: form.category,
+          source: form.source,
+          prescription: form.prescription,
+          distanceM: form.distanceM ? Number(form.distanceM) : undefined,
+          note: form.note || undefined,
+        },
+      }),
+    });
+    setForm({ ...form, name: "", prescription: "", distanceM: "", note: "" });
+    setOpen(false);
+    setMsg("登録しました。プランを再生成すると、このメニューが優先して使われます。");
+    load();
+  };
+
+  const remove = async (m: CustomMenu) => {
+    await fetch(`/api/plan-settings?menuId=${encodeURIComponent(m.id)}`, {
+      method: "DELETE",
+    });
+    setUndo(m);
+    load();
+  };
+
+  const restore = async () => {
+    if (!undo) return;
+    await fetch("/api/plan-settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customMenu: undo }),
+    });
+    setUndo(null);
+    load();
+  };
+
+  const toggleActive = async (m: CustomMenu) => {
+    await fetch("/api/plan-settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customMenu: { ...m, active: m.active === false } }),
+    });
+    load();
+  };
+
+  const byCategory = new Map<string, CustomMenu[]>();
+  for (const m of menus) {
+    if (!byCategory.has(m.category)) byCategory.set(m.category, []);
+    byCategory.get(m.category)!.push(m);
+  }
+
+  return (
+    <Card
+      title="自作メニューの登録"
+      right={
+        <button
+          className="text-[11px] min-h-[36px] px-2"
+          style={{ color: "var(--volt)" }}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? "閉じる" : "+ 登録する"}
+        </button>
+      }
+    >
+      <p className="text-[11px] mb-3 leading-relaxed" style={{ color: "var(--text-2)" }}>
+        自分がやっていた練習、コーチから指示された練習、過去にうまくいったパターンを登録すると、
+        メニュー生成のときに自動生成より優先して使われます。
+        「過去にうまくいった」が最優先で、同じ練習が連続しないよう自動で入れ替わります。
+      </p>
+
+      {open ? (
+        <div
+          className="flex flex-col gap-2 mb-3 pb-3 border-b"
+          style={{ borderColor: "var(--border)" }}
+        >
+          <label className="text-[13px]">
+            <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
+              メニュー名
+            </span>
+            <input
+              className="w-full"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder="例: 大学の定番 300m×6"
+            />
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-[13px]">
+              <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
+                カテゴリ
+              </span>
+              <select
+                className="w-full"
+                value={form.category}
+                onChange={(e) =>
+                  setForm({ ...form, category: e.target.value as SessionCategory })
+                }
+              >
+                {MENU_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {CAT_LABELS[c]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-[13px]">
+              <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
+                由来
+              </span>
+              <select
+                className="w-full"
+                value={form.source}
+                onChange={(e) =>
+                  setForm({ ...form, source: e.target.value as CustomMenuSource })
+                }
+              >
+                {(Object.keys(SOURCE_LABELS) as CustomMenuSource[]).map((s) => (
+                  <option key={s} value={s}>
+                    {SOURCE_LABELS[s]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <label className="text-[13px]">
+            <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
+              内容
+            </span>
+            <input
+              className="w-full"
+              value={form.prescription}
+              onChange={(e) => setForm({ ...form, prescription: e.target.value })}
+              placeholder="例: 300m×6 r4分 jog"
+            />
+          </label>
+          <label className="text-[13px]">
+            <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
+              1本の距離(m)・任意 — 入れると設定タイムが自動計算されます
+            </span>
+            <input
+              className="w-full"
+              value={form.distanceM}
+              onChange={(e) => setForm({ ...form, distanceM: e.target.value })}
+              placeholder="300"
+              inputMode="numeric"
+            />
+          </label>
+          <label className="text-[13px]">
+            <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
+              メモ（任意）
+            </span>
+            <input
+              className="w-full"
+              value={form.note}
+              onChange={(e) => setForm({ ...form, note: e.target.value })}
+            />
+          </label>
+          <ConfirmButton
+            label="このメニューを登録"
+            title="自作メニューを登録しますか？"
+            message="登録後、プランを再生成すると同じカテゴリの自動生成メニューの代わりに使われます。"
+            className="btn-volt justify-center min-h-[44px]"
+            onConfirm={save}
+            disabled={!form.name || !form.prescription}
+          />
+        </div>
+      ) : null}
+
+      {msg ? <p className="text-[12px] mb-2">{msg}</p> : null}
+
+      {menus.length === 0 ? (
+        <p className="text-[11px]" style={{ color: "var(--text-3)" }}>
+          登録はありません。まずは「これをやると調子が上がる」という練習を1つ入れてみてください。
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {[...byCategory.entries()].map(([cat, items]) => (
+            <div key={cat}>
+              <div className="text-[11px] font-bold mb-1 flex items-center gap-1.5">
+                <span
+                  className="w-2 h-2 rounded-full inline-block"
+                  style={{ background: CATEGORY_COLORS[cat as SessionCategory] }}
+                />
+                {CAT_LABELS[cat]}
+              </div>
+              {items.map((m) => (
+                <div
+                  key={m.id}
+                  className="text-[11px] rounded-lg border p-2.5 mb-1.5"
+                  style={{
+                    borderColor: "var(--border)",
+                    background: "var(--surface-2)",
+                    opacity: m.active === false ? 0.5 : 1,
+                  }}
+                >
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold">{m.name}</div>
+                      <div className="num" style={{ color: "var(--text-2)" }}>
+                        {m.prescription}
+                      </div>
+                      <div className="text-[10px] mt-0.5" style={{ color: "var(--text-3)" }}>
+                        {SOURCE_LABELS[m.source]}
+                        {m.timesUsed ? ` ／ ${m.timesUsed}回使用` : ""}
+                        {m.lastUsedDate ? ` ／ 最終 ${m.lastUsedDate}` : ""}
+                        {m.note ? ` ／ ${m.note}` : ""}
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1 flex-shrink-0">
+                      <button
+                        className="btn-ghost !py-1 !px-2 !text-[10px]"
+                        onClick={() => toggleActive(m)}
+                      >
+                        {m.active === false ? "有効化" : "一時停止"}
+                      </button>
+                      <ConfirmButton
+                        label="削除"
+                        title="このメニューを削除しますか？"
+                        message="削除後8秒間は取り消せます。"
+                        danger
+                        className="btn-ghost !py-1 !px-2 !text-[10px]"
+                        onConfirm={() => remove(m)}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {undo ? (
+        <UndoBar
+          message={`「${undo.name}」を削除しました`}
+          onUndo={restore}
+          onDismiss={() => setUndo(null)}
+        />
+      ) : null}
+    </Card>
+  );
+}
