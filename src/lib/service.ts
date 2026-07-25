@@ -1143,6 +1143,12 @@ export function rowToPastEntry(row: ParsedRow, index: number): PastEntry | undef
       repDistanceM: row.repDistanceM,
       reps: row.reps,
       repTimesSec: row.repTimesSec,
+      // 設定タイムとレストを落とさない。落とすと結果に「設定に対してどうだったか」が
+      // 残らず、週次レビュー・同一処方の比較・M-2の判断材料すべてから外れる
+      targetSec: row.targetSec,
+      restSec: row.restSec,
+      restDistanceM: row.restDistanceM,
+      restType: row.restType,
     };
   }
   if (row.kind === "off") return base;

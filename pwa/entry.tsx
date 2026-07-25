@@ -4,8 +4,7 @@
  */
 import * as React from "react";
 import { createRoot } from "react-dom/client";
-import { BottomTabs, MobileHeader, Sidebar } from "../app/components/nav";
-import { RecordFab } from "../app/components/fab";
+import { AppShell } from "../app/components/app-shell";
 import { Card, ConfirmButton } from "../app/components/ui";
 
 import Dashboard from "../app/page";
@@ -269,18 +268,11 @@ function App() {
   React.useEffect(() => {
     window.scrollTo(0, 0);
   }, [path]);
+  // 枠は Next.js 版と共有する（app/components/app-shell.tsx）
   return (
-    <div className="flex min-h-screen">
-      <Sidebar />
-      <div className="flex-1 min-w-0 flex flex-col">
-        <MobileHeader />
-        <main className="flex-1 p-3.5 md:p-5 pb-24 md:pb-6 max-w-[1200px] w-full">
-          <Page key={path} />
-        </main>
-      </div>
-      <RecordFab />
-      <BottomTabs />
-    </div>
+    <AppShell>
+      <Page key={path} />
+    </AppShell>
   );
 }
 

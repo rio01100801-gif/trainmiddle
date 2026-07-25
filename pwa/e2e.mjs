@@ -622,19 +622,30 @@ if ((await q2.count()) > 0) {
 // ---- 9d. B-2: 分析タブにレース分析が統合されているか ----
 await page.goto("http://localhost:8791/#/analysis");
 await page.waitForTimeout(900);
-for (const label of ["推移", "負荷", "バランス", "レース"]) {
+// P-5: セグメントは3つ。増やすと iPhone 幅で label が詰まる
+for (const label of ["現在地", "推移", "レース"]) {
   const c = await page.getByRole("button", { name: label, exact: true }).count();
-  if (c === 0) fail(`分析タブにセグメント「${label}」がない（B-2）`);
+  if (c === 0) fail(`分析タブにセグメント「${label}」がない（B-2 / P-5）`);
 }
+const segCount = await page.locator("div.seg button").count();
+if (segCount !== 3) fail(`P-5: 分析タブのセグメントが3つでない（${segCount}）`);
+// ラベルが省略記号にならず読めること（幅に収まっているか）
+const segFits = await page.evaluate(() => {
+  const btns = [...document.querySelectorAll("div.seg button")];
+  return btns.every((b) => b.scrollWidth <= b.clientWidth + 1);
+});
+if (!segFits) fail("P-5: 分析タブのセグメントのラベルが幅に収まっていない");
 await page.getByRole("button", { name: "レース", exact: true }).click();
 await page.waitForTimeout(700);
 const anaText = await page.textContent("body");
 if (!/ラウンド|レース/.test(anaText)) fail("分析タブのレースセグメントが表示されない（B-2）");
-step("分析タブのセグメント化＋レース分析の統合OK");
+step("分析タブのセグメント化＋レース分析の統合OK（3つに集約）");
 
 // ---- 9e. G: 同一処方の経時比較 ----
 await page.goto("http://localhost:8791/#/analysis");
 await page.waitForTimeout(900);
+await page.getByRole("button", { name: "推移", exact: true }).click();
+await page.waitForTimeout(700);
 const anaText2 = await page.textContent("body");
 if (!anaText2.includes("同じ処方の推移")) fail("同一処方の比較カードが無い（G）");
 if (!/垂れ幅/.test(anaText2)) fail("垂れ幅の表示が無い（G）");
@@ -979,11 +990,6 @@ step("M-5 予定の追加OK（同じ日に午前・午後を分けて残せる�
 // ---- 11e. M-7 / M-8 / M-11 分析 ----
 await page.goto("http://localhost:8791/#/analysis");
 await page.waitForTimeout(900);
-for (const label of ["現在地", "週報"]) {
-  if ((await page.getByRole("button", { name: label, exact: true }).count()) === 0) {
-    fail(`分析タブにセグメント「${label}」がない`);
-  }
-}
 await page.getByRole("button", { name: "現在地", exact: true }).click();
 await page.waitForTimeout(900);
 const gapText = await page.textContent("body");
@@ -994,12 +1000,19 @@ if (!gapText.includes("接地時間")) fail("M-10: 接地時間の枠が無い")
 step("M-7/M-8/M-10 現在地の表示OK");
 await shot("25_m7_gap");
 
-await page.getByRole("button", { name: "週報", exact: true }).click();
-await page.waitForTimeout(900);
-const revText = await page.textContent("body");
+// P-5: 週報は「現在地」に統合したので、同じセグメントの中にある
+const revText = gapText;
 if (!revText.includes("週次レビュー")) fail("M-11: 週次レビューが無い");
 if (!/設定.*に対して平均|ポイント練習は/.test(revText)) fail("M-11: 実測を引用していない");
-step("M-11 週次レビューOK");
+/*
+ * P-2: 一括入力ぶんが週次レビューに入っていること。
+ * 一括入力から作られた結果に構造化記録が無いと、エラーも出さずに「0本 / 0km」になる。
+ * この画面には7月のデータしか入れていないので、0本のままなら落ちている。
+ */
+if (/ポイント練習は0本/.test(revText) && /走行距離は約0km/.test(revText)) {
+  fail("P-2: 週次レビューに一括入力ぶんが入っていない（0本 / 0km のまま）");
+}
+step("M-11 週次レビューOK（一括入力ぶんを含む）");
 
 // ---- 11f. M-12 書き出しと復元 / M-10 取り込み ----
 const backupCheck = await page.evaluate(async () => {
@@ -1346,6 +1359,125 @@ for (const p of ["/", "/setup", "/goal", "/calendar", "/results", "/analysis", "
   if (overflow > 2) fail(`横はみ出し ${p}: ${overflow}px`);
 }
 step("横はみ出しゼロ");
+
+// ---- 13. P-4: 最下部の要素が下部タブバー・FABの裏に隠れていないこと ----
+/*
+ * 下部タブバーとFABは position:fixed なので、スクロール領域が
+ * そのぶんの余白を持っていないと最下部の要素が裏に入る。
+ * 見た目には「スクロールしきった」ように見えるので気づけない。
+ * 余白は app-main の1か所で確保しているが、確保できているかは実測で見る。
+ */
+for (const p of ["/", "/setup", "/goal", "/calendar", "/results", "/analysis", "/race", "/meet", "/heat", "/past", "/plan-settings", "/data", "/settings", "/warnings", "/session"]) {
+  await page.goto(`http://localhost:8791/#${p}`);
+  await page.waitForTimeout(500);
+  const m = await page.evaluate(() => {
+    window.scrollTo(0, document.body.scrollHeight);
+    const tabs = document.querySelector("nav.fixed.bottom-0");
+    if (!tabs) return null;
+    const tabsTop = tabs.getBoundingClientRect().top;
+    const main = document.querySelector("main");
+    if (!main) return null;
+    let contentBottom = -Infinity;
+    let worst = "";
+    for (const el of main.querySelectorAll("*")) {
+      const r = el.getBoundingClientRect();
+      if (r.height <= 0 || r.width <= 0) continue;
+      if (r.bottom > contentBottom) {
+        contentBottom = r.bottom;
+        worst = `${el.tagName.toLowerCase()}.${String(el.className ?? "").slice(0, 40)}`;
+      }
+    }
+    return { tabsTop, contentBottom, worst };
+  });
+  if (!m) {
+    fail(`P-4: ${p} で下部タブバーかmainが見つからない`);
+  } else if (m.contentBottom > m.tabsTop + 1) {
+    fail(
+      `P-4: ${p} の最下部がタブバーの裏に入っている（要素の下端 ${Math.round(m.contentBottom)}px > タブバー上端 ${Math.round(m.tabsTop)}px / ${m.worst}）`
+    );
+  }
+}
+step("P-4 全画面で最下部がタブバー・FABに隠れないOK");
+await shot("29_bottom_clearance");
+
+// ---- 14. P-1: ホームのTODAYからメニューを変更できること ----
+/*
+ * カレンダーの編集シートと同じ実装（SessionEditSheet）を開いている。
+ * 片方だけ直して挙動がずれることを防ぐため、ここでも本文の解釈まで確かめる。
+ */
+// 生成されたプランに今日ぶんが無いことがあるので、対象を1件用意してから確かめる
+await page.evaluate(async () => {
+  const today = new Date();
+  const d = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
+    today.getDate()
+  ).padStart(2, "0")}`;
+  await fetch("/api/plan-edit", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      action: "add",
+      today: d,
+      session: {
+        date: d,
+        category: "high_lactate",
+        name: "TODAY編集テスト",
+        prescription: "600m×3 r10分",
+        timeOfDay: "pm",
+      },
+    }),
+  });
+});
+await page.goto("http://localhost:8791/#/");
+await page.waitForTimeout(1100);
+const todayEditBtn = page.getByRole("button", { name: "メニューを変更", exact: true });
+if ((await todayEditBtn.count()) === 0) {
+  const info = await page.evaluate(async () => {
+    const d = await fetch("/api/dashboard").then((r) => r.json());
+    return {
+      has: !!d.todaySession,
+      isFixed: !!d.todaySession?.isFixed,
+      name: d.todaySession?.name,
+      category: d.todaySession?.category,
+    };
+  });
+  fail(`P-1: TODAYに「メニューを変更」が無い（${JSON.stringify(info)}）`);
+} else {
+  await todayEditBtn.first().click();
+  await page.waitForTimeout(700);
+  const sheet = page.locator("section.card", { hasText: "今日のメニューを変更" }).first();
+  if ((await sheet.count()) === 0) fail("P-1: TODAYから編集シートが開かない");
+  else {
+    const sheetBox = await sheet.boundingBox();
+    if (sheetBox && sheetBox.y > 844) fail(`P-1: 編集シートが画面外に出ている（y=${Math.round(sheetBox.y)}px）`);
+    // 本文を書き換えると、カレンダーと同じように欄が組み変わること
+    const ta = sheet.locator("textarea").first();
+    await ta.fill("300m×5 @41.5秒 r5分");
+    await page.waitForTimeout(900);
+    const slots = await sheet.locator('label:has-text("本目") input').count();
+    if (slots !== 5) fail(`P-1: TODAYの編集シートで欄が組み変わらない（${slots}）`);
+    await sheet.getByRole("button", { name: "保存する", exact: true }).click();
+    await page.waitForTimeout(1200);
+    const afterSave = await page.textContent("body");
+    if (!afterSave.includes("メニューを変更しました")) fail("P-1: TODAYからの保存が反映されない");
+    if (!afterSave.includes("300m×5")) fail("P-1: 保存した本文がTODAYに出ていない");
+  }
+  step("P-1 TODAYからメニューを変更できるOK（カレンダーと同じ実装）");
+  await shot("30_today_edit");
+}
+
+// ---- 15. P-5: 設定画面で何ができるか分かること ----
+await page.goto("http://localhost:8791/#/settings");
+await page.waitForTimeout(600);
+const settingsText = await page.textContent("body");
+for (const g of ["最初に決めるもの", "練習の決まりごと", "データ"]) {
+  if (!settingsText.includes(g)) fail(`P-5: 設定画面のグループ「${g}」が無い`);
+}
+if (!settingsText.includes("固定曜日と自作メニュー")) fail("P-5: 設定項目に何ができるかの説明が無い");
+// 説明を足しても、到達先そのものは減っていないこと
+for (const label of ["プロフィール", "メニュー設定", "目標・レース", "暑熱順化", "データ管理"]) {
+  if (!settingsText.includes(label)) fail(`P-5: 設定から「${label}」に到達できない`);
+}
+step("P-5 設定画面の説明とグループ分けOK（到達先は減っていない）");
 
 if (errors.length) {
   console.log("JS ERRORS:", errors.slice(0, 5));

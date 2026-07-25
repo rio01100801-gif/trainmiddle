@@ -59,12 +59,14 @@ export function buildContinuous(input: {
 
 /** "1000m×5 r2' jog" のような表示文字列を組み立てる */
 export function describeInterval(d: IntervalDetail): string {
+  // レストの種類が書かれていないものは、種類を出さずに量だけ出す
+  const kind = d.restType ? ` ${REST_LABELS[d.restType]}` : "";
   const rest =
     d.restDistanceM !== undefined
-      ? `r${d.restDistanceM}m ${REST_LABELS[d.restType]}`
+      ? `r${d.restDistanceM}m${kind}`
       : d.restSec !== undefined
-        ? `r${formatRest(d.restSec)} ${REST_LABELS[d.restType]}`
-        : REST_LABELS[d.restType];
+        ? `r${formatRest(d.restSec)}${kind}`
+        : kind.trim();
   const target = d.targetSec !== undefined ? ` @${d.targetSec.toFixed(1)}秒` : "";
   return `${d.distanceM}m×${d.reps}${target} ${rest}`;
 }

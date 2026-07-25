@@ -25,7 +25,7 @@
  * 読めないまま放置して人間に全部直させるのは、入力の負担を減らすという
  * 目的そのものを損なう。
  */
-import type { SessionCategory } from "./types";
+import type { RestType, SessionCategory } from "./types";
 import { completeRunTriple, parseDurationToSec } from "./inputFormat";
 import type { PastEntryKind } from "./backfill";
 import { diffDays } from "./dates";
@@ -45,6 +45,13 @@ export interface ParsedRow {
   reps?: number;
   repTimesSec?: number[];
   restNote?: string;
+  /**
+   * レストの構造化。`restNote` は表示用の原文で、こちらは比較・集計用。
+   * 書かれていないものは埋めない（`r5` のように単位が無いときは両方 undefined）。
+   */
+  restSec?: number;
+  restDistanceM?: number;
+  restType?: RestType;
   /** 設定タイム（括弧内）。カテゴリ推定と表示に使う */
   targetSec?: number;
 
@@ -292,6 +299,36 @@ export function parseSegments(content: string): Segment[] {
     out.push({ distanceM: dist, targetSec: timeTokenToSec(first) });
   }
   return out;
+}
+
+/**
+ * レストの表記を構造化する。「5min」「90秒」「100walk」「200jog」など。
+ *
+ * 単位が書かれていないときは時間とも距離とも決まらないので、両方 undefined にする。
+ * 「r5」を5分と読むか5秒と読むかは決められない（読めなかったものを推測で埋めない）。
+ * レストの種類（ジョグ／ウォーク）も書かれていなければ埋めない。
+ * 種類は同一処方の比較には使わず、表示にしか使わないので、不明なら出さないほうが正しい。
+ */
+export function parseRest(token: string): {
+  restSec?: number;
+  restDistanceM?: number;
+  restType?: RestType;
+} {
+  const t = token.trim();
+  const n = Number(/(\d+)/.exec(t)?.[1]);
+  if (!isFinite(n)) return {};
+  const restType: RestType | undefined = /walk|ウォーク/i.test(t)
+    ? "walk"
+    : /jog|ジョグ/i.test(t)
+    ? "jog"
+    : undefined;
+
+  if (/min|分/i.test(t)) return { restSec: n * 60, restType };
+  if (/秒/.test(t)) return { restSec: n, restType };
+  // 「100walk」「200jog」のように単位が省かれるのは距離指定のとき。
+  // 時間を距離の単位なしで書く例（r5 = 5分）とは、ジョグ/ウォークの語で区別できる
+  if (/m/i.test(t) || restType !== undefined) return { restDistanceM: n, restType };
+  return { restType };
 }
 
 /** 300m×6 / 1000(3:15-25)×4 / 300(41-42)×2×2 → 距離と総本数 */
@@ -694,7 +731,10 @@ export function parseRow(
     }
 
     const rest = /[rR]\s*(\d+\s*(?:min|分|秒|m)?\s*(?:jog|walk|ジョグ|ウォーク)?)/.exec(content);
-    if (rest) row.restNote = `r${rest[1].trim()}`;
+    if (rest) {
+      row.restNote = `r${rest[1].trim()}`;
+      Object.assign(row, parseRest(rest[1]));
+    }
 
     if (!row.repDistanceM && row.category !== "neural") {
       row.issues.push("1本の距離を読み取れませんでした（例: 300m×6 / 300(42)）");

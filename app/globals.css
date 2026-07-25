@@ -19,6 +19,28 @@
   --sat: env(safe-area-inset-top, 0px);
   --sab: env(safe-area-inset-bottom, 0px);
 
+  /*
+   * P-4 下部タブバーの高さ。
+   * 内訳: 上padding 8 ＋ アイコン19 ＋ 余白4 ＋ ラベル約12 ＋ 下padding(セーフエリア+12)。
+   * 固定表示なのでスクロール領域はこのぶん自力で空ける必要がある。
+   * 定数で「だいたい96px」と置くとセーフエリアぶん（iPhoneで34px）が足りず、
+   * 最下部の要素がタブバーの裏に入る。ここで1回だけ計算して、
+   * 使う側（main）はこの変数だけを見る。
+   */
+  --tabbar-h: calc(var(--sab) + 55px);
+  /*
+   * FABはタブバーの上に浮いている（bottom: sab+78px / 高さ52px）。
+   * 最下部の要素がFABの裏に隠れないよう、タブバーぶんに加えてこのぶんも空ける。
+   */
+  --fab-clearance: 78px;
+  /*
+   * スクロール領域の下端に確保する余白。main はこの1つだけを見る。
+   * calc をユーティリティ側（pb-[...]）に直接書くと Tailwind が
+   * クラスを生成しないことがあり、生成されなくても画面には出ないまま
+   * 最下部が隠れるだけなので気づけない。ここで確定させる。
+   */
+  --main-bottom-pad: calc(var(--tabbar-h) + var(--fab-clearance));
+
   --bg: #0a0a0a;
   --surface: #111111;
   --surface-2: #171717;

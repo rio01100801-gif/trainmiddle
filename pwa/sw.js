@@ -11,7 +11,7 @@
  *
  * リリースのたびに VERSION を必ず上げること（上げないと install が走らない）。
  */
-const VERSION = "forge-v13";
+const VERSION = "forge-v14";
 const ASSETS = [
   "./",
   "./index.html",

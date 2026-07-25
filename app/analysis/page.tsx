@@ -80,19 +80,29 @@ function LineChart({
   );
 }
 
+/**
+ * P-5 セグメントは3つ。
+ *
+ * 6つ（推移/負荷/バランス/レース/現在地/週報）を横に等分すると、
+ * iPhone幅では1つ約59pxで「バランス」「現在地」が詰まり、
+ * どれが今選ばれているかも読み取りにくかった。
+ *
+ * 数を減らすために機能を消すのではなく、問いの単位でまとめる。
+ *   現在地 … 今どこにいるか（現在地 + 週報）
+ *   推移   … どう変わってきたか（CFE・経済走 + 負荷 + バランス）
+ *   レース … レースに向けて何をするか
+ * 中身のカードは縦に並ぶだけなので、まとまっても迷わない。
+ */
 const ANALYSIS_SEGMENTS = [
+  { key: "now", label: "現在地" },
   { key: "trend", label: "推移" },
-  { key: "load", label: "負荷" },
-  { key: "balance", label: "バランス" },
   { key: "race", label: "レース" },
-  { key: "gap", label: "現在地" },
-  { key: "review", label: "週報" },
 ] as const;
 type AnalysisSeg = (typeof ANALYSIS_SEGMENTS)[number]["key"];
 
 export default function AnalysisPage() {
   const [data, setData] = useState<any | null>(null);
-  const [seg, setSeg] = useState<AnalysisSeg>("trend");
+  const [seg, setSeg] = useState<AnalysisSeg>("now");
 
   useEffect(() => {
     fetch("/api/analysis")
@@ -127,8 +137,8 @@ export default function AnalysisPage() {
       </div>
 
       {seg === "race" ? <RaceAnalysis /> : null}
-      {seg === "gap" ? <GapPanel /> : null}
-      {seg === "review" ? <ReviewPanel /> : null}
+      {seg === "now" ? <GapPanel /> : null}
+      {seg === "now" ? <ReviewPanel /> : null}
 
       <div className={seg === "trend" ? "grid md:grid-cols-2 gap-3" : "hidden"}>
       <Card title="CFE（推定800mタイム）の推移">
@@ -170,7 +180,7 @@ export default function AnalysisPage() {
       </Card>
       </div>
 
-      <div className={seg === "load" ? "grid md:grid-cols-2 gap-3" : "hidden"}>
+      <div className={seg === "trend" ? "grid md:grid-cols-2 gap-3" : "hidden"}>
       <Card title="日次負荷（RPE×分）とACWR">
         <LineChart
           points={(data.loadSeries ?? [])
@@ -200,7 +210,7 @@ export default function AnalysisPage() {
 
       </div>
 
-      <div className={seg === "balance" ? "grid md:grid-cols-2 gap-3" : "hidden"}>
+      <div className={seg === "trend" ? "grid md:grid-cols-2 gap-3" : "hidden"}>
       <Card title="転移度バランス（今週のカテゴリ構成）">
         {lastWeek ? (
           <div>

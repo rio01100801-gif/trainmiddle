@@ -1,9 +1,10 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { localToday } from "@/lib/core/dates";
 import { Card, Sparkline, fmtSec } from "./components/ui";
 import { withQuery } from "./components/route";
+import { SessionEditSheet } from "./components/session-edit-sheet";
 
 /**
  * ホーム画面（改修指示書 フェーズA）
@@ -50,12 +51,14 @@ export default function Home() {
   const [err, setErr] = useState<string | null>(null);
   const today = localToday();
 
-  useEffect(() => {
+  const load = useCallback(() => {
     fetch("/api/dashboard")
       .then((r) => r.json())
       .then((x) => (x.error ? setErr(x.error) : setD(x)))
       .catch((e) => setErr(String(e)));
   }, []);
+
+  useEffect(load, [load]);
 
   if (err) {
     return (
@@ -78,7 +81,7 @@ export default function Home() {
 
   return (
     <div className="flex flex-col gap-3">
-      <Today d={d} today={today} />
+      <Today d={d} today={today} onChanged={load} />
       <TodayAdjust sessionId={d.todaySession?.id} today={today} />
       <Notices today={today} />
       <WeekStrip d={d} today={today} />
@@ -264,11 +267,19 @@ function Notices({ today }: { today: string }) {
 // ① TODAY（A-3）
 // ---------------------------------------------------------------------------
 
-function Today({ d, today }: { d: any; today: string }) {
+function Today({ d, today, onChanged }: { d: any; today: string; onChanged: () => void }) {
   const s = d.todaySession;
   const r = d.readiness;
   const result = d.todayResult;
   const violations = (d.todayViolations ?? []) as any[];
+  /**
+   * P-1: TODAYから直接メニューを直せるようにする。
+   * カレンダーの編集シートと同じ実装（SessionEditSheet）をそのまま開く。
+   * 「今日のメニューが合っていない」と気づくのはホームを見た瞬間なので、
+   * そこからカレンダーへ回り道させない。
+   */
+  const [editing, setEditing] = useState(false);
+  const [msg, setMsg] = useState("");
 
   // 主アクションは「状態が変わっても位置が変わらない」ことが条件（A-3）。
   // 押す場所を毎日探し直さずに済むよう、必ずカード末尾の同じ位置に出す。
@@ -289,6 +300,22 @@ function Today({ d, today }: { d: any; today: string }) {
     action = { label: "記録する", href: "/results", kind: "primary" };
   }
 
+  if (s && editing) {
+    return (
+      <SessionEditSheet
+        session={s}
+        today={today}
+        title={`今日のメニューを変更 ／ ${s.name}`}
+        onClose={() => setEditing(false)}
+        onDone={(m) => {
+          setEditing(false);
+          setMsg(m);
+          onChanged();
+        }}
+      />
+    );
+  }
+
   return (
     <Card>
       <div className="flex items-center justify-between gap-2 mb-2.5">
@@ -297,6 +324,11 @@ function Today({ d, today }: { d: any; today: string }) {
           {today.slice(5).replace("-", "/")}（{dowOf(today)}）
         </span>
       </div>
+      {msg ? (
+        <p className="text-[11.5px] mb-2" style={{ color: "var(--text-3)" }}>
+          {msg}
+        </p>
+      ) : null}
 
       {s ? (
         <>
@@ -375,6 +407,12 @@ function Today({ d, today }: { d: any; today: string }) {
               <Link href={withQuery("/run", { sessionId: s.id })} className="btn-ghost text-center">
                 走りながら入力する
               </Link>
+            ) : null}
+            {/* P-1: 固定枠（チーム練習等）は動かせないので出さない */}
+            {!s.isFixed ? (
+              <button className="btn-ghost text-center" onClick={() => setEditing(true)}>
+                メニューを変更
+              </button>
             ) : null}
             <Link href={withQuery("/session", { id: s.id })} className="btn-ghost text-center">
               メニューの根拠を確認

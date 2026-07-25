@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import * as React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -9,6 +9,7 @@ import {
   prescriptionPayload,
   usePrescriptionFields,
 } from "../components/prescription-fields";
+import { SessionEditSheet } from "../components/session-edit-sheet";
 import { localToday } from "@/lib/core/dates";
 
 /**
@@ -232,7 +233,7 @@ export default function CalendarPage() {
       ) : null}
 
       {editing ? (
-        <EditSheet
+        <SessionEditSheet
           session={editing}
           today={todayStr}
           onClose={() => setEditing(null)}
@@ -558,135 +559,6 @@ function RowBody({
 // ---------------------------------------------------------------------------
 // M-5 予定の編集・追加
 // ---------------------------------------------------------------------------
-
-function EditSheet({
-  session,
-  today,
-  onClose,
-  onMove,
-  onDone,
-}: {
-  session: any;
-  today: string;
-  onClose: () => void;
-  onMove: () => void;
-  onDone: (msg: string) => void;
-}) {
-  const [prescription, setPrescription] = useState(session.prescription ?? "");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const [violations, setViolations] = useState<any[]>([]);
-
-  // N-2: 本文に合わせた入力欄。追加シートと同じ実装を使う
-  const fields = usePrescriptionFields(prescription, {
-    category: session.category ?? "",
-    distanceKm: session.distanceKm !== undefined ? String(session.distanceKm) : "",
-    durationMin: session.durationMin !== undefined ? String(session.durationMin) : "",
-    fallbackKind: session.category === "aerobic" ? "continuous" : "interval",
-  });
-  const { setSlotTargets } = fields;
-
-  // 初期表示: 保存済みの設定タイムを欄に入れる
-  useEffect(() => {
-    const tps = session.targetPaces ?? [];
-    if (tps.length === 0) return;
-    setSlotTargets((prev) =>
-      prev.length > 0
-        ? prev
-        : tps.map((tp: any) => String(Math.round(((tp.targetSecFast + tp.targetSecSlow) / 2) * 10) / 10))
-    );
-  }, [session.id, setSlotTargets]);
-
-  const save = async (force = false) => {
-    setBusy(true);
-    setErr("");
-    try {
-      const updates: any = { prescription, ...prescriptionPayload(fields) };
-      if (fields.category) updates.category = fields.category;
-
-      const r = await fetch("/api/plan-edit", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sessionId: session.id, updates, today, force }),
-      });
-      const out = await r.json();
-      if (out.error) {
-        setErr(out.error);
-        setViolations(out.newViolations ?? []);
-        return;
-      }
-      onDone("メニューを変更しました。");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const remove = async () => {
-    const r = await fetch(
-      `/api/plan-edit?sessionId=${encodeURIComponent(session.id)}&date=${today}`,
-      { method: "DELETE" }
-    );
-    const out = await r.json();
-    onDone(out.error ?? "予定を削除しました。");
-  };
-
-  return (
-    <Card title={`${session.date.slice(5).replace("-", "/")} ${session.name}`}>
-      <label className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
-        メニュー本文
-      </label>
-      <textarea
-        rows={3}
-        className="w-full mb-1.5"
-        style={{ fontSize: 12 }}
-        value={prescription}
-        onChange={(e) => setPrescription(e.target.value)}
-      />
-
-      <PrescriptionFields state={fields} emptyCategoryLabel="カテゴリ" />
-
-      {err ? (
-        <p className="text-[11.5px] mb-2" style={{ color: "var(--red)" }}>
-          {err}
-        </p>
-      ) : null}
-      {violations.length > 0 ? (
-        <div className="mb-2">
-          {violations.map((v: any, i: number) => (
-            <p key={i} className="text-[11px] mb-1" style={{ color: "var(--red)" }}>
-              {v.rule}: {v.message}
-            </p>
-          ))}
-          <button className="btn-ghost !text-[11.5px]" style={{ color: "var(--amber)" }} onClick={() => save(true)}>
-            承知のうえで保存する
-          </button>
-        </div>
-      ) : null}
-
-      <div className="flex gap-2 flex-wrap">
-        <button className="btn-volt" disabled={busy} onClick={() => save(false)}>
-          保存する
-        </button>
-        <button className="btn-ghost" onClick={onMove}>
-          日付を変える
-        </button>
-        <a className="btn-ghost" href={withQuery("/run", { sessionId: session.id })}>
-          走りながら入力
-        </a>
-        <ConfirmButton
-          label="削除"
-          title="この予定を削除しますか？"
-          message="記録済みの結果は消えません。予定だけを消します。"
-          className="btn-ghost"
-          onConfirm={remove}
-        />
-        <button className="btn-ghost" onClick={onClose}>
-          閉じる
-        </button>
-      </div>
-    </Card>
-  );
-}
 
 function AddSheet({
   date,

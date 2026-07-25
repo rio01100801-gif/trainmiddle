@@ -21,6 +21,8 @@
  */
 import type {
   Athlete,
+  ContinuousRunDetail,
+  IntervalDetail,
   RestType,
   Session,
   SessionCategory,
@@ -63,8 +65,14 @@ export interface PastEntry {
   reps?: number;
   repDistanceM?: number;
   repTimesSec?: number[];
+  /**
+   * 設定タイム（秒）。本文に書かれていたものだけ。
+   * これが無いと「設定に対してどうだったか」が出せず、M-2 の判断材料にならない。
+   */
+  targetSec?: number;
   restType?: RestType;
   restSec?: number;
+  restDistanceM?: number;
 
   /** continuous: 距離と時間 */
   distanceKm?: number;
@@ -616,6 +624,11 @@ export function toSessionAndResult(
     id: `past-r-${e.id}`,
     sessionId: session.id,
     date: e.date,
+    // 通常の記録と同じ構造を持たせる。
+    // ここが空だと、週次レビュー・同一処方の比較・M-2の判断材料など
+    // 「構造化記録があること」を前提にした下流すべてから、一括入力ぶんが静かに落ちる。
+    interval: intervalDetailOf(e),
+    continuous: continuousDetailOf(e),
     actualLapsSec:
       e.kind === "interval" ? e.repTimesSec ?? [] : e.lapsSec ?? (e.timeSec ? [e.timeSec] : []),
     lapDistancesM:
@@ -642,6 +655,47 @@ export function toSessionAndResult(
   };
 
   return { session, result };
+}
+
+/**
+ * 一括入力・遡り入力の1件を、通常の記録と同じ構造化記録に直す。
+ *
+ * 実測が無いものは作らない（本数と距離だけが分かっていても、
+ * 1本ごとのタイムが無ければ「設定に対してどうだったか」は出せない）。
+ * 埋められない項目は undefined のままにする。推測で埋めると、
+ * どれが実測でどれが補完かがあとから分からなくなる。
+ */
+function intervalDetailOf(e: PastEntry): IntervalDetail | undefined {
+  if (e.kind !== "interval") return undefined;
+  if (!e.repDistanceM) return undefined;
+  const times = e.repTimesSec ?? [];
+  const reps = e.reps ?? times.length;
+  if (reps === 0 && times.length === 0) return undefined;
+  return {
+    reps: reps || times.length,
+    distanceM: e.repDistanceM,
+    targetSec: e.targetSec,
+    restType: e.restType,
+    restSec: e.restSec,
+    restDistanceM: e.restDistanceM,
+    results: times.map((sec, i) => ({
+      index: i + 1,
+      distanceM: e.repDistanceM!,
+      targetSec: e.targetSec,
+      actualSec: sec,
+    })),
+  };
+}
+
+function continuousDetailOf(e: PastEntry): ContinuousRunDetail | undefined {
+  if (e.kind !== "continuous") return undefined;
+  if (!e.distanceKm || !e.durationMin) return undefined;
+  return {
+    distanceKm: e.distanceKm,
+    durationMin: e.durationMin,
+    avgPaceSecPerKm: (e.durationMin * 60) / e.distanceKm,
+    avgHr: e.avgHr,
+  };
 }
 
 /**

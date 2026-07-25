@@ -243,7 +243,12 @@ export interface IntervalDetail {
   reps: number;
   distanceM: number;
   targetSec?: number;
-  restType: RestType;
+  /**
+   * レストの種類。日誌に書かれていないことがあるので任意。
+   * 「r5分」とだけ書かれたものをジョグと決めつけない（表示にしか使わない項目なので、
+   * 分からないなら出さないほうが正しい）。
+   */
+  restType?: RestType;
   /** レスト時間（秒）。距離指定の場合は undefined */
   restSec?: number;
   /** レスト距離（m）。時間指定の場合は undefined */
