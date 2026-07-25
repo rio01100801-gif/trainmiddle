@@ -29,13 +29,23 @@
 <div id="root"></div>
 <script src="./bundle.js"></script>
 <script>
-  // Reactがマウントしたらスプラッシュを外す
-  const t = setInterval(() => {
-    if (document.getElementById("root").children.length > 0) {
-      document.getElementById("splash").remove();
-      clearInterval(t);
-    }
-  }, 60);
+  // Reactがマウントしたらスプラッシュを外す。
+  //
+  // 必ず即時関数で包むこと。bundle.js もこのスクリプトも「クラシックスクリプト」で、
+  // トップレベルの let/const は同じレキシカルスコープを共有する。
+  // 素で const t と書くと、minifierが bundle 側に付けた1文字変数と衝突して
+  // "Identifier 't' has already been declared" でこのスクリプト全体が落ち、
+  // スプラッシュが永久に消えなくなる（アプリ自体は動いているのに真っ暗に見える）。
+  (function () {
+    var timer = setInterval(function () {
+      var root = document.getElementById("root");
+      var splash = document.getElementById("splash");
+      if (root && root.children.length > 0) {
+        if (splash) splash.remove();
+        clearInterval(timer);
+      }
+    }, 60);
+  })();
 </script>
 </body>
 </html>
