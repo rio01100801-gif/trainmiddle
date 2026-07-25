@@ -304,7 +304,7 @@ await page.getByRole("textbox", { name: "本数", exact: true }).fill("5");
 await page.locator('label:has-text("レスト内容") select').selectOption("jog");
 await page.locator('label:has-text("レスト指定") select').selectOption("time");
 // N-2: メニューの構造に合わせて1本ずつの欄が出る
-const repInputs = page.locator('label:has-text("本目") input');
+const repInputs = page.locator('input[aria-label*="実施タイム"]');
 const repCount = await repInputs.count();
 // 本数に5を入れたので、欄も5つになること（処方の本数より入力の本数を優先する）
 if (repCount !== 5) fail(`N-2: 1本ずつの入力欄が本数と合っていない（${repCount}個）`);
@@ -319,9 +319,41 @@ if ((await page.getByRole("textbox", { name: /実施タイム/ }).count()) === 0
 }
 await page.getByRole("button", { name: "1本ずつ", exact: true }).click();
 await page.waitForTimeout(200);
-if ((await page.locator('label:has-text("本目") input').first().inputValue()) !== "39.2") {
+if ((await page.locator('input[aria-label*="実施タイム"]').first().inputValue()) !== "39.2") {
   fail("N-2: 切り替えで1本ずつの入力値が消えている");
 }
+/*
+ * Q-1: 1本ごとの平均心拍。任意項目なので既定では欄を出さない。
+ * 出したときも iPhone 幅で実施タイムの欄が潰れないことを実測で見る。
+ */
+const hrToggle = page.getByText("1本ごとの平均心拍も入れる（任意）");
+if ((await hrToggle.count()) === 0) fail("Q-1: 心拍を入れる切り替えが無い");
+if ((await page.locator('input[aria-label*="平均心拍"]').count()) !== 0) {
+  fail("Q-1: 心拍の欄が既定で出ている（任意項目なので既定では出さない）");
+}
+await hrToggle.click();
+await page.waitForTimeout(300);
+const hrInputs = page.locator('input[aria-label*="平均心拍"]');
+if ((await hrInputs.count()) !== 5) {
+  fail(`Q-1: 心拍の欄が本数と合っていない（${await hrInputs.count()}）`);
+}
+// 欄が2つ並んでも、どちらもタップして入力できる幅が残っていること
+const widths = await page.evaluate(() =>
+  [...document.querySelectorAll('input[aria-label*="実施タイム"], input[aria-label*="平均心拍"]')].map(
+    (el) => el.getBoundingClientRect().width
+  )
+);
+const narrowest = Math.min(...widths);
+if (narrowest < 56) fail(`Q-1: 心拍を出すと入力欄が狭すぎる（最小 ${Math.round(narrowest)}px）`);
+// 実施タイムは心拍を出しても消えないこと
+if ((await repInputs.first().inputValue()) !== "39.2") {
+  fail("Q-1: 心拍の欄を出したら実施タイムが消えた");
+}
+for (const [i, v] of ["172", "176", "179", "182"].entries()) {
+  await hrInputs.nth(i).fill(v);
+}
+step(`Q-1 1本ごとの心拍OK（既定は非表示 / 最小幅 ${Math.round(narrowest)}px）`);
+
 await page.locator('label:has-text("RPE") input').first().fill("10");
 await page.locator('label:has-text("主観") select').selectOption("very_hard");
 // 2-1: 環境条件（折りたたみを開く）
@@ -591,9 +623,9 @@ if ((await q2.count()) > 0) {
       fail("「前回と同じ」で読み込み元が表示されない（D-3）");
     } else {
       // 実施タイムは前回の値を持ち込まない（今日の結果ではないため）
-      const repVals = await page.locator('label:has-text("本目") input').allInnerTexts().catch(() => []);
+      const repVals = await page.locator('input[aria-label*="実施タイム"]').allInnerTexts().catch(() => []);
       const filled = await page
-        .locator('label:has-text("本目") input')
+        .locator('input[aria-label*="実施タイム"]')
         .evaluateAll((els) => els.map((e) => e.value).filter((v) => v.trim() !== ""));
       if (filled.length > 0) fail(`前回の実施タイムを持ち込んでいる: ${filled.join(",")}`);
       step("「前回と同じ」OK（出典表示・実施タイムは空のまま）");
@@ -1478,6 +1510,74 @@ for (const label of ["プロフィール", "メニュー設定", "目標・レ�
   if (!settingsText.includes(label)) fail(`P-5: 設定から「${label}」に到達できない`);
 }
 step("P-5 設定画面の説明とグループ分けOK（到達先は減っていない）");
+
+// ---- 16. Q-2: 足りていないカテゴリの提案 ----
+await page.goto("http://localhost:8791/#/analysis");
+await page.waitForTimeout(900);
+await page.getByRole("button", { name: "現在地", exact: true }).click();
+await page.waitForTimeout(900);
+const covCard = page.locator("section.card", { hasText: "直近4週の配分" }).first();
+if ((await covCard.count()) === 0) fail("Q-2: 直近4週の配分カードが無い");
+else {
+  const covText = await covCard.textContent();
+  // 判断の根拠を数字で出していること（回数を伴わない指摘にしない）
+  if (!/4週で\d+回/.test(covText)) fail("Q-2: 基準の回数が出ていない");
+  if (!/直近4週は\d+回/.test(covText)) fail("Q-2: 実施回数が出ていない");
+  const api = await page.evaluate(async () => {
+    const d = await fetch("/api/coverage").then((r) => r.json());
+    return d.review;
+  });
+  if (!api) fail("Q-2: /api/coverage が返らない（PWA側のシムが対になっていない可能性）");
+  else {
+    if (!Array.isArray(api.targets) || api.targets.length === 0) fail("Q-2: 配分の集計が空");
+    // 固定曜日の設定そのものは書き換えていないこと
+    const tpl = await page.evaluate(async () =>
+      fetch("/api/plan-settings").then((r) => r.json())
+    );
+    const before = JSON.stringify(tpl?.template ?? tpl);
+    if (api.proposals.length > 0 && api.proposals[0].candidates.length > 0) {
+      const p = api.proposals[0];
+      await page.evaluate(
+        async ([sessionId, category]) => {
+          await fetch("/api/coverage", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ sessionId, category }),
+          });
+        },
+        [p.candidates[0].sessionId, p.category]
+      );
+      await page.waitForTimeout(600);
+      const tplAfter = await page.evaluate(async () =>
+        fetch("/api/plan-settings").then((r) => r.json())
+      );
+      if (JSON.stringify(tplAfter?.template ?? tplAfter) !== before) {
+        fail("Q-2: 提案の適用で固定曜日設定が書き換わっている（本人が決めたものを変えない）");
+      }
+    }
+  }
+  step("Q-2 足りていないカテゴリの提案OK（根拠が数字つき・固定曜日は不変）");
+  await shot("31_coverage");
+}
+
+// ---- 17. Q-3: 取り込み済みの過去データを作り直せること ----
+await page.goto("http://localhost:8791/#/data");
+await page.waitForTimeout(700);
+const rebuildCard = page.locator("section.card", { hasText: "過去データの作り直し" }).first();
+if ((await rebuildCard.count()) === 0) fail("Q-3: 作り直しの導線が無い");
+else {
+  // 構造化記録を消して「取り込み済みの古いデータ」を作り、作り直しで戻ることを見る
+  const broke = await page.evaluate(async () => {
+    const d = await fetch("/api/sessions?from=2000-01-01&to=2099-12-31").then((r) => r.json());
+    return (d.sessions ?? []).filter((s) => s.backfilled).length;
+  });
+  if (broke === 0) fail("Q-3: 過去データが1件も入っていない（前段の一括入力が効いていない）");
+  await rebuildCard.getByRole("button", { name: "作り直す" }).click();
+  await page.waitForTimeout(900);
+  const rebuiltText = await rebuildCard.textContent();
+  if (!/\d+件を確認し/.test(rebuiltText)) fail(`Q-3: 作り直しの結果が出ない（${rebuiltText.slice(0, 120)}）`);
+  step("Q-3 過去データの作り直しOK（何件直したかを出す）");
+}
 
 if (errors.length) {
   console.log("JS ERRORS:", errors.slice(0, 5));

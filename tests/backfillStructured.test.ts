@@ -13,8 +13,11 @@ import {
   applyAssessedCfe,
   assessFitness,
   buildRuleContext,
+  dashboard,
   importBulkRows,
   previewBulkText,
+  rebuildPastDerived,
+  rebuildPastDerivedOnce,
   samePrescriptionGroups,
   setupCfeIfNeeded,
   taperPlan,
@@ -204,6 +207,72 @@ describe("M-6 レース前の変則調整", () => {
     const adj = taperPlan(repo, "2026-07-29").adjustments.find((a) => a.sessionId === "fixed-1");
     expect(adj?.kind).toBe("keep");
     expect(adj?.before).toBe(adj?.after);
+  });
+});
+
+describe("Q-3 取り込み済みのデータを作り直す", () => {
+  /**
+   * 取り込み時にしか変換が走らないので、変換を直しても端末に入っているぶんは古いまま。
+   * 「直したのに直っていない」がここで起きる。
+   */
+  function withOldData(): Repo {
+    const repo = setup();
+    // 構造化記録が無かったころの状態に戻す（取り込み済みデータの再現）
+    for (const r of repo.listResults()) {
+      if (!r.backfilled) continue;
+      repo.saveResult({ ...r, interval: undefined, continuous: undefined });
+    }
+    return repo;
+  }
+
+  it("古いまま読むと週次レビューもM-2の材料も空になる", () => {
+    const repo = withOldData();
+    expect(weeklyReview(repo, TODAY, "2026-07-20").qualityLines.length).toBe(0);
+    expect(weeklyReview(repo, TODAY, "2026-07-20").totalDistanceKm).toBe(0);
+    expect(
+      executionSamples(repo.listSessions(), repo.listResults(), "high_lactate", TODAY).length
+    ).toBe(0);
+  });
+
+  it("作り直すと下流が復活する", () => {
+    const repo = withOldData();
+    const out = rebuildPastDerived(repo);
+    expect(out.rebuilt).toBeGreaterThan(0);
+    expect(weeklyReview(repo, TODAY, "2026-07-20").qualityLines.length).toBeGreaterThan(0);
+    expect(weeklyReview(repo, TODAY, "2026-07-20").totalDistanceKm).toBeGreaterThan(0);
+    expect(
+      executionSamples(repo.listSessions(), repo.listResults(), "high_lactate", TODAY).length
+    ).toBe(3);
+    expect(jogEfficiency(repo.listResults(), TODAY).baselineCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it("何度実行しても結果が変わらない（実測値を書き換えない）", () => {
+    const repo = withOldData();
+    rebuildPastDerived(repo);
+    const snapshot = JSON.stringify(repo.listResults());
+    const second = rebuildPastDerived(repo);
+    expect(second.rebuilt).toBe(0);
+    expect(JSON.stringify(repo.listResults())).toBe(snapshot);
+  });
+
+  it("ホームを開いた時点で自動的に作り直される", () => {
+    const repo = withOldData();
+    repo.deleteKv("migration:past-derived");
+    dashboard(repo, TODAY);
+    expect(weeklyReview(repo, TODAY, "2026-07-20").qualityLines.length).toBeGreaterThan(0);
+    // 2回目は走らない
+    expect(rebuildPastDerivedOnce(repo)).toBeUndefined();
+  });
+
+  it("設定タイムが残っていない件数を返す（作り直しても戻らないため）", () => {
+    const repo = setup();
+    // 取り込み時に設定タイムを捨てていたころのデータ
+    for (const e of repo.listPastEntries()) {
+      if (e.kind === "interval") repo.savePastEntry({ ...e, targetSec: undefined });
+    }
+    const out = rebuildPastDerived(repo);
+    expect(out.withoutTarget).toBeGreaterThan(0);
+    expect(out.entries).toBeGreaterThan(out.withoutTarget - 1);
   });
 });
 

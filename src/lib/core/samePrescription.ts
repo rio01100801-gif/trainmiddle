@@ -28,6 +28,8 @@ export interface PrescriptionOccurrence {
   lastSec: number;
   /** 垂れ幅 = 最終本 − 1本目。正なら垂れている */
   fadeSec: number;
+  /** Q-1: その日の1本あたり平均心拍。入っている本だけの平均。無ければ undefined */
+  avgHr?: number;
   restNote?: string;
   tempC?: number;
   rpe?: number;
@@ -42,6 +44,11 @@ export interface PrescriptionGroup {
   avgTrend: TrendJudgement;
   /** 垂れ幅の傾向 */
   fadeTrend: TrendJudgement;
+  /**
+   * Q-1: 平均心拍の傾向。心拍が入っている回が2回以上あるときだけ判定する。
+   * タイムが横ばいでも心拍が下がっていれば、同じ練習が楽になっている＝改善。
+   */
+  hrTrend?: TrendJudgement;
 }
 
 export interface TrendJudgement {
@@ -79,10 +86,17 @@ const CATEGORY_LABEL: Record<string, string> = {
 
 /** 傾向の判定にこれ以上の差が要る（計測誤差と区別するため） */
 export const TREND_THRESHOLD_SEC = 0.3;
+/**
+ * 心拍側のしきい値（bpm）。
+ * 装着位置・気温・その日の水分で数bpmは平気で動くので、
+ * 3bpm 未満は横ばいとして扱う。M-2 の疲労判定（4bpm）より緩いのは、
+ * こちらは「傾向の表示」で、設定を動かす判断には使わないため。
+ */
+export const TREND_THRESHOLD_BPM = 3;
 
 function judgeTrend(
   values: number[],
-  kind: "avg" | "fade"
+  kind: "avg" | "fade" | "hr"
 ): TrendJudgement {
   if (values.length < 2) {
     return {
@@ -90,18 +104,24 @@ function judgeTrend(
       message:
         kind === "avg"
           ? "同じ処方を2回以上こなすと、平均タイムの推移が出ます。"
-          : "同じ処方を2回以上こなすと、垂れ幅の推移が出ます。",
+          : kind === "fade"
+          ? "同じ処方を2回以上こなすと、垂れ幅の推移が出ます。"
+          : "同じ処方で心拍を2回以上入れると、心拍の推移が出ます。",
     };
   }
   const delta = values[values.length - 1] - values[0];
-  if (Math.abs(delta) < TREND_THRESHOLD_SEC) {
+  // 心拍は秒ではないので、誤差とみなす幅も別に持つ
+  const threshold = kind === "hr" ? TREND_THRESHOLD_BPM : TREND_THRESHOLD_SEC;
+  if (Math.abs(delta) < threshold) {
     return {
       judgement: "flat",
       deltaSec: delta,
       message:
         kind === "avg"
           ? "平均タイムはほぼ横ばいです。"
-          : "垂れ幅はほぼ横ばいです。",
+          : kind === "fade"
+          ? "垂れ幅はほぼ横ばいです。"
+          : "平均心拍はほぼ横ばいです。",
     };
   }
   if (delta < 0) {
@@ -111,9 +131,11 @@ function judgeTrend(
       message:
         kind === "avg"
           ? `平均タイムが${Math.abs(delta).toFixed(1)}秒 速くなっています。`
-          : `垂れ幅が${Math.abs(delta).toFixed(
+          : kind === "fade"
+          ? `垂れ幅が${Math.abs(delta).toFixed(
               1
-            )}秒 縮んでいます。後半を保てるようになっており、800mへの転移が大きい変化です。`,
+            )}秒 縮んでいます。後半を保てるようになっており、800mへの転移が大きい変化です。`
+          : `平均心拍が${Math.abs(delta).toFixed(0)}bpm 下がっています。同じ練習が楽になっています。`,
     };
   }
   return {
@@ -122,9 +144,11 @@ function judgeTrend(
     message:
       kind === "avg"
         ? `平均タイムが${delta.toFixed(1)}秒 落ちています。`
-        : `垂れ幅が${delta.toFixed(
+        : kind === "fade"
+        ? `垂れ幅が${delta.toFixed(
             1
-          )}秒 広がっています。1本目の入りが速すぎるか、疲労が抜けていない可能性があります。`,
+          )}秒 広がっています。1本目の入りが速すぎるか、疲労が抜けていない可能性があります。`
+        : `平均心拍が${delta.toFixed(0)}bpm 上がっています。タイムが変わっていなければ、疲労が抜けていない可能性があります。`,
   };
 }
 
@@ -150,6 +174,10 @@ export function groupBySamePrescription(
     if (times.length < 2) continue;
 
     const avg = times.reduce((a, b) => a + b, 0) / times.length;
+    // Q-1: 心拍は入っている本だけの平均。1本も無ければ持たせない
+    const hrs = (r.interval!.results ?? [])
+      .map((x) => x.avgHr)
+      .filter((v): v is number => typeof v === "number" && v > 0);
     const occ: PrescriptionOccurrence = {
       date: r.date,
       sessionId: s.id,
@@ -158,6 +186,10 @@ export function groupBySamePrescription(
       firstSec: times[0],
       lastSec: times[times.length - 1],
       fadeSec: Math.round((times[times.length - 1] - times[0]) * 100) / 100,
+      avgHr:
+        hrs.length > 0
+          ? Math.round((hrs.reduce((a, b) => a + b, 0) / hrs.length) * 10) / 10
+          : undefined,
       restNote:
         r.interval!.restSec !== undefined
           ? `r${r.interval!.restSec}秒`
@@ -188,6 +220,11 @@ export function groupBySamePrescription(
       fadeTrend: judgeTrend(
         list.map((o) => o.fadeSec),
         "fade"
+      ),
+      // 心拍は任意項目。入っている回だけで比べる（入れ忘れた回で欠測にしない）
+      hrTrend: judgeTrend(
+        list.map((o) => o.avgHr).filter((v): v is number => v !== undefined),
+        "hr"
       ),
     });
   }

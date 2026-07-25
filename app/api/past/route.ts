@@ -7,6 +7,7 @@ import {
   deletePastEntry,
   importBulkRows,
   previewBulkText,
+  rebuildPastDerived,
 } from "@/lib/service";
 import { localToday } from "@/lib/core/dates";
 import type { PastEntry } from "@/lib/core/backfill";
@@ -26,6 +27,11 @@ export async function POST(req: NextRequest) {
   const repo = openRepo();
   const body = await req.json();
   const today = body.today ?? localToday();
+
+  // Q-3: 取り込み済みのぶんをいまの変換で作り直す（実測値は動かさない）
+  if (body.rebuild) {
+    return NextResponse.json({ ok: true, rebuild: rebuildPastDerived(repo) });
+  }
 
   // F-2: 貼り付けテキストの解釈（保存しない）
   if (body.previewText !== undefined) {

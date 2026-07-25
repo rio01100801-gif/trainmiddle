@@ -908,6 +908,18 @@ function ResultForm({
       ? existing.actualLapsSec.map((t: number) => String(Math.round(t * 100) / 100))
       : []
   );
+  /*
+   * Q-1: 1本ごとの平均心拍。任意。
+   * 既定では出さない。時計から拾える人だけが入れる項目なのに常時2欄にすると、
+   * iPhone幅で実施タイムの欄まで狭くなる。
+   * 既に心拍が入っている記録を開いたときは、隠すと消したように見えるので出す。
+   */
+  const [repHrs, setRepHrs] = useState<string[]>(
+    (ex?.results ?? []).map((r: any) => (r.avgHr !== undefined ? String(r.avgHr) : ""))
+  );
+  const [withHr, setWithHr] = useState<boolean>(
+    (ex?.results ?? []).some((r: any) => r.avgHr !== undefined)
+  );
 
   useEffect(() => {
     fetch("/api/prescription", {
@@ -1097,11 +1109,17 @@ function ResultForm({
         };
       } else {
         const source = perRep ? repTimes.join(",") : times;
-        const actual = source
-          .split(",")
-          .map((x: string) => parseRepTime(x))
-          .filter((x: number | undefined): x is number => x !== undefined && x > 0);
+        // 心拍と「何本目か」で対応させるため、間引く前の並びも残す
+        const parsedTimes = source.split(",").map((x: string) => parseRepTime(x) ?? 0);
+        const actual = parsedTimes.filter((x: number) => x > 0);
         const t = targetSec ? Number(targetSec) : undefined;
+        const hrs =
+          perRep && withHr
+            ? repHrs.map((v) => {
+                const n = Number(v);
+                return v.trim() && isFinite(n) && n > 0 ? n : undefined;
+              })
+            : [];
         payload = {
           sessionId: session.id,
           date: session.date,
@@ -1112,7 +1130,7 @@ function ResultForm({
             restType,
             restSec: restMode === "time" ? Number(restValue) : undefined,
             restDistanceM: restMode === "distance" ? Number(restValue) : undefined,
-            results: buildRepResults(Number(distM), actual, t),
+            results: buildRepResults(Number(distM), parsedTimes, t, hrs),
           },
           actualLapsSec: actual,
           lapDistancesM: actual.map(() => Number(distM)),
@@ -1303,29 +1321,76 @@ function ResultForm({
             </button>
           </div>
           {perRep ? (
-            <div className="grid grid-cols-3 gap-1.5">
-              {Array.from({ length: slotCount }, (_, i) => (
-                <label key={`rep-${i}`} className="text-[10px]" style={{ color: "var(--text-3)" }}>
-                  <span className="block mb-0.5 num">
-                    {i + 1}本目 {slotDistances[i] ?? distM}m
-                  </span>
-                  <input
-                    className="w-full !text-[12px] !py-1"
-                    inputMode="decimal"
-                    value={repTimes[i] ?? ""}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setRepTimes((prev) => {
-                        const next = [...prev];
-                        while (next.length <= i) next.push("");
-                        next[i] = v;
-                        return next;
-                      });
-                    }}
-                  />
-                </label>
-              ))}
-            </div>
+            <>
+              {/*
+                Q-1: 心拍の欄は既定では出さない。
+                常時出すと1行に6欄（3本×2欄）並び、iPhone幅では
+                実施タイムの欄まで押しつぶされる。出すときは2列に落として幅を確保する。
+              */}
+              <label
+                className="flex items-center gap-1.5 text-[11px] mb-1.5"
+                style={{ color: "var(--text-3)" }}
+              >
+                <input
+                  type="checkbox"
+                  checked={withHr}
+                  onChange={(e) => setWithHr(e.target.checked)}
+                  style={{ width: 16, height: 16, padding: 0 }}
+                />
+                1本ごとの平均心拍も入れる（任意）
+              </label>
+              <div className={`grid ${withHr ? "grid-cols-2" : "grid-cols-3"} gap-1.5`}>
+                {Array.from({ length: slotCount }, (_, i) => (
+                  <div key={`rep-${i}`}>
+                    <span
+                      className="block mb-0.5 num text-[10px]"
+                      style={{ color: "var(--text-3)" }}
+                    >
+                      {i + 1}本目 {slotDistances[i] ?? distM}m
+                    </span>
+                    <div className="flex gap-1">
+                      <label className="flex-1 min-w-0">
+                        <input
+                          className="w-full !text-[12px] !py-1"
+                          inputMode="decimal"
+                          aria-label={`${i + 1}本目 実施タイム`}
+                          value={repTimes[i] ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setRepTimes((prev) => {
+                              const next = [...prev];
+                              while (next.length <= i) next.push("");
+                              next[i] = v;
+                              return next;
+                            });
+                          }}
+                        />
+                      </label>
+                      {withHr ? (
+                        <label className="flex-1 min-w-0">
+                          <input
+                            className="w-full !text-[12px] !py-1"
+                            inputMode="numeric"
+                            placeholder="bpm"
+                            aria-label={`${i + 1}本目 平均心拍`}
+                            value={repHrs[i] ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setRepHrs((prev) => {
+                                const next = [...prev];
+                                while (next.length <= i) next.push("");
+                                next[i] = v;
+                                return next;
+                              });
+                            }}
+                          />
+                        </label>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           ) : (
             <L label="実施タイム（本数分をカンマ区切り）">
               <input

@@ -284,6 +284,117 @@ export function jogEfficiency(
 }
 
 // ---------------------------------------------------------------------------
+// (b)-4 ポイント練習の心拍を状態の測定値として使う（Q-1）
+// ---------------------------------------------------------------------------
+
+/** ポイント練習の心拍が前回までより高い、と見なす差。ジョグ側と揃える */
+export const QUALITY_HR_FATIGUE_BPM = 4;
+/** 直近側・比較側それぞれに必要な本数 */
+export const QUALITY_HR_MIN_EACH = 2;
+/**
+ * タイムがこれ以上速くなっていたら、心拍が上がっていても疲労とみなさない。
+ * 速く走れば心拍は上がる。上がったことそのものを悪い材料にすると
+ * 「速く走ったのに疲労と判定される」ことになる。
+ */
+const QUALITY_HR_FASTER_SEC = 0.3;
+
+export interface QualityHrTrend {
+  recentMeanHr?: number;
+  baselineMeanHr?: number;
+  deltaBpm?: number;
+  /** 同じ期間のタイムの動き。負なら速くなっている */
+  deltaSec?: number;
+  recentCount: number;
+  baselineCount: number;
+  fatigued: boolean;
+  note: string;
+}
+
+/**
+ * 同じカテゴリ・同じ距離のポイント練習で、1本あたりの平均心拍がどう動いたか。
+ *
+ * ジョグ（jogEfficiency）と同じ考え方をポイント練習側にも置く。
+ * 同じ設定で同じタイムなのに心拍が高いなら、こなせてはいても状態は落ちている。
+ *
+ * 日付の窓ではなく本数で区切る。ポイント練習は週1〜2本しかないので、
+ * 「直近7日で2本」を条件にすると、ほとんどの週で材料が揃わない。
+ */
+export function qualityHrTrend(
+  sessions: Session[],
+  results: SessionResult[],
+  category: SessionCategory,
+  today: string
+): QualityHrTrend {
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  const samples = results
+    .filter((r) => {
+      const s = byId.get(r.sessionId);
+      return s?.category === category && !r.heatFlagged && !!r.interval;
+    })
+    .map((r) => {
+      const hrs = (r.interval!.results ?? [])
+        .map((x) => x.avgHr)
+        .filter((v): v is number => typeof v === "number" && v > 0);
+      const times = (r.interval!.results ?? [])
+        .map((x) => x.actualSec)
+        .filter((v) => typeof v === "number" && v > 0);
+      return {
+        date: r.date,
+        distanceM: r.interval!.distanceM,
+        hr: hrs.length > 0 ? hrs.reduce((a, b) => a + b, 0) / hrs.length : undefined,
+        sec: times.length > 0 ? times.reduce((a, b) => a + b, 0) / times.length : undefined,
+        age: diffDays(r.date, today),
+      };
+    })
+    .filter((x) => x.hr !== undefined && x.sec !== undefined && x.age >= 0 && x.age <= 35)
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  // 距離が違うと心拍の出方も違う。最も本数の多い距離だけで比べる
+  const counts = new Map<number, number>();
+  for (const x of samples) counts.set(x.distanceM, (counts.get(x.distanceM) ?? 0) + 1);
+  let best: number | undefined;
+  for (const [d, n] of counts) if (best === undefined || n > counts.get(best)!) best = d;
+  const band = samples.filter((x) => x.distanceM === best);
+
+  if (band.length < QUALITY_HR_MIN_EACH * 2) {
+    return {
+      recentCount: band.length,
+      baselineCount: 0,
+      fatigued: false,
+      note: `ポイント練習の心拍データが足りません（同じ距離で${QUALITY_HR_MIN_EACH * 2}本以上必要）`,
+    };
+  }
+
+  const recent = band.slice(0, QUALITY_HR_MIN_EACH);
+  const baseline = band.slice(QUALITY_HR_MIN_EACH);
+  const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+  const recentMeanHr = mean(recent.map((x) => x.hr!));
+  const baselineMeanHr = mean(baseline.map((x) => x.hr!));
+  const deltaBpm = recentMeanHr - baselineMeanHr;
+  const deltaSec = mean(recent.map((x) => x.sec!)) - mean(baseline.map((x) => x.sec!));
+
+  const faster = deltaSec <= -QUALITY_HR_FASTER_SEC;
+  const fatigued = deltaBpm >= QUALITY_HR_FATIGUE_BPM && !faster;
+
+  const hrPart = `${best}mの平均心拍が ${deltaBpm >= 0 ? "+" : ""}${deltaBpm.toFixed(0)}bpm（${baselineMeanHr.toFixed(0)}→${recentMeanHr.toFixed(0)}）`;
+  const secPart = `タイムは ${deltaSec >= 0 ? "+" : ""}${deltaSec.toFixed(1)}秒/本`;
+  return {
+    recentMeanHr,
+    baselineMeanHr,
+    deltaBpm,
+    deltaSec,
+    recentCount: recent.length,
+    baselineCount: baseline.length,
+    fatigued,
+    note: fatigued
+      ? `同じ${hrPart}、${secPart}。こなせてはいますが状態は落ちています`
+      : faster && deltaBpm >= QUALITY_HR_FATIGUE_BPM
+      ? `${hrPart}。ただし${secPart}なので、速く走ったぶんとして扱います`
+      : `${hrPart}、${secPart}`,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // (b)-2 その日の状態
 // ---------------------------------------------------------------------------
 
@@ -309,7 +420,9 @@ export function dailyAdjustment(
   check: DailyCheck | undefined,
   signal: Signal,
   jog?: JogEfficiency,
-  restingHrBaseline?: number
+  restingHrBaseline?: number,
+  /** Q-1: ポイント練習側の心拍。ジョグと同じ重みで扱う */
+  qualityHr?: QualityHrTrend
 ): DailyAdjustment {
   const reasons: string[] = [];
   let pct = 0;
@@ -357,6 +470,12 @@ export function dailyAdjustment(
   if (jog?.fatigued) {
     pct += 0.005;
     reasons.push(jog.note);
+  }
+
+  // Q-1: ポイント練習の心拍。ジョグと同じ扱い（合計は MAX_DAILY_PCT で頭打ち）
+  if (qualityHr?.fatigued) {
+    pct += 0.005;
+    reasons.push(qualityHr.note);
   }
 
   const capped = Math.min(MAX_DAILY_PCT, pct);

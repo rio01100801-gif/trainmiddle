@@ -21,6 +21,9 @@ import {
   deletePastEntry,
   importBulkRows,
   previewBulkText,
+  rebuildPastDerived,
+  coverageReview,
+  applyCoverageProposal,
   samePrescriptionGroups,
   cfeRangeFor,
   raceSplitPlan,
@@ -345,6 +348,8 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
     }),
     POST: (repo, body) => {
       const today = body?.today ?? localToday();
+      // Q-3: 取り込み済みのぶんをいまの変換で作り直す（実測値は動かさない）
+      if (body?.rebuild) return { ok: true, rebuild: rebuildPastDerived(repo) };
       if (body?.previewText !== undefined) {
         return { rows: previewBulkText(repo, String(body.previewText), today) };
       }
@@ -488,6 +493,21 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
         return { ok: true };
       }
       return { ok: true, ...applyTaperPlan(repo, today, body?.sessionIds) };
+    },
+  },
+
+  // ---- Q-2 足りていないカテゴリの提案 ----
+  "/api/coverage": {
+    GET: (repo, _b, params) => ({
+      review: coverageReview(repo, params.get("date") ?? localToday()) ?? null,
+    }),
+    POST: (repo, body) => {
+      const today = body?.today ?? localToday();
+      if (!body?.sessionId || !body?.category) {
+        return { error: "sessionId と category が必要です" };
+      }
+      const out = applyCoverageProposal(repo, body.sessionId, body.category, today);
+      return { ...out, review: coverageReview(repo, today) ?? null };
     },
   },
 

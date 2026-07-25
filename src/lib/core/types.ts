@@ -235,6 +235,12 @@ export interface RepResult {
   targetSec?: number;
   /** 実施タイム（秒） */
   actualSec: number;
+  /**
+   * その1本の平均心拍。任意。
+   * 同じ設定・同じタイムでも心拍が上がっていれば疲労とみなせる（Q-1）。
+   * 時計から拾える人だけが入れるので、無いことのほうが多い前提で扱う。
+   */
+  avgHr?: number;
   note?: string;
 }
 

@@ -7,9 +7,11 @@
 import type {
   DailyCheck,
   Goal,
+  Phase,
   Race,
   RuleViolation,
   Session,
+  SessionCategory,
   SessionChange,
   SessionResult,
   SkipReason,
@@ -26,7 +28,12 @@ import {
 } from "./core/cfe";
 import { buildAerobicProfile, GRP_RATIOS, specificPace } from "./core/pace";
 import { runRuleEngine, weeklySummary, RuleContext, isQuality } from "./core/rules";
-import { generatePlan } from "./core/periodization";
+import { generatePlan, phaseForDate } from "./core/periodization";
+import {
+  reviewCoverage,
+  weeksUntil,
+  type CoverageReview,
+} from "./core/coverage";
 import { assignExpectedPaces, diagnoseRounds, generateRecoverySessions, RoundResult } from "./core/rounds";
 import {
   handleSkip,
@@ -73,6 +80,8 @@ import {
   executionSamples,
   executionTrend,
   jogEfficiency,
+  qualityHrTrend,
+  type QualityHrTrend,
   repsOf,
   type DailyAdjustment,
   type ExecutionTrend,
@@ -835,6 +844,13 @@ function sessionPriority(s: Session): number {
 }
 
 export function dashboard(repo: Store, today: string) {
+  /*
+   * 取り込み済みの過去データを、必要なら1度だけ作り直す。
+   * 変換の中身を直しても、すでに端末に入っているぶんは古いまま残るため
+   * （Q-3: 前回この経路が無く、修正が既存データに届いていなかった）。
+   */
+  rebuildPastDerivedOnce(repo);
+
   const athlete = repo.getAthlete();
   const goal = repo.getGoal();
   const cfe = repo.getCfe();
@@ -993,6 +1009,68 @@ export function addPastEntry(repo: Store, entry: PastEntry): { entry: PastEntry 
 export function deletePastEntry(repo: Store, id: string): void {
   repo.deletePastEntry(id);
   repo.deleteSession(`past-s-${id}`);
+}
+
+/** 過去データの作り直しをやったかどうかの印。作り直す内容を変えたら上げる */
+const PAST_REBUILD_KEY = "migration:past-derived";
+const PAST_REBUILD_VERSION = "structured-v1";
+
+export interface PastRebuildResult {
+  entries: number;
+  rebuilt: number;
+  /** 設定タイムが残っていない件数。M-2 の材料にはならない（本文から作り直せない） */
+  withoutTarget: number;
+}
+
+/**
+ * 保存済みの過去データから、セッションと結果を作り直す。
+ *
+ * `toSessionAndResult` は**取り込んだ瞬間にしか走らない**ので、
+ * 変換の中身を直しても、すでに端末に入っているぶんは古いまま残る。
+ * 実際、構造化記録（interval / continuous）を入れるようにした修正は、
+ * 修正後に取り込んだデータにしか効いていなかった。
+ *
+ * 何度実行しても同じ結果になる（PastEntry が唯一の元データで、
+ * `past-s-*` / `past-r-*` はそこから機械的に決まる）。
+ * 実測値を書き換えることはない。
+ *
+ * ただし取り込み時に捨てられていた設定タイムは、ここでは戻せない。
+ * 元の本文が残っていないので、作り直しても出どころが無い（推測で埋めない）。
+ * 何件がその状態かを返して、画面から見えるようにする。
+ */
+export function rebuildPastDerived(repo: Store): PastRebuildResult {
+  const entries = repo.listPastEntries();
+  let rebuilt = 0;
+  let withoutTarget = 0;
+
+  for (const e of entries) {
+    const { session, result } = toSessionAndResult(e);
+    const before = repo.listResults().find((r) => r.id === result.id);
+    const changed =
+      !before ||
+      (!!result.interval && !before.interval) ||
+      (!!result.continuous && !before.continuous) ||
+      before.interval?.targetSec !== result.interval?.targetSec;
+    if (changed) {
+      repo.saveSession(session);
+      repo.saveResult(result);
+      rebuilt++;
+    }
+    if (e.kind === "interval" && e.targetSec === undefined) withoutTarget++;
+  }
+
+  repo.saveKv(PAST_REBUILD_KEY, PAST_REBUILD_VERSION);
+  return { entries: entries.length, rebuilt, withoutTarget };
+}
+
+/**
+ * 初回表示のときに1度だけ作り直す。
+ * 本人が「データ管理」を開くまで壊れたままなのは、直っていないのと同じなので自動で走らせる。
+ * 実測値は動かさないため、確認は取らない（数値を書き換える変更とは性質が違う）。
+ */
+export function rebuildPastDerivedOnce(repo: Store): PastRebuildResult | undefined {
+  if (repo.getKv<string>(PAST_REBUILD_KEY) === PAST_REBUILD_VERSION) return undefined;
+  return rebuildPastDerived(repo);
 }
 
 export interface AssessFitnessOutput extends FitnessAssessment {
@@ -1338,13 +1416,15 @@ function restingHrBaseline(checks: DailyCheck[], today: string): number | undefi
 export interface AdaptiveContext {
   trend: ExecutionTrend;
   jog: JogEfficiency;
+  /** Q-1: ポイント練習の心拍の動き */
+  qualityHr: QualityHrTrend;
   daily: DailyAdjustment;
   heat: HeatPaceAdjustment;
 }
 
 /**
  * ある日のある種目について、判断材料を全部そろえる。
- * 3つの材料（直近の出来・当日のコンディション・ジョグの心拍）を必ず通す。
+ * 4つの材料（直近の出来・当日のコンディション・ジョグの心拍・ポイント練習の心拍）を必ず通す。
  */
 export function adaptiveContext(
   repo: Store,
@@ -1361,12 +1441,15 @@ export function adaptiveContext(
     executionSamples(sessions, results, session.category, session.date)
   );
   const jog = jogEfficiency(results, today);
+  // Q-1: ポイント練習側の心拍。同じ設定・同じタイムでも心拍が上がっていれば疲労
+  const qualityHr = qualityHrTrend(sessions, results, session.category, today);
   const eff = effectiveSignal(checks.filter((c) => c.date <= today));
   let daily = dailyAdjustment(
     checks.find((c) => c.date === today),
     eff.signal,
     jog,
-    restingHrBaseline(checks, today)
+    restingHrBaseline(checks, today),
+    qualityHr
   );
 
   /*
@@ -1395,7 +1478,7 @@ export function adaptiveContext(
     heatTolerance: athlete?.heatTolerance,
     category: session.category,
   });
-  return { trend, jog, daily, heat };
+  return { trend, jog, qualityHr, daily, heat };
 }
 
 export interface AdaptiveProposalOutput {
@@ -1969,6 +2052,58 @@ export function rejectTaperPlan(repo: Store, today: string, reason?: string): vo
 // ---------------------------------------------------------------------------
 // M-7 制限因子 / M-8 600m通過 / M-10 接地時間 / M-11 週次レビュー / M-12 書き出し
 // ---------------------------------------------------------------------------
+
+/**
+ * Q-2: 直近4週のカテゴリ配分を見て、足りていないものを提案する。
+ *
+ * セッションは過去データ入力ぶんも含めて数える。
+ * 実際にやった練習の配分を見たいので、入力経路で回数が変わってはいけない
+ * （ルールエンジンが backfilled を評価対象から外しているのとは目的が違う）。
+ */
+export function coverageReview(repo: Store, today: string): CoverageReview | undefined {
+  const athlete = repo.getAthlete();
+  if (!athlete) return undefined;
+  const goal = repo.getGoal();
+  const race = repo.listRaces().find((r) => r.id === goal?.targetRaceId);
+  const phase: Phase = race ? phaseForDate(today, race.dateStart) : "Base";
+  const limiter = assessLimiter(athlete, goal?.targetTimeSec).limiter;
+  return reviewCoverage({
+    sessions: repo.listSessions(),
+    today,
+    phase,
+    limiter,
+    weeksToRace: race ? weeksUntil(today, race.dateStart) : undefined,
+  });
+}
+
+/**
+ * Q-2: 提案どおりに1件だけ入れ替える。
+ * 固定曜日設定そのものは変えない（本人が決めたものなので、その週の予定だけを動かす）。
+ */
+export function applyCoverageProposal(
+  repo: Store,
+  sessionId: string,
+  category: SessionCategory,
+  today: string
+): PlanEditResult {
+  const session = repo.getSession(sessionId);
+  if (!session) {
+    return {
+      ok: false,
+      error: "セッションが見つかりません",
+      applied: false,
+      newViolations: [],
+      violations: [],
+      alternatives: [],
+    };
+  }
+  return editSession(
+    repo,
+    sessionId,
+    { category, name: `${CATEGORY_JP_LABELS[category] ?? category}（不足ぶんの補い）` },
+    today
+  );
+}
 
 /** M-7: 制限因子と、それを次の配分にどう反映するか */
 export function limiterAssessment(repo: Store): {

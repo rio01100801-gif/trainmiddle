@@ -228,6 +228,32 @@ const modelingCore = (): DayTemplate => ({
 });
 
 /**
+ * そのフェーズが本来もっているカテゴリ配分（4週ぶんの回数）。
+ *
+ * 「この期間なら何回欲しいか」を別表で持たない。
+ * 生成器が実際に置く内容そのものを数えることで、
+ * 提案の基準と生成の基準がずれないようにする（Q-2）。
+ */
+export function categoryCountsPerFourWeeks(phase: Phase): Record<SessionCategory, number> {
+  const out = {
+    high_lactate: 0,
+    race_economy: 0,
+    modeling: 0,
+    neural: 0,
+    cv: 0,
+    threshold: 0,
+    aerobic: 0,
+    off: 0,
+  } as Record<SessionCategory, number>;
+  for (let w = 0; w < 4; w++) {
+    for (const d of weekTemplate(phase, w % 2, w)) {
+      if (d) out[d.category]++;
+    }
+  }
+  return out;
+}
+
+/**
  * フェーズ別の週テンプレート（月曜始まり、index 0 = 月曜）
  * weekParity: 隔週要素の切り替え（0 or 1）
  */

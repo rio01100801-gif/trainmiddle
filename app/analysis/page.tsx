@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card, CATEGORY_COLORS, CATEGORY_LABELS, fmtSec } from "../components/ui";
 import RaceAnalysis from "../race/page";
 
@@ -138,6 +138,7 @@ export default function AnalysisPage() {
 
       {seg === "race" ? <RaceAnalysis /> : null}
       {seg === "now" ? <GapPanel /> : null}
+      {seg === "now" ? <CoveragePanel /> : null}
       {seg === "now" ? <ReviewPanel /> : null}
 
       <div className={seg === "trend" ? "grid md:grid-cols-2 gap-3" : "hidden"}>
@@ -347,8 +348,20 @@ function SamePrescriptionCard({ groups }: { groups: any[] }) {
       <p className="text-[11.5px] leading-relaxed mb-1" style={{ color: trendColor(g.avgTrend.judgement) }}>
         {g.avgTrend.message}
       </p>
-      <p className="text-[11.5px] leading-relaxed mb-3" style={{ color: trendColor(g.fadeTrend.judgement) }}>
+      <p className="text-[11.5px] leading-relaxed mb-1" style={{ color: trendColor(g.fadeTrend.judgement) }}>
         {g.fadeTrend.message}
+      </p>
+      {/* Q-1: 心拍は任意項目なので、入っている回が2回以上あるときだけ出す */}
+      <p
+        className="text-[11.5px] leading-relaxed mb-3"
+        style={{
+          color:
+            g.hrTrend && g.hrTrend.judgement !== "insufficient_data"
+              ? trendColor(g.hrTrend.judgement)
+              : "var(--text-3)",
+        }}
+      >
+        {g.hrTrend?.message ?? "同じ処方で心拍を2回以上入れると、心拍の推移が出ます。"}
       </p>
 
       <div className="overflow-x-auto">
@@ -360,6 +373,7 @@ function SamePrescriptionCard({ groups }: { groups: any[] }) {
               <th className="text-right">1本目</th>
               <th className="text-right">最終本</th>
               <th className="text-right">垂れ</th>
+              <th className="text-right">心拍</th>
               <th className="text-right">レスト</th>
               <th className="text-right">気温</th>
             </tr>
@@ -381,6 +395,9 @@ function SamePrescriptionCard({ groups }: { groups: any[] }) {
                 <td className="text-right num" style={{ color: o.fadeSec > 1.5 ? "var(--amber)" : undefined }}>
                   {o.fadeSec > 0 ? "+" : ""}
                   {o.fadeSec.toFixed(1)}
+                </td>
+                <td className="text-right num">
+                  {o.avgHr !== undefined ? Math.round(o.avgHr) : "-"}
                 </td>
                 <td className="text-right num" style={{ color: "var(--text-3)" }}>
                   {o.restNote ?? "-"}
@@ -422,6 +439,134 @@ function fmtT(sec?: number): string {
   const s = sec - m * 60;
   return m > 0 ? `${m}:${s.toFixed(2).padStart(5, "0")}` : s.toFixed(2);
 }
+
+/**
+ * Q-2 足りていないカテゴリの提案。
+ *
+ * ホームには出さない。「今日やること」ではなく4週の振り返りなので、
+ * ホームの原則（今やるべきことだけ）を崩さないよう分析タブの「現在地」に置く。
+ * 固定曜日設定そのものは変えない。入れ替えるのはその週の予定1件だけ。
+ */
+function CoveragePanel() {
+  const [d, setD] = useState<any>(null);
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    fetch("/api/coverage")
+      .then((r) => r.json())
+      .then((x) => setD(x.review ?? null))
+      .catch(() => setD(null));
+  }, []);
+  useEffect(load, [load]);
+
+  if (!d) return null;
+
+  const apply = async (sessionId: string, category: string) => {
+    setBusy(true);
+    try {
+      const r = await fetch("/api/coverage", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId, category }),
+      });
+      const out = await r.json();
+      setMsg(out.error ?? "入れ替えました。固定曜日の設定は変えていません。");
+      if (out.review) setD(out.review);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card title="直近4週の配分">
+      <p className="text-[12px] leading-relaxed mb-2.5" style={{ color: "var(--text-2)" }}>
+        {d.narrative}
+      </p>
+
+      <div className="overflow-x-auto mb-3">
+        <table className="w-full text-[11px]">
+          <thead>
+            <tr style={{ color: "var(--text-3)" }}>
+              <th className="text-left py-1">カテゴリ</th>
+              <th className="text-right">実施</th>
+              <th className="text-right">基準</th>
+              <th className="text-right">差</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(d.targets ?? []).map((t: any) => (
+              <tr key={t.category} className="border-t" style={{ borderColor: "var(--border)" }}>
+                <td className="py-1">{COVERAGE_JP[t.category] ?? t.category}</td>
+                <td className="text-right num">{t.actual}</td>
+                <td className="text-right num">{t.wanted}</td>
+                <td
+                  className="text-right num"
+                  style={{ color: t.shortfall >= 2 ? "var(--amber)" : "var(--text-3)" }}
+                >
+                  {t.shortfall > 0 ? `-${t.shortfall}` : "±0"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {(d.proposals ?? []).map((p: any) => (
+        <div
+          key={p.category}
+          className="border-t pt-2.5 mt-2.5"
+          style={{ borderColor: "var(--border)" }}
+        >
+          <p className="text-[12px] leading-relaxed mb-2">{p.reason}</p>
+          {p.note ? (
+            <p className="text-[11.5px] leading-relaxed" style={{ color: "var(--text-3)" }}>
+              {p.note}
+            </p>
+          ) : null}
+          {(p.candidates ?? []).map((c: any) => (
+            <div key={c.sessionId} className="mb-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11.5px] num" style={{ color: "var(--text-2)" }}>
+                  {c.date.slice(5).replace("-", "/")} {c.name}
+                </span>
+                <button
+                  className="btn-ghost !text-[11.5px] !py-1.5"
+                  disabled={busy}
+                  onClick={() => apply(c.sessionId, p.category)}
+                >
+                  {COVERAGE_JP[p.category] ?? p.category}に替える
+                </button>
+              </div>
+              {c.cost ? (
+                <p className="text-[11px] leading-relaxed mt-1" style={{ color: "var(--amber)" }}>
+                  {c.cost}
+                </p>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ))}
+
+      {msg ? (
+        <p className="text-[11.5px] mt-2" style={{ color: "var(--text-3)" }}>
+          {msg}
+        </p>
+      ) : null}
+    </Card>
+  );
+}
+
+const COVERAGE_JP: Record<string, string> = {
+  high_lactate: "高乳酸",
+  race_economy: "経済走",
+  modeling: "モデリング",
+  neural: "神経系",
+  cv: "CV",
+  threshold: "閾値",
+  aerobic: "有酸素",
+  off: "休養",
+};
 
 function GapPanel() {
   const d = useInsights();

@@ -82,11 +82,22 @@ function formatRest(sec: number): string {
 export function buildRepResults(
   distanceM: number,
   actualSecs: number[],
-  targetSec?: number
+  targetSec?: number,
+  /** 1本ごとの平均心拍（Q-1）。任意。入っているものだけ付く */
+  avgHrs: (number | undefined)[] = []
 ): RepResult[] {
+  // 心拍は「何本目か」で対応させる。先に間引くと、
+  // 実施タイムが空の本があったときに心拍が1本ずつずれる
   return actualSecs
-    .filter((v) => isFinite(v) && v > 0)
-    .map((actualSec, i) => ({ index: i + 1, distanceM, targetSec, actualSec }));
+    .map((actualSec, i) => ({ actualSec, avgHr: avgHrs[i] }))
+    .filter((x) => isFinite(x.actualSec) && x.actualSec > 0)
+    .map((x, i) => ({
+      index: i + 1,
+      distanceM,
+      targetSec,
+      actualSec: x.actualSec,
+      ...(x.avgHr !== undefined && isFinite(x.avgHr) && x.avgHr > 0 ? { avgHr: x.avgHr } : {}),
+    }));
 }
 
 export interface LapTrend {
