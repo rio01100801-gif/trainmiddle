@@ -11,7 +11,7 @@
  *
  * リリースのたびに VERSION を必ず上げること（上げないと install が走らない）。
  */
-const VERSION = "train800-v2";
+const VERSION = "train800-v3";
 const ASSETS = [
   "./",
   "./index.html",
