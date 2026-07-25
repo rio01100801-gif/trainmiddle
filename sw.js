@@ -1,5 +1,17 @@
-/* オフラインキャッシュ（アプリシェルのキャッシュファースト） */
-const VERSION = "train800-v1";
+/*
+ * オフラインキャッシュ
+ *
+ * 方針: アプリ本体（index.html / bundle.js / styles.css）はネットワーク優先、
+ * アイコン類はキャッシュ優先。
+ *
+ * 以前はすべてキャッシュ優先だったが、それだと配信ファイルを差し替えても
+ * 端末側は古い bundle.js を永久に使い続け、更新がユーザーに届かなかった。
+ * オフラインで動くことより先に「直したものが反映される」ことを保証する。
+ * ネットワークが無いときは従来どおりキャッシュから返すのでオフラインでも動く。
+ *
+ * リリースのたびに VERSION を必ず上げること（上げないと install が走らない）。
+ */
+const VERSION = "train800-v2";
 const ASSETS = [
   "./",
   "./index.html",
@@ -11,9 +23,25 @@ const ASSETS = [
   "./icon-512.png",
 ];
 
+/** 更新を必ず取りに行く対象（アプリ本体） */
+function isAppShell(url) {
+  const p = new URL(url).pathname;
+  return (
+    p.endsWith("/") ||
+    p.endsWith("/index.html") ||
+    p.endsWith("/bundle.js") ||
+    p.endsWith("/styles.css") ||
+    p.endsWith("/manifest.webmanifest")
+  );
+}
+
 self.addEventListener("install", (e) => {
   e.waitUntil(
-    caches.open(VERSION).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting())
+    caches
+      .open(VERSION)
+      // reload: HTTPキャッシュを迂回して必ず新しい実体を取る
+      .then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: "reload" }))))
+      .then(() => self.skipWaiting())
   );
 });
 
@@ -28,13 +56,36 @@ self.addEventListener("activate", (e) => {
 
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
+  const sameOrigin = new URL(e.request.url).origin === location.origin;
+
+  if (sameOrigin && isAppShell(e.request.url)) {
+    // ネットワーク優先 + 成功したらキャッシュ更新 / 失敗したらキャッシュ
+    e.respondWith(
+      fetch(e.request)
+        .then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(VERSION).then((c) => c.put(e.request, copy));
+          }
+          return res;
+        })
+        .catch(() =>
+          caches
+            .match(e.request, { ignoreSearch: true })
+            .then((hit) => hit || caches.match("./index.html"))
+        )
+    );
+    return;
+  }
+
+  // それ以外（アイコン等）はキャッシュ優先
   e.respondWith(
     caches.match(e.request, { ignoreSearch: true }).then(
       (hit) =>
         hit ||
         fetch(e.request).then((res) => {
           const copy = res.clone();
-          if (res.ok && new URL(e.request.url).origin === location.origin) {
+          if (res.ok && sameOrigin) {
             caches.open(VERSION).then((c) => c.put(e.request, copy));
           }
           return res;
