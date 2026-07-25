@@ -149,8 +149,29 @@ function Form() {
 4. 画面を作る
 5. E2Eに経路を足す
 6. `npm run verify`
-7. `pwa/sw.js` の版数を上げる
-8. `README.md` に「なぜその閾値か」「なぜその置き場所か」を残す
+7. `README.md` に「なぜその閾値か」「なぜその置き場所か」を残す
 
 閾値を決めたら、必ず理由をコメントに書く。
 数字だけが残ると、あとで動かしていいのか分からなくなる。
+
+### 締め（毎回やる）
+
+タスクが完了して `npm run verify` が通ったら、**確認を取ったうえで**ここまでやる。
+
+1. `pwa/sw.js` の `VERSION` を上げる
+2. `npm run build:all`
+3. 変更内容を1行で説明するメッセージで commit して push
+
+**`VERSION` を上げ忘れると端末に更新が届かない。** Service Worker の install が走らないので、
+ビルドし直して配信しても古い版が動き続ける。ここを省略しない。
+`build:static` が版数を表示するので、`forge-vN` が上がっていることを目で確認する。
+
+push は2本ある。main だけだと配信物は差し替わらない。
+
+```bash
+git add -A && git commit -m "<変更内容を1行で>" && git push origin main
+```
+
+```bash
+git push origin $(git commit-tree main:pwa-dist -p origin/gh-pages -m "deploy: forge-vN"):gh-pages
+```

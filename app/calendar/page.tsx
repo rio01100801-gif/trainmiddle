@@ -4,6 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Card, CATEGORY_COLORS, CATEGORY_LABELS, ConfirmButton, ViolationList } from "../components/ui";
 import { withQuery } from "../components/route";
+import {
+  PrescriptionFields,
+  prescriptionPayload,
+  usePrescriptionFields,
+} from "../components/prescription-fields";
 import { localToday } from "@/lib/core/dates";
 
 /**
@@ -554,70 +559,6 @@ function RowBody({
 // M-5 予定の編集・追加
 // ---------------------------------------------------------------------------
 
-const EDIT_CATEGORIES = [
-  ["high_lactate", "高乳酸"],
-  ["race_economy", "経済走"],
-  ["modeling", "モデリング"],
-  ["cv", "CV"],
-  ["threshold", "閾値"],
-  ["neural", "神経系"],
-  ["aerobic", "有酸素"],
-  ["off", "休養"],
-] as const;
-
-/** 「41.5」「1:26.5」いずれも受ける */
-function parseSec(v: string): number | undefined {
-  const t = v.trim();
-  if (!t) return undefined;
-  if (t.includes(":")) {
-    const [m, s] = t.split(":");
-    const n = Number(m) * 60 + Number(s);
-    return isFinite(n) ? n : undefined;
-  }
-  const n = Number(t);
-  return isFinite(n) && n > 0 ? n : undefined;
-}
-
-/**
- * N-2 / N-3 メニュー本文に合わせて入力欄を組み立てる。
- *
- * 本文を打つたびに解釈すると、入力欄が毎回作り直されてキーボードが閉じる（N-1と同じ症状）。
- * 打ち終わってから解釈し、構造（種別・距離・本数）が実際に変わったときだけ欄を組み替える。
- */
-const PARSE_DEBOUNCE_MS = 300;
-
-function useStructure(text: string) {
-  const [structure, setStructure] = useState<any | null>(null);
-  useEffect(() => {
-    if (!text.trim()) {
-      setStructure(null);
-      return;
-    }
-    const t = setTimeout(() => {
-      fetch("/api/prescription", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
-      })
-        .then((r) => r.json())
-        .then((d) => setStructure(d.recognized ? d : { ...d, keep: true }))
-        .catch(() => {});
-    }, PARSE_DEBOUNCE_MS);
-    return () => clearTimeout(t);
-  }, [text]);
-  return structure;
-}
-
-const KIND_LABEL: Record<string, string> = {
-  interval: "インターバル・レペ",
-  continuous: "ジョグ・持続走",
-  race: "レース",
-  timetrial: "タイムトライアル",
-  strength: "補強",
-  off: "休養",
-  unknown: "未判定",
-};
-
 function EditSheet({
   session,
   today,
@@ -632,51 +573,18 @@ function EditSheet({
   onDone: (msg: string) => void;
 }) {
   const [prescription, setPrescription] = useState(session.prescription ?? "");
-  const [category, setCategory] = useState<string>(session.category ?? "");
-  const [slotTargets, setSlotTargets] = useState<string[]>([]);
-  const [distanceKm, setDistanceKm] = useState(
-    session.distanceKm !== undefined ? String(session.distanceKm) : ""
-  );
-  const [durationMin, setDuration] = useState(
-    session.durationMin !== undefined ? String(session.durationMin) : ""
-  );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [violations, setViolations] = useState<any[]>([]);
 
-  const structure = useStructure(prescription);
-  // 読み取れた構造だけを保持する。読めない本文が来ても欄を消さない
-  const [shape, setShape] = useState<any | null>(null);
-  const lastShape = useRef<string>("");
-
-  useEffect(() => {
-    if (!structure?.recognized) return;
-    setShape(structure);
-    if (structure.categoryCertain && structure.category) setCategory(structure.category);
-    if (structure.shape === lastShape.current) return;
-    lastShape.current = structure.shape;
-
-    const slots = structure.slots ?? [];
-    if (slots.length > 0) {
-      // 増えたぶんは空欄を足すだけ。減っても捨てない（打ち間違いで消えると入れ直しになる）
-      setSlotTargets((prev) => {
-        const next = prev.length >= slots.length ? [...prev] : [...prev];
-        for (let i = prev.length; i < slots.length; i++) {
-          const t = slots[i]?.targetSec;
-          next.push(t !== undefined ? String(Math.round(t * 10) / 10) : "");
-        }
-        // 本文に設定が書かれていて、まだ何も入れていない欄だけ埋める
-        for (let i = 0; i < slots.length; i++) {
-          if (!next[i] && slots[i]?.targetSec !== undefined) {
-            next[i] = String(Math.round(slots[i].targetSec * 10) / 10);
-          }
-        }
-        return next;
-      });
-    }
-    if (structure.distanceKm !== undefined) setDistanceKm(String(structure.distanceKm));
-    if (structure.durationMin !== undefined) setDuration(String(structure.durationMin));
-  }, [structure]);
+  // N-2: 本文に合わせた入力欄。追加シートと同じ実装を使う
+  const fields = usePrescriptionFields(prescription, {
+    category: session.category ?? "",
+    distanceKm: session.distanceKm !== undefined ? String(session.distanceKm) : "",
+    durationMin: session.durationMin !== undefined ? String(session.durationMin) : "",
+    fallbackKind: session.category === "aerobic" ? "continuous" : "interval",
+  });
+  const { setSlotTargets } = fields;
 
   // 初期表示: 保存済みの設定タイムを欄に入れる
   useEffect(() => {
@@ -687,41 +595,14 @@ function EditSheet({
         ? prev
         : tps.map((tp: any) => String(Math.round(((tp.targetSecFast + tp.targetSecSlow) / 2) * 10) / 10))
     );
-  }, [session.id]);
-
-  const slots = shape?.slots ?? [];
-  const kind = shape?.kind ?? (session.category === "aerobic" ? "continuous" : "interval");
+  }, [session.id, setSlotTargets]);
 
   const save = async (force = false) => {
     setBusy(true);
     setErr("");
     try {
-      const updates: any = { prescription };
-      if (category) updates.category = category;
-
-      if (kind === "interval" && slots.length > 0) {
-        // 全部の距離と設定が同じなら1件にまとめる。違うものだけ区間ごとに持つ
-        const paces = slots
-          .map((sl: any, i: number) => ({ sl, sec: parseSec(slotTargets[i] ?? "") }))
-          .filter((x: any) => x.sec !== undefined)
-          .map((x: any) => ({
-            distanceM: x.sl.distanceM,
-            targetSecFast: x.sec,
-            targetSecSlow: x.sec,
-          }));
-        const uniform =
-          paces.length > 1 &&
-          paces.every(
-            (p: any) =>
-              p.distanceM === paces[0].distanceM && p.targetSecFast === paces[0].targetSecFast
-          );
-        if (paces.length > 0) updates.targetPaces = uniform ? [paces[0]] : paces;
-      }
-      if (kind === "continuous") {
-        if (distanceKm.trim()) updates.distanceKm = Number(distanceKm);
-        if (durationMin.trim()) updates.durationMin = Number(durationMin);
-        updates.targetPaces = [];
-      }
+      const updates: any = { prescription, ...prescriptionPayload(fields) };
+      if (fields.category) updates.category = fields.category;
 
       const r = await fetch("/api/plan-edit", {
         method: "POST",
@@ -749,8 +630,6 @@ function EditSheet({
     onDone(out.error ?? "予定を削除しました。");
   };
 
-  const uncertain = shape && !shape.categoryCertain;
-
   return (
     <Card title={`${session.date.slice(5).replace("-", "/")} ${session.name}`}>
       <label className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
@@ -764,100 +643,7 @@ function EditSheet({
         onChange={(e) => setPrescription(e.target.value)}
       />
 
-      {/* N-3: 本文から判定した種別とカテゴリ。断定せず、直せるようにする */}
-      <div className="flex items-center gap-2 flex-wrap mb-1.5">
-        <span className="text-[11px]" style={{ color: "var(--text-3)" }}>
-          {KIND_LABEL[kind] ?? kind}
-        </span>
-        <select
-          className="!text-[11px] !py-1"
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          style={{ borderColor: uncertain ? "var(--amber)" : undefined }}
-        >
-          <option value="">カテゴリ</option>
-          {EDIT_CATEGORIES.map(([v, l]) => (
-            <option key={v} value={v}>
-              {l}
-            </option>
-          ))}
-        </select>
-        {shape?.restNote ? (
-          <span className="text-[11px] num" style={{ color: "var(--text-3)" }}>
-            {shape.restNote}
-          </span>
-        ) : null}
-      </div>
-      {shape?.basis ? (
-        <p className="text-[10.5px] mb-1.5" style={{ color: "var(--text-3)" }}>
-          カテゴリの根拠: {shape.basis}
-        </p>
-      ) : null}
-      {uncertain ? (
-        <p className="text-[10.5px] mb-1.5" style={{ color: "var(--amber)" }}>
-          設定タイムが書かれていないためカテゴリが決まりません。選んでください
-        </p>
-      ) : null}
-      {structure && !structure.recognized ? (
-        <p className="text-[10.5px] mb-1.5" style={{ color: "var(--text-3)" }}>
-          {structure.issues?.[0] ?? "本文を読み取れませんでした"}（入力欄はそのままにしてあります）
-        </p>
-      ) : null}
-
-      {/* N-2: 本文の構造に合わせた入力欄 */}
-      {kind === "interval" && slots.length > 0 ? (
-        <div className="mb-2.5">
-          <div className="text-[10px] mb-1" style={{ color: "var(--text-3)" }}>
-            1本ごとの設定タイム
-          </div>
-          <div className="grid grid-cols-3 gap-1.5">
-            {slots.map((sl: any, i: number) => (
-              <label key={`slot-${i}`} className="text-[10px]" style={{ color: "var(--text-3)" }}>
-                <span className="block mb-0.5 num">
-                  {i + 1}本目 {sl.distanceM}m
-                </span>
-                <input
-                  className="w-full !text-[12px] !py-1"
-                  inputMode="decimal"
-                  value={slotTargets[i] ?? ""}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setSlotTargets((prev) => {
-                      const next = [...prev];
-                      while (next.length <= i) next.push("");
-                      next[i] = v;
-                      return next;
-                    });
-                  }}
-                />
-              </label>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      {kind === "continuous" ? (
-        <div className="grid grid-cols-2 gap-1.5 mb-2.5">
-          <label className="text-[10px]" style={{ color: "var(--text-3)" }}>
-            <span className="block mb-0.5">距離km</span>
-            <input
-              className="w-full !text-[12px] !py-1"
-              inputMode="decimal"
-              value={distanceKm}
-              onChange={(e) => setDistanceKm(e.target.value)}
-            />
-          </label>
-          <label className="text-[10px]" style={{ color: "var(--text-3)" }}>
-            <span className="block mb-0.5">時間（分）</span>
-            <input
-              className="w-full !text-[12px] !py-1"
-              inputMode="decimal"
-              value={durationMin}
-              onChange={(e) => setDuration(e.target.value)}
-            />
-          </label>
-        </div>
-      ) : null}
+      <PrescriptionFields state={fields} emptyCategoryLabel="カテゴリ" />
 
       {err ? (
         <p className="text-[11.5px] mb-2" style={{ color: "var(--red)" }}>
@@ -913,12 +699,20 @@ function AddSheet({
   onClose: () => void;
   onDone: (msg: string) => void;
 }) {
-  const [category, setCategory] = useState("aerobic");
   const [name, setName] = useState("");
   const [prescription, setPrescription] = useState("");
   const [timeOfDay, setTimeOfDay] = useState("am");
-  const [durationMin, setDuration] = useState("");
   const [busy, setBusy] = useState(false);
+
+  /**
+   * N-2: 編集シートとまったく同じ入力欄を使う。
+   * 本文がまだ読めていない間は有酸素（＝距離と時間の欄）を出す。
+   * カテゴリを手で変えれば追従するので、本文なしでも入れられる。
+   */
+  const fields = usePrescriptionFields(prescription, {
+    category: "aerobic",
+    fallbackKind: "continuous",
+  });
 
   const add = async () => {
     setBusy(true);
@@ -931,11 +725,11 @@ function AddSheet({
           today,
           session: {
             date,
-            category,
+            category: fields.category || "aerobic",
             name: name || "手動で追加した練習",
             prescription,
             timeOfDay,
-            durationMin: durationMin ? Number(durationMin) : undefined,
+            ...prescriptionPayload(fields),
           },
         }),
       });
@@ -951,25 +745,6 @@ function AddSheet({
       <p className="text-[11.5px] mb-2.5" style={{ color: "var(--text-2)" }}>
         同じ日に午前と午後の2本を残したいときにも使います。
       </p>
-      <div className="grid grid-cols-2 gap-1.5 mb-2.5">
-        <label className="text-[10px]" style={{ color: "var(--text-3)" }}>
-          <span className="block mb-0.5">種類</span>
-          <select className="w-full !text-[12px] !py-1" value={category} onChange={(e) => setCategory(e.target.value)}>
-            {EDIT_CATEGORIES.map(([v, l]) => (
-              <option key={v} value={v}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-[10px]" style={{ color: "var(--text-3)" }}>
-          <span className="block mb-0.5">時間帯</span>
-          <select className="w-full !text-[12px] !py-1" value={timeOfDay} onChange={(e) => setTimeOfDay(e.target.value)}>
-            <option value="am">午前</option>
-            <option value="pm">午後</option>
-          </select>
-        </label>
-      </div>
       <input
         className="w-full mb-2 !text-[12px]"
         placeholder="名前（例: 朝ジョグ）"
@@ -978,19 +753,24 @@ function AddSheet({
       />
       <input
         className="w-full mb-2 !text-[12px]"
-        placeholder="内容（例: 30分ジョグ）"
+        placeholder="内容（例: 30分ジョグ / 300m×5 @41.5秒 r5分）"
         value={prescription}
         onChange={(e) => setPrescription(e.target.value)}
       />
+
+      <PrescriptionFields state={fields} />
+
       <label className="text-[10px] block mb-2.5" style={{ color: "var(--text-3)" }}>
-        <span className="block mb-0.5">所要時間（分）</span>
-        <input
+        <span className="block mb-0.5">時間帯</span>
+        <select
           className="!text-[12px] !py-1"
           style={{ width: 90 }}
-          inputMode="decimal"
-          value={durationMin}
-          onChange={(e) => setDuration(e.target.value)}
-        />
+          value={timeOfDay}
+          onChange={(e) => setTimeOfDay(e.target.value)}
+        >
+          <option value="am">午前</option>
+          <option value="pm">午後</option>
+        </select>
       </label>
       <div className="flex gap-2">
         <button className="btn-volt" disabled={busy} onClick={add}>

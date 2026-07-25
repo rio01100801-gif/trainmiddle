@@ -1205,6 +1205,99 @@ if (editBox && editBox.y > 844) fail(`編集シートが画面外に出ている
 step("カレンダー: ✎から編集シートが開くOK");
 await shot("26_calendar_edit");
 
+// ---- 10d-3. N-2: 「練習を足す」でも本文に合わせて欄が組み変わる ----
+// 編集シートと同じ実装（PrescriptionFields）を使っているので、
+// ここが落ちたら両方の画面が落ちている。片方だけ直して挙動がずれることを防ぐ見張り。
+// 編集シートを開いたままなので、いったん別画面を経由して閉じる。
+// 同じハッシュへの goto は再読み込みにならず、シートが2枚出たままになる。
+await page.goto("http://localhost:8791/#/");
+await page.waitForTimeout(400);
+await page.goto("http://localhost:8791/#/calendar");
+await page.waitForTimeout(900);
+await page.getByRole("button", { name: "この日に練習を足す" }).nth(5).click();
+await page.waitForTimeout(700);
+// 判定も欄も「追加シートの中」を見る（編集シートの欄を数えてしまわないように）
+const addCard = page.locator("section.card", { hasText: "に練習を足す" }).first();
+const addBody = addCard.locator('input[placeholder^="内容"]');
+const addRepInputs = addCard.locator('label:has-text("本目") input');
+if ((await addBody.count()) === 0) fail("N-2: 追加シートに本文の欄がない");
+await addBody.fill("300m×5 @41.5秒 r5分");
+await page.waitForTimeout(900);
+let addText = await addCard.textContent();
+if (!addText.includes("1本ごとの設定タイム")) fail("N-2: 追加シートに1本ごとの欄が出ない");
+let addSlots = await addRepInputs.count();
+if (addSlots !== 5) fail(`N-2: 追加シートの欄が5つでない（${addSlots}）`);
+// N-3: カテゴリが本文から自動で入り、根拠も出ること（断定せず直せる形）
+const addCat = await addCard.locator('select[aria-label="カテゴリ"]').inputValue();
+if (addCat !== interp.hl.category) {
+  fail(`N-3: 追加シートでカテゴリが本文から入らない（${addCat} / 期待 ${interp.hl.category}）`);
+}
+if (!addText.includes("カテゴリの根拠")) fail("N-3: 追加シートに判定の根拠が出ない");
+// 3本目まで入れてから本数を増やしても、入れた値が残ること
+for (const [i, v] of ["41.0", "41.2", "41.4"].entries()) {
+  await addRepInputs.nth(i).fill(v);
+}
+await addBody.fill("300m×7 @41.5秒 r5分");
+await page.waitForTimeout(900);
+addSlots = await addRepInputs.count();
+if (addSlots !== 7) fail(`N-2: 追加シートで本数を増やしても欄が増えない（${addSlots}）`);
+for (const [i, v] of ["41.0", "41.2", "41.4"].entries()) {
+  if ((await addRepInputs.nth(i).inputValue()) !== v) {
+    fail(`N-2: 追加シートで本数を変えたら${i + 1}本目の入力値が消えた`);
+  }
+}
+// ジョグに書き換えると欄の種類が変わること
+await addBody.fill("ジョグ40分");
+await page.waitForTimeout(900);
+addText = await addCard.textContent();
+if (!addText.includes("距離km") || addText.includes("1本ごとの設定タイム")) {
+  fail("N-2: 追加シートでジョグに書き換えても欄が切り替わらない");
+}
+// N-1: 欄が組み変わっても本文の入力欄からフォーカスが外れないこと。
+// 400msずつ空けて打つので、打っている途中で解釈が走り、欄が実際に作り直される。
+await addBody.fill("");
+await addBody.click();
+let addFocusBroken = false;
+for (const ch of ["3", "0", "0", "m", "×", "5"]) {
+  await page.keyboard.type(ch);
+  await page.waitForTimeout(400);
+  const onBody = await page.evaluate(() => {
+    const el = document.activeElement;
+    return !!el && el.tagName === "INPUT" && (el.getAttribute("placeholder") ?? "").startsWith("内容");
+  });
+  if (!onBody) {
+    fail(`N-1: 追加シートで「${ch}」を打った時点でフォーカスが外れた（キーボードが閉じる）`);
+    addFocusBroken = true;
+    break;
+  }
+}
+if (!addFocusBroken && (await addBody.inputValue()) !== "300m×5") {
+  fail(`N-1: 追加シートで1文字ずつ入力した結果が残っていない（"${await addBody.inputValue()}"）`);
+}
+// 組み立てた設定タイムが保存まで届くこと（＋で足した練習だけ設定が入らない、を防ぐ）
+await addBody.fill("300m×5 @41.5秒 r5分");
+await page.waitForTimeout(900);
+await addCard.locator('input[placeholder="名前（例: 朝ジョグ）"]').fill("追加テスト（構造）");
+await addCard.getByRole("button", { name: "追加する" }).click();
+await page.waitForTimeout(900);
+addText = await page.textContent("body");
+if (!addText.includes("追加テスト（構造）")) fail("N-2: 追加シートから足した練習がカレンダーに出ない");
+const addSaved = await page.evaluate(async () => {
+  const d = await fetch("/api/sessions?from=2000-01-01&to=2099-12-31").then((r) => r.json());
+  return (d.sessions ?? []).find((s) => s.name === "追加テスト（構造）") ?? null;
+});
+if (!addSaved) fail("N-2: 追加した練習を読み出せない");
+else {
+  if (!addSaved.targetPaces || addSaved.targetPaces.length === 0) {
+    fail("N-2: 追加した練習に設定タイムが入っていない");
+  }
+  if (addSaved.category !== interp.hl.category) {
+    fail(`N-3: 追加した練習のカテゴリが本文の判定と違う（${addSaved.category}）`);
+  }
+}
+step("N-2 「練習を足す」でも本文に合わせた入力欄OK（編集シートと同じ実装）");
+await shot("28_add_structure");
+
 // ---- 10e. フェーズE: 警告の集約 ----
 await page.goto("http://localhost:8791/#/warnings");
 await page.waitForTimeout(600);
