@@ -58,6 +58,22 @@ export function buildContinuous(input: {
 // ---------------------------------------------------------------------------
 
 /** "1000m×5 r2' jog" のような表示文字列を組み立てる */
+/**
+ * S-4: 本ごとのレストが入っていれば、それを並べて返す。
+ * 全部同じ／入っていないなら undefined（セッション共通のレストを出せばよい）。
+ */
+export function perRepRestNote(d: IntervalDetail): string | undefined {
+  const rests = d.results.map((r) => r.restAfterSec);
+  const given = rests.filter((v): v is number => v !== undefined);
+  if (given.length === 0) return undefined;
+  const uniq = new Set(given);
+  if (uniq.size === 1 && given.length === rests.length) return undefined;
+  // 最終本のあとのレストは意味が無いので落とす
+  const shown = rests.slice(0, -1);
+  if (shown.every((v) => v === undefined)) return undefined;
+  return `レスト ${shown.map((v) => (v === undefined ? "-" : formatRest(v))).join(" / ")}`;
+}
+
 export function describeInterval(d: IntervalDetail): string {
   // レストの種類が書かれていないものは、種類を出さずに量だけ出す
   const kind = d.restType ? ` ${REST_LABELS[d.restType]}` : "";
@@ -84,19 +100,31 @@ export function buildRepResults(
   actualSecs: number[],
   targetSec?: number,
   /** 1本ごとの平均心拍（Q-1）。任意。入っているものだけ付く */
-  avgHrs: (number | undefined)[] = []
+  avgHrs: (number | undefined)[] = [],
+  /** 1本ごとの距離（S-4）。複合セッションで区間の距離が違うとき */
+  distancesM: (number | undefined)[] = [],
+  /** その本のあとのレスト秒（S-4）。任意 */
+  restAfterSecs: (number | undefined)[] = []
 ): RepResult[] {
-  // 心拍は「何本目か」で対応させる。先に間引くと、
-  // 実施タイムが空の本があったときに心拍が1本ずつずれる
+  // 心拍・距離・レストは「何本目か」で対応させる。先に間引くと、
+  // 実施タイムが空の本があったときに1本ずつずれる
+  const num = (v: number | undefined) =>
+    v !== undefined && isFinite(v) && v > 0 ? v : undefined;
   return actualSecs
-    .map((actualSec, i) => ({ actualSec, avgHr: avgHrs[i] }))
+    .map((actualSec, i) => ({
+      actualSec,
+      avgHr: avgHrs[i],
+      distanceM: distancesM[i],
+      restAfterSec: restAfterSecs[i],
+    }))
     .filter((x) => isFinite(x.actualSec) && x.actualSec > 0)
     .map((x, i) => ({
       index: i + 1,
-      distanceM,
+      distanceM: num(x.distanceM) ?? distanceM,
       targetSec,
       actualSec: x.actualSec,
-      ...(x.avgHr !== undefined && isFinite(x.avgHr) && x.avgHr > 0 ? { avgHr: x.avgHr } : {}),
+      ...(num(x.avgHr) !== undefined ? { avgHr: x.avgHr } : {}),
+      ...(num(x.restAfterSec) !== undefined ? { restAfterSec: x.restAfterSec } : {}),
     }));
 }
 
@@ -197,7 +225,11 @@ export function summarizeResult(r: SessionResult): string {
   }
   if (r.interval) {
     const t = lapTrend(r.interval);
-    return `${describeInterval(r.interval)}${t ? ` → ${t.summary}` : ""}`;
+    // 本ごとにレストが違うときは、そちらを出す（セッション共通のレストでは表せない）
+    const perRep = perRepRestNote(r.interval);
+    return `${describeInterval(r.interval)}${perRep ? `（${perRep}）` : ""}${
+      t ? ` → ${t.summary}` : ""
+    }`;
   }
   if (r.actualLapsSec.length > 0) {
     return r.actualLapsSec.map((v) => v.toFixed(1)).join(" / ");

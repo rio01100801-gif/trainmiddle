@@ -14,7 +14,8 @@ import {
 } from "../components/ui";
 import { localToday } from "@/lib/core/dates";
 import { useQueryParam } from "../components/route";
-import { formatTimeInput } from "@/lib/core/inputFormat";
+import { completeRunTriple, formatTimeInput } from "@/lib/core/inputFormat";
+import { parseRest } from "@/lib/core/bulkImport";
 import { avgPaceSecPerKm, buildRepResults, REST_LABELS } from "@/lib/core/workoutLog";
 import { evaluateEnvironment, environmentNote, WIND_LABELS } from "@/lib/core/environment";
 import type { RestType } from "@/lib/core/types";
@@ -818,6 +819,30 @@ function parseRepTime(v: string): number | undefined {
 }
 
 /**
+ * S-4: 「6分」「90秒」「300」のようなレストの書き方を秒に直す。
+ *
+ * 解釈は一括入力と同じ `parseRest` に任せる（同じ文字列が画面によって違う意味に
+ * ならないようにする）。単位が無いものは分でも秒でも決められないので、
+ * ここでは日誌でよく使われる「分」として読む——のではなく、
+ * **入力欄なので数字だけなら秒として読む**。
+ * 日誌の解釈（読めなければ埋めない）と、入力欄（本人が今打っている）は事情が違う。
+ */
+function parseRestInput(v: string): number | undefined {
+  const t = v.trim();
+  if (!t) return undefined;
+  const parsed = parseRest(t);
+  if (parsed.restSec !== undefined) return parsed.restSec;
+  if (parsed.restDistanceM !== undefined) return undefined; // 距離指定はここでは扱わない
+  const n = Number(t.replace(/[^\d.]/g, ""));
+  return isFinite(n) && n > 0 ? n : undefined;
+}
+
+/** 秒を入力欄に戻す。60の倍数なら分で書く（打ったとおりに近い形にする） */
+function fmtRestInput(sec: number): string {
+  return sec % 60 === 0 ? `${sec / 60}分` : `${sec}秒`;
+}
+
+/**
  * ラベル付きの入力欄。
  *
  * これをコンポーネントの中で定義してはいけない（N-1）。
@@ -919,6 +944,19 @@ function ResultForm({
   );
   const [withHr, setWithHr] = useState<boolean>(
     (ex?.results ?? []).some((r: any) => r.avgHr !== undefined)
+  );
+  /*
+   * S-4: その本のあとのレスト。任意。
+   * 300+600+300 のように区間ごとにレストが違うメニューがあるので、
+   * セッションに1つのレストだけでは記録できない。
+   */
+  const [repRests, setRepRests] = useState<string[]>(
+    (ex?.results ?? []).map((r: any) =>
+      r.restAfterSec !== undefined ? fmtRestInput(r.restAfterSec) : ""
+    )
+  );
+  const [withRest, setWithRest] = useState<boolean>(
+    (ex?.results ?? []).some((r: any) => r.restAfterSec !== undefined)
   );
 
   useEffect(() => {
@@ -1034,10 +1072,20 @@ function ResultForm({
     );
   };
 
-  const autoPace =
-    Number(distanceKm) > 0 && Number(durationMin) > 0
-      ? avgPaceSecPerKm(Number(distanceKm), Number(durationMin))
-      : undefined;
+  /*
+   * S-2: 距離・時間・平均ペースは、どれか2つ入れれば残り1つが決まる。
+   *
+   * これまでは「距離＋時間 → ペース」の向きしか無く、
+   * 時計から平均ペースを見て入れる人は距離を自分で割る必要があった。
+   * 計算は一括入力と同じ completeRunTriple を使う（解釈を1か所に集める）。
+   * 3つとも入っていて食い違うときは、どれかが違うと出すだけで、勝手に直さない。
+   */
+  const triple = completeRunTriple({
+    distanceKm: Number(distanceKm) > 0 ? Number(distanceKm) : undefined,
+    durationSec: Number(durationMin) > 0 ? Number(durationMin) * 60 : undefined,
+    paceSecPerKm: parseDuration(paceOverride) ?? undefined,
+  });
+  const autoPace = triple.paceSecPerKm;
 
   const env = evaluateEnvironment({
     tempC: tempC ? Number(tempC) : undefined,
@@ -1080,23 +1128,24 @@ function ResultForm({
 
       let payload: any;
       if (mode === "continuous") {
-        const km = Number(distanceKm);
-        const min = Number(durationMin);
+        // S-2: 3つのうち2つ入っていれば足りる。足りないものは補われている
+        const km = triple.distanceKm ?? 0;
+        const min = triple.durationSec !== undefined ? triple.durationSec / 60 : 0;
         if (!km || !min) {
           setBusy(false);
-          alert("距離と時間を入力してください");
+          alert("距離・時間・平均ペースのうち2つを入力してください");
           return;
         }
         payload = {
           sessionId: session.id,
           date: session.date,
           continuous: {
-            distanceKm: km,
-            durationMin: min,
-            avgPaceSecPerKm: paceOverride
-              ? (parseDuration(paceOverride) ?? avgPaceSecPerKm(km, min))
-              : avgPaceSecPerKm(km, min),
-            paceOverridden: paceOverride ? true : undefined,
+            distanceKm: Math.round(km * 100) / 100,
+            durationMin: Math.round(min * 10) / 10,
+            avgPaceSecPerKm: triple.paceSecPerKm ?? avgPaceSecPerKm(km, min),
+            // 手で入れたペースが計算値の代わりに使われた場合だけ「上書き」とする。
+            // ペースから距離を出したときは上書きではなく、それが実測そのもの
+            paceOverridden: paceOverride && triple.derived !== "distanceKm" ? true : undefined,
             avgHr: avgHr ? Number(avgHr) : undefined,
             maxHr: maxHr ? Number(maxHr) : undefined,
           },
@@ -1113,6 +1162,13 @@ function ResultForm({
         const parsedTimes = source.split(",").map((x: string) => parseRepTime(x) ?? 0);
         const actual = parsedTimes.filter((x: number) => x > 0);
         const t = targetSec ? Number(targetSec) : undefined;
+        // S-4: 区間ごとのレスト。空欄の本はセッション共通の設定を使う（undefinedのまま）
+        const rests =
+          perRep && withRest
+            ? repRests.map((v) => parseRestInput(v))
+            : [];
+        // 複合セッション（300+600+300）は本ごとに距離が違う
+        const dists = perRep ? slotDistances : [];
         const hrs =
           perRep && withHr
             ? repHrs.map((v) => {
@@ -1130,7 +1186,7 @@ function ResultForm({
             restType,
             restSec: restMode === "time" ? Number(restValue) : undefined,
             restDistanceM: restMode === "distance" ? Number(restValue) : undefined,
-            results: buildRepResults(Number(distM), parsedTimes, t, hrs),
+            results: buildRepResults(Number(distM), parsedTimes, t, hrs, dists, rests),
           },
           actualLapsSec: actual,
           lapDistancesM: actual.map(() => Number(distM)),
@@ -1210,25 +1266,38 @@ function ResultForm({
 
       {mode === "continuous" ? (
         <div className="grid grid-cols-2 gap-2">
-          <L label="距離(km)">
+          {/* S-2: 3つのうち2つ入れれば、残りは自動で埋まる */}
+          <div className="col-span-2 text-[11px] -mb-1" style={{ color: "var(--text-3)" }}>
+            距離・時間・平均ペースのうち<b style={{ color: "var(--text-2)" }}>2つ</b>を入れると、
+            残りの1つは自動で計算されます。
+          </div>
+          <L label={`距離(km)${triple.derived === "distanceKm" ? "・自動計算" : ""}`}>
             <input
               className="w-full"
               value={distanceKm}
               onChange={(e) => setDistanceKm(e.target.value)}
-              placeholder="11.2"
+              placeholder={
+                triple.derived === "distanceKm" && triple.distanceKm
+                  ? String(triple.distanceKm)
+                  : "11.2"
+              }
               inputMode="decimal"
             />
           </L>
-          <L label="時間(分)">
+          <L label={`時間(分)${triple.derived === "durationSec" ? "・自動計算" : ""}`}>
             <input
               className="w-full"
               value={durationMin}
               onChange={(e) => setDurationMin(e.target.value)}
-              placeholder="50"
+              placeholder={
+                triple.derived === "durationSec" && triple.durationSec
+                  ? String(Math.round((triple.durationSec / 60) * 10) / 10)
+                  : "50"
+              }
               inputMode="decimal"
             />
           </L>
-          <L label="平均ペース（自動計算・上書き可）">
+          <L label={`平均ペース${triple.derived === "paceSecPerKm" ? "・自動計算" : ""}`}>
             <input
               className="w-full"
               value={paceOverride}
@@ -1255,7 +1324,19 @@ function ResultForm({
           </L>
           {autoPace ? (
             <div className="text-[11px] self-end pb-2" style={{ color: "var(--volt)" }}>
-              自動計算: {fmtPace(autoPace)}
+              平均ペース {fmtPace(autoPace)}
+              {triple.distanceKm !== undefined && triple.derived === "distanceKm"
+                ? ` ／ 距離 ${triple.distanceKm}km`
+                : ""}
+              {triple.durationSec !== undefined && triple.derived === "durationSec"
+                ? ` ／ 時間 ${Math.round((triple.durationSec / 60) * 10) / 10}分`
+                : ""}
+            </div>
+          ) : null}
+          {/* 3つとも入っていて食い違うとき。勝手に直さず、どれかが違うと出すだけ */}
+          {triple.mismatch ? (
+            <div className="col-span-2 text-[11px] leading-relaxed" style={{ color: "var(--amber)" }}>
+              {triple.mismatch}
             </div>
           ) : null}
         </div>
@@ -1328,7 +1409,7 @@ function ResultForm({
                 実施タイムの欄まで押しつぶされる。出すときは2列に落として幅を確保する。
               */}
               <label
-                className="flex items-center gap-1.5 text-[11px] mb-1.5"
+                className="flex items-center gap-1.5 text-[11px] mb-1"
                 style={{ color: "var(--text-3)" }}
               >
                 <input
@@ -1339,7 +1420,31 @@ function ResultForm({
                 />
                 1本ごとの平均心拍も入れる（任意）
               </label>
-              <div className={`grid ${withHr ? "grid-cols-2" : "grid-cols-3"} gap-1.5`}>
+              {/*
+                S-4: レストが本ごとに違うメニュー（300+600+300 で 6分・10分 など）は、
+                セッションに1つのレストでは表せない。ここも既定では出さない。
+              */}
+              <label
+                className="flex items-center gap-1.5 text-[11px] mb-1.5"
+                style={{ color: "var(--text-3)" }}
+              >
+                <input
+                  type="checkbox"
+                  checked={withRest}
+                  onChange={(e) => setWithRest(e.target.checked)}
+                  style={{ width: 16, height: 16, padding: 0 }}
+                />
+                レストが本ごとに違う（任意）
+              </label>
+              {/*
+                欄が増えるほど1行あたりの幅が減る。
+                3欄になったら横並びをやめて1本1行にする（iPhone幅で潰さない）。
+              */}
+              <div
+                className={`grid gap-1.5 ${
+                  withHr && withRest ? "grid-cols-1" : withHr || withRest ? "grid-cols-2" : "grid-cols-3"
+                }`}
+              >
                 {Array.from({ length: slotCount }, (_, i) => (
                   <div key={`rep-${i}`}>
                     <span
@@ -1386,10 +1491,34 @@ function ResultForm({
                           />
                         </label>
                       ) : null}
+                      {withRest ? (
+                        <label className="flex-1 min-w-0">
+                          <input
+                            className="w-full !text-[12px] !py-1"
+                            placeholder="r 6分"
+                            aria-label={`${i + 1}本目のあとのレスト`}
+                            value={repRests[i] ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setRepRests((prev) => {
+                                const next = [...prev];
+                                while (next.length <= i) next.push("");
+                                next[i] = v;
+                                return next;
+                              });
+                            }}
+                          />
+                        </label>
+                      ) : null}
                     </div>
                   </div>
                 ))}
               </div>
+              {withRest ? (
+                <p className="text-[10.5px] mt-1" style={{ color: "var(--text-3)" }}>
+                  「6分」「90秒」のように書けます。空欄の本は、上のレスト設定を使います。
+                </p>
+              ) : null}
             </>
           ) : (
             <L label="実施タイム（本数分をカンマ区切り）">

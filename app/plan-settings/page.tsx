@@ -7,6 +7,7 @@ import {
   UndoBar,
   ViolationList,
 } from "../components/ui";
+import { PrescriptionFields, usePrescriptionFields } from "../components/prescription-fields";
 import {
   DOW_LABELS,
   SLOT_LABELS,
@@ -215,9 +216,22 @@ function CustomMenuCard() {
     category: "high_lactate" as SessionCategory,
     source: "self" as CustomMenuSource,
     prescription: "",
-    distanceM: "",
     note: "",
   });
+
+  // S-3: 本文の解釈は他の入力画面とまったく同じものを使う
+  const fields = usePrescriptionFields(form.prescription, {
+    category: form.category,
+    fallbackKind: "interval",
+  });
+  const { category: parsedCategory } = fields;
+
+  // 本文からカテゴリが決まったら、こちらの選択にも反映する（二重管理にしない）
+  useEffect(() => {
+    if (parsedCategory && parsedCategory !== form.category) {
+      setForm((f) => ({ ...f, category: parsedCategory as SessionCategory }));
+    }
+  }, [parsedCategory]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = useCallback(() => {
     fetch("/api/plan-settings")
@@ -240,12 +254,15 @@ function CustomMenuCard() {
           category: form.category,
           source: form.source,
           prescription: form.prescription,
-          distanceM: form.distanceM ? Number(form.distanceM) : undefined,
+          // S-3: 距離・本数・レストは本文の解釈から取る（手で入れ直させない）
+          distanceM: fields.slots[0]?.distanceM,
+          reps: fields.slots.length > 0 ? fields.slots.length : undefined,
+          restNote: fields.shape?.restNote,
           note: form.note || undefined,
         },
       }),
     });
-    setForm({ ...form, name: "", prescription: "", distanceM: "", note: "" });
+    setForm({ ...form, name: "", prescription: "", note: "" });
     setOpen(false);
     setMsg("登録しました。プランを再生成すると、このメニューが優先して使われます。");
     load();
@@ -369,18 +386,16 @@ function CustomMenuCard() {
               placeholder="例: 300m×6 r4分 jog"
             />
           </label>
-          <label className="text-[13px]">
-            <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
-              1本の距離(m)・任意 — 入れると設定タイムが自動計算されます
-            </span>
-            <input
-              className="w-full"
-              value={form.distanceM}
-              onChange={(e) => setForm({ ...form, distanceM: e.target.value })}
-              placeholder="300"
-              inputMode="numeric"
-            />
-          </label>
+          {/*
+            S-3: 入力方法を記録画面・編集シート・追加シートと同じにする。
+            ここだけ本文のテキスト1つで、距離を手で入れ直す作りになっていた。
+            本文を打てば欄が組み上がり、1本ごとの設定タイムもそのまま入る。
+          */}
+          <PrescriptionFields state={fields} />
+          <p className="text-[10.5px] -mt-1" style={{ color: "var(--text-3)" }}>
+            1本の距離と本数は内容から読み取ります。設定タイムを入れておくと、
+            生成のたびに計算し直さずそのまま使えます。
+          </p>
           <label className="text-[13px]">
             <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
               メモ（任意）

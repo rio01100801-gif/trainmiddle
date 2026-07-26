@@ -137,8 +137,9 @@ await page.waitForTimeout(300);
 await page.locator('label:has-text("メニュー名") input').fill("コーチ指定 300m×6");
 await page.locator('label:has-text("カテゴリ") select').selectOption("high_lactate");
 await page.locator('label:has-text("由来") select').selectOption("coach");
+// S-3: 距離は本文から読み取るので、手で入れる欄は無くなった
 await page.locator('label:has-text("内容") input').first().fill("300m×6 r4分 jog");
-await page.locator('label:has-text("1本の距離") input').fill("300");
+await page.waitForTimeout(900);
 await page.getByRole("button", { name: "このメニューを登録" }).click();
 await page.waitForTimeout(200);
 await page.getByRole("button", { name: "実行する" }).click();
@@ -361,6 +362,40 @@ for (const [i, v] of ["172", "176", "179", "182"].entries()) {
   await hrInputs.nth(i).fill(v);
 }
 step(`Q-1 1本ごとの心拍OK（既定は非表示 / 最小幅 ${Math.round(narrowest)}px）`);
+
+/*
+ * S-4: レストが本ごとに違うメニュー（300+600+300 で 6分・10分）を記録できること。
+ * 欄が3つ並んでも、iPhone幅で潰れないこと。
+ */
+const restToggle = page.getByText("レストが本ごとに違う（任意）");
+if ((await restToggle.count()) === 0) fail("S-4: 本ごとのレストの切り替えが無い");
+if ((await page.locator('input[aria-label*="のあとのレスト"]').count()) !== 0) {
+  fail("S-4: レストの欄が既定で出ている（任意項目なので既定では出さない）");
+}
+await restToggle.click();
+await page.waitForTimeout(300);
+const restInputs = page.locator('input[aria-label*="のあとのレスト"]');
+if ((await restInputs.count()) !== 5) {
+  fail(`S-4: レストの欄が本数と合っていない（${await restInputs.count()}）`);
+}
+// 3欄になっても入力できる幅が残っていること
+const w3 = await page.evaluate(() =>
+  [
+    ...document.querySelectorAll(
+      'input[aria-label*="実施タイム"], input[aria-label*="平均心拍"], input[aria-label*="のあとのレスト"]'
+    ),
+  ].map((el) => el.getBoundingClientRect().width)
+);
+const narrowest3 = Math.min(...w3);
+if (narrowest3 < 56) fail(`S-4: 3欄にすると入力欄が狭すぎる（最小 ${Math.round(narrowest3)}px）`);
+// 本ごとに違うレストを入れる
+for (const [i, v] of ["6分", "10分", "6分", "10分"].entries()) {
+  await restInputs.nth(i).fill(v);
+}
+if ((await repInputs.first().inputValue()) !== "39.2") {
+  fail("S-4: レストの欄を出したら実施タイムが消えた");
+}
+step(`S-4 本ごとのレストOK（既定は非表示 / 最小幅 ${Math.round(narrowest3)}px）`);
 
 await page.locator('label:has-text("RPE") input').first().fill("10");
 await page.locator('label:has-text("主観") select').selectOption("very_hard");
@@ -1587,6 +1622,27 @@ for (const label of ["プロフィール", "メニュー設定", "目標・レ�
   if (!settingsText.includes(label)) fail(`P-5: 設定から「${label}」に到達できない`);
 }
 step("P-5 設定画面の説明とグループ分けOK（到達先は減っていない）");
+
+// ---- 15a-2. S-3: 自作メニューの登録も他と同じ入力方法になっていること ----
+await page.goto("http://localhost:8791/#/plan-settings");
+await page.waitForTimeout(900);
+const addMenuBtn = page.getByRole("button", { name: "+ 登録する" }).first();
+if ((await addMenuBtn.count()) > 0) {
+  await addMenuBtn.click();
+  await page.waitForTimeout(400);
+}
+const menuBody = page.locator('label:has-text("内容") input').first();
+if ((await menuBody.count()) === 0) fail("S-3: 自作メニューの内容欄が無い");
+else {
+  await menuBody.fill("300m×5 @41.5秒 r5分");
+  await page.waitForTimeout(900);
+  // 記録画面・編集シートと同じ「1本ごとの欄」が出ること
+  const menuSlots = await page.locator('label:has-text("本目") input').count();
+  if (menuSlots !== 5) fail(`S-3: 自作メニュー登録で欄が組み上がらない（${menuSlots}）`);
+  const setText = await page.textContent("body");
+  if (!/カテゴリの根拠/.test(setText)) fail("S-3: 本文からの判定根拠が出ていない");
+  step("S-3 自作メニューの登録も本文から欄が組み上がるOK（他の入力画面と同じ）");
+}
 
 // ---- 15b. S-5: 確認ダイアログがFABに隠れず押せること ----
 /*

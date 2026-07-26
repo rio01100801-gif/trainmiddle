@@ -248,6 +248,16 @@ export interface RepResult {
    * 時計から拾える人だけが入れるので、無いことのほうが多い前提で扱う。
    */
   avgHr?: number;
+  /**
+   * S-4: **その本のあとの**レスト。任意。
+   *
+   * `IntervalDetail` のレストはセッションに1つしか持てないが、
+   * 300+600+300 のような複合セッションでは区間ごとにレストが違う
+   * （300のあと6分、600のあと10分、など）。
+   * 全部同じなら入れなくてよい。入っている本だけ、そちらを優先して読む。
+   */
+  restAfterSec?: number;
+  restAfterDistanceM?: number;
   note?: string;
 }
 
