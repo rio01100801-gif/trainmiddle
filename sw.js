@@ -11,17 +11,24 @@
  *
  * リリースのたびに VERSION を必ず上げること（上げないと install が走らない）。
  */
-const VERSION = "forge-v16";
+const VERSION = "forge-v17";
 const ASSETS = [
   "./",
   "./index.html",
   "./bundle.js",
   "./styles.css",
   "./manifest.webmanifest",
-  "./icon-180.png",
-  "./icon-192.png",
-  "./icon-512.png",
-  "./icon-maskable-512.png",
+  /*
+   * アイコンは版数つきのURLで取る。
+   * build-static が index.html と manifest の参照にも同じクエリを付けるので、
+   * ここを素のファイル名にしておくと、オフライン時にアイコンだけ取れなくなる。
+   * （クエリを付けているのは、iOSがホーム画面のアイコンを焼き付けたうえ
+   *   Safariが画像自体もキャッシュするため。URLが変わらないと追加し直しても古いまま）
+   */
+  `./icon-180.png?v=${VERSION}`,
+  `./icon-192.png?v=${VERSION}`,
+  `./icon-512.png?v=${VERSION}`,
+  `./icon-maskable-512.png?v=${VERSION}`,
 ];
 
 /** 更新を必ず取りに行く対象（アプリ本体） */
