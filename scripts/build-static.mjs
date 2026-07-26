@@ -36,4 +36,32 @@ for (const f of FILES) {
 // 版数を出す。上げ忘れは配信後に気づいても手遅れになる
 const sw = fs.readFileSync(path.join(to, "sw.js"), "utf8");
 const v = /const VERSION = "([^"]+)"/.exec(sw)?.[1] ?? "不明";
-console.log(`静的ファイルを配りました（Service Worker: ${v}）`);
+
+/*
+ * アイコンのURLに版数を付ける。
+ *
+ * iOSはホーム画面に追加した時点でアイコンを焼き付けるので、
+ * 追加し直さないと新しいアイコンにならない。
+ * そのうえ Safari は icon-180.png 自体もキャッシュしているため、
+ * 追加し直しても古い画像のままになることがある。
+ * URLが変われば確実に取り直すので、版数をクエリで付ける。
+ *
+ * 手で書くと上げ忘れるので、ここで sw.js の VERSION から入れる。
+ * manifest 側も同じ理由で付ける（Androidのインストール済みアイコン対策）。
+ */
+const indexPath = path.join(to, "index.html");
+fs.writeFileSync(
+  indexPath,
+  fs
+    .readFileSync(indexPath, "utf8")
+    .replace(/(href="\.\/icon-[\w-]+\.png)"/g, `$1?v=${v}"`)
+);
+const manifestPath = path.join(to, "manifest.webmanifest");
+fs.writeFileSync(
+  manifestPath,
+  fs
+    .readFileSync(manifestPath, "utf8")
+    .replace(/("src": "\.\/icon-[\w-]+\.png)"/g, `$1?v=${v}"`)
+);
+
+console.log(`静的ファイルを配りました（Service Worker: ${v} / アイコンURLに ?v=${v} を付与）`);
