@@ -742,7 +742,12 @@ step("ホームの3セクション切り替えOK（タップで到達できる�
 await shot("16_home_forge");
 
 // ---- 10c. フェーズB: ハンバーガー廃止と設定画面 ----
-const hamburger = await page.getByRole("button", { name: "メニュー" }).count();
+/*
+ * exact: true が要る。Playwright の name は既定で部分一致なので、
+ * 「メニューを変更」（TODAY / P-1）のような別のボタンまで拾ってしまう。
+ * 実際、TODAYに今日の予定がある日だけ落ちる、という日替わりの誤検知になっていた。
+ */
+const hamburger = await page.getByRole("button", { name: "メニュー", exact: true }).count();
 if (hamburger > 0) fail("ハンバーガーメニューが残っている（B-1）");
 await page.goto("http://localhost:8791/#/settings");
 await page.waitForTimeout(600);
@@ -1047,10 +1052,21 @@ if (!/設定.*に対して平均|ポイント練習は/.test(revText)) fail("M-1
 /*
  * P-2: 一括入力ぶんが週次レビューに入っていること。
  * 一括入力から作られた結果に構造化記録が無いと、エラーも出さずに「0本 / 0km」になる。
- * この画面には7月のデータしか入れていないので、0本のままなら落ちている。
+ *
+ * 画面の既定は「先週」なので、実行する日によっては一括入力の週から外れる。
+ * それを不具合として拾うと日替わりで落ちるだけなので、
+ * **データが入っている週を指定して**確かめる（見たいのは構造化記録の有無であって、
+ * どの週が既定かではない）。
  */
-if (/ポイント練習は0本/.test(revText) && /走行距離は約0km/.test(revText)) {
-  fail("P-2: 週次レビューに一括入力ぶんが入っていない（0本 / 0km のまま）");
+const reviewWeek = await page.evaluate(async () => {
+  const d = await fetch("/api/insights?weekStart=2026-07-13").then((r) => r.json());
+  return d.review;
+});
+if (!reviewWeek) fail("P-2: 週次レビューが取得できない");
+else if (reviewWeek.qualityLines.length === 0 || reviewWeek.totalDistanceKm === 0) {
+  fail(
+    `P-2: 週次レビューに一括入力ぶんが入っていない（${reviewWeek.qualityLines.length}本 / ${reviewWeek.totalDistanceKm}km）`
+  );
 }
 step("M-11 週次レビューOK（一括入力ぶんを含む）");
 
@@ -1519,6 +1535,52 @@ for (const label of ["プロフィール", "メニュー設定", "目標・レ�
 }
 step("P-5 設定画面の説明とグループ分けOK（到達先は減っていない）");
 
+// ---- 15b. S-5: 確認ダイアログがFABに隠れず押せること ----
+/*
+ * ConfirmDialog も FAB も fixed。同じ z-index だと DOM で後に来る FAB が上に乗り、
+ * スマホでは下寄せのダイアログの確認ボタンがちょうど FAB の下に入って押せなくなる。
+ * 「見えているのに押せない」ので、座標の重なりではなく実際にクリックして確かめる。
+ */
+await page.goto("http://localhost:8791/#/plan-settings");
+await page.waitForTimeout(900);
+const delBtn = page.getByRole("button", { name: "削除", exact: true }).first();
+if ((await delBtn.count()) === 0) fail("S-5: 自作メニューの削除ボタンが無い（前段の登録が効いていない）");
+else {
+  await delBtn.click();
+  await page.waitForTimeout(400);
+  const dialog = page.locator("h3", { hasText: "このメニューを削除しますか？" }).first();
+  if ((await dialog.count()) === 0) fail("S-5: 削除の確認ダイアログが出ない");
+  const runBtn = page.getByRole("button", { name: "実行する", exact: true }).first();
+  /*
+   * 見るべきは「ボタンが覆われているか」ではなく「FABがモーダルより前に出ていないか」。
+   *
+   * ボタンとFABが実際に重なるかは画面の高さとセーフエリアで変わるので、
+   * 特定の端末でだけ押せなくなる。E2Eの画面幅でたまたま重なっていないと素通りする。
+   * ダイアログが開いている間はFABが暗幕の裏に回っていること、を不変条件にする。
+   * これが崩れると、重なる端末では確実に押せなくなる。
+   */
+  const fabOnTop = await page.evaluate(() => {
+    const fab = document.querySelector('button[aria-label="記録を追加"]');
+    if (!fab) return { checked: false, onTop: false };
+    const r = fab.getBoundingClientRect();
+    const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    return { checked: true, onTop: !!top && (top === fab || fab.contains(top)) };
+  });
+  if (!fabOnTop.checked) fail("S-5: FABが見つからない（この画面では出るはず）");
+  else if (fabOnTop.onTop) {
+    fail("S-5: ダイアログが開いているのにFABが前面にある（重なる端末では確認ボタンを押せない）");
+  }
+  const clicked = await runBtn
+    .click({ timeout: 4000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!clicked) fail("S-5: 確認ボタンが押せない（FABに隠れている）");
+  await page.waitForTimeout(700);
+  const afterDel = await page.textContent("body");
+  if (!/削除しました|元に戻す/.test(afterDel)) fail("S-5: 削除が実行されていない");
+  step("S-5 削除の確認ボタンが押せるOK（FABの上に出る）");
+}
+
 // ---- 16. Q-2: 足りていないカテゴリの提案 ----
 await page.goto("http://localhost:8791/#/analysis");
 await page.waitForTimeout(900);
@@ -1652,6 +1714,28 @@ if (splashSaved) {
     fail("R-2: スプラッシュの数字が画面幅からはみ出している");
   }
   await sp.screenshot({ path: path.join(SHOT_DIR, "33_splash.png") });
+
+  /*
+   * S-1: マウント即座には消さないこと。
+   * bundle を止めずに普通に開いて、最低表示時間のあいだ残っているかを見る。
+   * ここが 0 に戻ると「数字は出しているが誰も読めない」状態に逆戻りする。
+   */
+  const liveCtx = await b.newContext({ viewport: { width: 390, height: 844 } });
+  const lp = await liveCtx.newPage();
+  await lp.addInitScript((v) => {
+    try {
+      localStorage.setItem("forge:splash", v);
+    } catch {
+      /* 書けなくても足止めの検証には影響しない */
+    }
+  }, JSON.stringify(splashSaved));
+  const openedAt = Date.now();
+  await lp.goto("http://localhost:8791/");
+  await lp.waitForFunction(() => !document.getElementById("splash"), { timeout: 20000 });
+  const shownMs = Date.now() - openedAt;
+  if (shownMs < 1200) fail(`S-1: ロード画面が短すぎる（${shownMs}ms）`);
+  if (shownMs > 6000) fail(`S-1: ロード画面が長すぎる（${shownMs}ms）`);
+  await liveCtx.close();
 
   // 何も保存されていない初回起動でも、ロゴだけで成立すること
   const firstCtx = await b.newContext({ viewport: { width: 390, height: 844 } });

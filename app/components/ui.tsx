@@ -536,7 +536,13 @@ export function ConfirmDialog({
 }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" onClick={onCancel}>
+    /*
+      z-index は FAB（z-50）より上に置くこと。
+      同じ z-50 だと、DOMで後に来る FAB（AppShell が main の後に描画する）が上に乗る。
+      スマホではダイアログが下寄せ（items-end）なので、
+      ちょうど確認ボタンの位置に FAB が重なり、押せなくなる。
+    */
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center" onClick={onCancel}>
       <div className="absolute inset-0 bg-black/70" />
       <div
         className="relative w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl border p-5 pb-8 sm:pb-5"

@@ -117,14 +117,27 @@
   // 素で const t と書くと、minifierが bundle 側に付けた1文字変数と衝突して
   // "Identifier 't' has already been declared" でこのスクリプト全体が落ち、
   // スプラッシュが永久に消えなくなる（アプリ自体は動いているのに真っ暗に見える）。
+  //
+  // S-1: マウント即座には消さない。
+  // Service Worker のキャッシュが効くと 0.2〜0.4秒でマウントが終わるので、
+  // せっかく出した数字が読めないまま消える。最低表示時間を設ける。
+  //   値あり 1300ms … 数字を1つ読むのに必要な時間（ラベル→数値→補足で約1.2秒）
+  //   値なし  500ms … 出すものがロゴだけなら、待たせるのは純粋な足止めになる
+  // 長すぎると毎回の起動が重くなるので、これ以上は伸ばさない。
   (function () {
+    var bornAt = Date.now();
+    var hasInfo = false;
+    var infoEl = document.getElementById("splash-info");
+    if (infoEl && infoEl.style.display === "block") hasInfo = true;
+    var minMs = hasInfo ? 1300 : 500;
+
     var timer = setInterval(function () {
       var root = document.getElementById("root");
       var splash = document.getElementById("splash");
-      if (root && root.children.length > 0) {
-        if (splash) splash.remove();
-        clearInterval(timer);
-      }
+      if (!root || root.children.length === 0) return;
+      if (Date.now() - bornAt < minMs) return;
+      if (splash) splash.remove();
+      clearInterval(timer);
     }, 60);
   })();
 </script>
