@@ -18,6 +18,8 @@ import { addDays, diffDays, fmtPacePerKm, fmtTime, weekStart } from "./dates";
 import { baseTime } from "./cfe";
 import { AerobicProfile, specificPace } from "./pace";
 import { rationaleFor } from "./rationale";
+import { buildSessionSpec } from "./progression";
+import type { TrendVerdict } from "./adaptive";
 import {
   type CustomMenu,
   type Dow,
@@ -342,6 +344,13 @@ export interface GeneratePlanInput {
    * 何を何に振り替えたかは limiterSwaps で返し、必ず本人に見せる。
    */
   limiterWeights?: { category: SessionCategory; weight: number; note: string }[];
+  /**
+   * S-7: カテゴリごとの直近の実行状況（M-2 と同じ判定）。
+   * 設定を守れていないカテゴリは、量を増やさず実行できる形に戻す。
+   */
+  recentTrend?: Partial<Record<SessionCategory, TrendVerdict>>;
+  /** S-7: 直近の負荷が高い。増やす方向の漸進を止める */
+  loadHigh?: boolean;
 }
 
 export interface GeneratedPlan {
@@ -566,6 +575,35 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
         }
       }
 
+      /*
+       * S-7 / S-8: ポイント練習の中身を漸進モデルから作る。
+       *
+       * これまではカテゴリごとに固定の文面（高乳酸なら常に 300m×5 r5分）で、
+       * 週が進んでも直近の出来がどうでも同じものが出ていた。
+       * フェーズ内の週数と直近の実行状況から、本数とレストを動かす。
+       * 対応するレシピが無いカテゴリ（有酸素・閾値・CVなど）は従来どおり。
+       */
+      const buildFromProgression = (t: DayTemplate, onDate: string) => {
+        const weekIndex = Math.floor(diffDays(startDate, onDate) / 7);
+        const spec = buildSessionSpec({
+          category: t.category,
+          phase,
+          weekIndex,
+          cfeSec: grpBase,
+          trend: input.recentTrend?.[t.category],
+          loadHigh: input.loadHigh,
+          economyWeek: t.category === "race_economy" ? economyWeek : undefined,
+        });
+        if (!spec) return undefined;
+        return {
+          prescription: spec.prescription,
+          targetPaces: spec.targetPaces,
+          distanceKm: spec.distanceKm,
+          durationMin: spec.durationMin,
+          paceSecPerKm: undefined,
+        };
+      };
+
       // ---- 3-2: 自作メニューの適用 ----
       // 同じカテゴリの登録メニューがあれば、生成された処方の代わりに使う。
       const custom = input.customMenus
@@ -594,7 +632,7 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
             durationMin: 60,
             paceSecPerKm: undefined,
           }
-        : tpl.buildPrescription(grpBase, aerobicProfile);
+        : buildFromProgression(tpl, date) ?? tpl.buildPrescription(grpBase, aerobicProfile);
 
       // RULE-02対応: 高乳酸の翌日に60分超のロングランを置く場合、
       // ペースを通常ジョグ +20〜30秒/km 遅くする（生成段階で織り込む）

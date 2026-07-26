@@ -116,6 +116,16 @@ export default function Home() {
         }
         today={today}
       />
+      {/*
+        S-9: 次のポイント練習の進め方を2案。
+        どちらも成立する案なので、推奨を出したうえで本人が選ぶ。
+        選んだ結果は既存の予定に書き込むだけで、案そのものは保存しない。
+      */}
+      <SessionVariants
+        sessionId={d.todaySession && QUALITY_CATEGORIES.has(d.todaySession.category) ? d.todaySession.id : undefined}
+        today={today}
+        onApplied={load}
+      />
       <Notices today={today} />
       <WeekStrip d={d} today={today} />
       <AnalysisSwipe d={d} today={today} />
@@ -123,6 +133,123 @@ export default function Home() {
   );
 }
 
+
+// ---------------------------------------------------------------------------
+// S-9 進め方の2案
+// ---------------------------------------------------------------------------
+
+/**
+ * 次のポイント練習の進め方を2案出して選ばせる。
+ *
+ * 片方が明らかに劣る案だと選ぶ意味が無いので、**どちらも成立する案**を出す。
+ * 推奨は制限因子（M-7）で決めるが、推奨しない側も理由つきで出し、
+ * 本人が選べるようにする（M-2・M-6と同じ作法）。
+ */
+function SessionVariants({
+  sessionId,
+  today,
+  onApplied,
+}: {
+  sessionId?: string;
+  today: string;
+  onApplied: () => void;
+}) {
+  const [d, setD] = useState<any>(null);
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  /*
+   * 今日がポイント練習でなければ、次のポイント練習を対象にする。
+   * 対象の決め方は「設定の調整案」（/api/adaptive）と同じにする。
+   * 別々に決めると、2枚のカードが違うセッションの話を並べることになる。
+   */
+  const [target, setTarget] = useState<string | undefined>(sessionId);
+  useEffect(() => {
+    if (sessionId) {
+      setTarget(sessionId);
+      return;
+    }
+    fetch("/api/adaptive")
+      .then((r) => r.json())
+      .then((x) => setTarget(x?.session?.id))
+      .catch(() => setTarget(undefined));
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!target) {
+      setD(null);
+      return;
+    }
+    fetch(`/api/variants?sessionId=${encodeURIComponent(target)}`)
+      .then((r) => r.json())
+      .then(setD)
+      .catch(() => setD(null));
+  }, [target]);
+
+  if (!target || !d?.variants?.length) return null;
+
+  const apply = async (key: string) => {
+    setBusy(true);
+    try {
+      const r = await fetch("/api/variants", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: target, variantKey: key, today }),
+      });
+      const out = await r.json();
+      setMsg(out.error ?? "この進め方にしました。");
+      if (!out.error) onApplied();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <span className="metric-label">この練習の進め方</span>
+        <span className="text-[11px]" style={{ color: "var(--text-3)" }}>
+          2案
+        </span>
+      </div>
+      <p className="text-[11.5px] leading-relaxed mb-2.5" style={{ color: "var(--text-3)" }}>
+        どちらも成立する進め方です。おすすめは付けていますが、選ぶのは本人です。
+      </p>
+
+      {d.variants.map((v: any) => (
+        <div
+          key={v.key}
+          className="rounded-lg p-2.5 mb-2"
+          style={{
+            background: "var(--surface-2)",
+            border: v.recommended ? "1px solid rgba(182,255,0,0.35)" : "1px solid transparent",
+          }}
+        >
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="text-[13.5px] font-bold">{v.label}</span>
+            {v.recommended ? <span className="chip">おすすめ</span> : null}
+          </div>
+          <div className="text-[12.5px] leading-snug mb-1.5">{v.prescription}</div>
+          <p className="text-[11.5px] leading-relaxed mb-2" style={{ color: "var(--text-2)" }}>
+            {v.why}
+          </p>
+          <button
+            className={v.recommended ? "btn-volt justify-center" : "btn-ghost"}
+            disabled={busy}
+            onClick={() => apply(v.key)}
+          >
+            この進め方にする
+          </button>
+        </div>
+      ))}
+      {msg ? (
+        <p className="text-[11.5px] mt-1" style={{ color: "var(--forge)" }}>
+          {msg}
+        </p>
+      ) : null}
+    </Card>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // M-2 今日の調整 / M-3 中止基準

@@ -25,6 +25,8 @@ import {
   coverageReview,
   applyCoverageProposal,
   hrUsage,
+  sessionPlanVariants,
+  applySessionVariant,
   samePrescriptionGroups,
   cfeRangeFor,
   raceSplitPlan,
@@ -494,6 +496,22 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
         return { ok: true };
       }
       return { ok: true, ...applyTaperPlan(repo, today, body?.sessionIds) };
+    },
+  },
+
+  // ---- S-9 次のポイント練習の進め方を2案 ----
+  "/api/variants": {
+    GET: (repo, _b, params) => {
+      const id = params.get("sessionId");
+      if (!id) return { error: "sessionId が必要です" };
+      return sessionPlanVariants(repo, id, params.get("date") ?? localToday());
+    },
+    POST: (repo, body) => {
+      const today = body?.today ?? localToday();
+      if (!body?.sessionId || !body?.variantKey) {
+        return { error: "sessionId と variantKey が必要です" };
+      }
+      return applySessionVariant(repo, body.sessionId, body.variantKey, today);
     },
   },
 

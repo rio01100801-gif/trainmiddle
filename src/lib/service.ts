@@ -40,6 +40,11 @@ import {
   relativeIntensity,
   type HrMaxReference,
 } from "./core/heartRate";
+import {
+  buildSessionSpec,
+  sessionVariants,
+  type SessionVariant,
+} from "./core/progression";
 import { assignExpectedPaces, diagnoseRounds, generateRecoverySessions, RoundResult } from "./core/rounds";
 import {
   handleSkip,
@@ -88,6 +93,7 @@ import {
   jogEfficiency,
   qualityHrTrend,
   type QualityHrTrend,
+  type TrendVerdict,
   repsOf,
   type DailyAdjustment,
   type ExecutionTrend,
@@ -264,6 +270,23 @@ export function regeneratePlan(repo: Store, startDate: string): {
   const limiter = assessLimiter(athlete, goal.targetTimeSec);
   const limiterWeights = categoryWeights(limiter.limiter);
 
+  /*
+   * S-7: 直近の実行状況を生成に渡す。
+   *
+   * これまで生成は「今どうなっているか」を見ずに、カテゴリごとの固定文面を出していた。
+   * 設定を守れていないカテゴリで量を増やしても、守れない練習が増えるだけなので、
+   * カテゴリごとの傾向（M-2と同じ判定）を内容の組み立てに使う。
+   */
+  const recentTrend = recentTrendByCategory(repo, startDate);
+  const acwrNow = acwr(
+    dailyLoads({
+      sessions: repo.listSessions(),
+      resultsBySessionId: new Map(repo.listResults().map((r) => [r.sessionId, r])),
+      strengthSessions: repo.listStrengths(),
+    }),
+    startDate
+  ).acwr;
+
   const plan = generatePlan({
     athlete,
     goal,
@@ -274,6 +297,9 @@ export function regeneratePlan(repo: Store, startDate: string): {
     weekTemplate,
     customMenus,
     limiterWeights,
+    recentTrend,
+    // 1.3を超えたら増やす方向の漸進を止める（RULE-16の警告域に入る前に手前で抑える）
+    loadHigh: acwrNow !== undefined && acwrNow > 1.3,
   });
 
   // 3-2: 使われた自作メニューの使用実績を更新する
@@ -2145,6 +2171,96 @@ const CATEGORY_JP_LABELS: Record<string, string> = {
   neural: "神経系",
   aerobic: "有酸素",
 };
+
+/** S-7: カテゴリごとの直近の傾向。生成の材料にする */
+function recentTrendByCategory(
+  repo: Store,
+  today: string
+): Partial<Record<SessionCategory, TrendVerdict>> {
+  const sessions = repo.listSessions();
+  const results = repo.listResults();
+  const out: Partial<Record<SessionCategory, TrendVerdict>> = {};
+  for (const c of ["high_lactate", "race_economy", "modeling", "cv", "threshold", "neural"] as const) {
+    out[c] = executionTrend(executionSamples(sessions, results, c, today)).verdict;
+  }
+  return out;
+}
+
+/**
+ * S-9: 次のポイント練習の進め方を2案出す。
+ *
+ * 保存はしない。選んだ結果だけを既存のセッションに書く。
+ * 案そのものを保存すると、どの案が生きているかという状態が増えて、
+ * M-2 / M-6 / ルールエンジンと取り合いになる。
+ */
+export function sessionPlanVariants(
+  repo: Store,
+  sessionId: string,
+  today: string
+): {
+  session?: Session;
+  variants?: (SessionVariant & { prescription: string })[];
+} {
+  const session = repo.getSession(sessionId);
+  const athlete = repo.getAthlete();
+  const cfe = repo.getCfe();
+  if (!session || !athlete || !cfe) return {};
+
+  const goal = repo.getGoal();
+  const race = repo.listRaces().find((r) => r.id === goal?.targetRaceId);
+  const phase: Phase = race ? phaseForDate(session.date, race.dateStart) : "Base";
+  const trend = executionTrend(
+    executionSamples(repo.listSessions(), repo.listResults(), session.category, session.date)
+  ).verdict;
+
+  const base = buildSessionSpec({
+    category: session.category,
+    phase,
+    weekIndex: Math.max(0, Math.floor(diffDays(today, session.date) / 7)),
+    cfeSec: cfe.estimated800mSec,
+    trend,
+  });
+  if (!base) return { session };
+
+  const limiter = assessLimiter(athlete, goal?.targetTimeSec).limiter;
+  const variants = sessionVariants(base, { trend, limiter }).map((v) => ({
+    ...v,
+    prescription: v.spec.prescription,
+  }));
+  return { session, variants };
+}
+
+/** S-9: 選んだ案をその日の予定に書き込む。ルール検査は editSession に任せる */
+export function applySessionVariant(
+  repo: Store,
+  sessionId: string,
+  variantKey: string,
+  today: string
+): PlanEditResult {
+  const { session, variants } = sessionPlanVariants(repo, sessionId, today);
+  const chosen = variants?.find((v) => v.key === variantKey);
+  if (!session || !chosen) {
+    return {
+      ok: false,
+      error: "案が見つかりません",
+      applied: false,
+      newViolations: [],
+      violations: [],
+      alternatives: [],
+    };
+  }
+  return editSession(
+    repo,
+    sessionId,
+    {
+      prescription: chosen.spec.prescription,
+      targetPaces: chosen.spec.targetPaces,
+      durationMin: chosen.spec.durationMin,
+      distanceKm: chosen.spec.distanceKm,
+    },
+    today
+  );
+}
 
 export interface HrUsageLine {
   date: string;

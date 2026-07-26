@@ -990,6 +990,53 @@ if (!/能力の推定（CFE）は動かしません/.test(adjText)) {
 step("S-10 設定の調整案の説明OK（前後の処方・材料・CFEに触れないこと）");
 await shot("35_today_adjust");
 
+/*
+ * S-7 / S-8 / S-9: 生成が状況を見ていること、進め方が2案出ること。
+ * 以前はカテゴリごとに固定の文面（高乳酸なら常に 300m×5 r5分）だった。
+ */
+const gen = await page.evaluate(async () => {
+  const d = await fetch("/api/sessions?from=2000-01-01&to=2099-12-31").then((r) => r.json());
+  const hl = (d.sessions ?? [])
+    .filter((s) => s.category === "high_lactate" && s.prescription)
+    .map((s) => s.prescription);
+  return { count: hl.length, unique: [...new Set(hl)].length, sample: hl.slice(0, 3) };
+});
+if (gen.count < 2) fail(`S-7: 高乳酸の生成が少なすぎて確認できない（${gen.count}件）`);
+else if (gen.unique < 2) {
+  fail(`S-7: 生成された高乳酸が全部同じ内容（${gen.sample[0]}）。漸進していない`);
+}
+step(`S-8 生成が週ごとに変わるOK（高乳酸 ${gen.count}件中 ${gen.unique}種類）`);
+
+const varApi = await page.evaluate(async (id) => {
+  const d = await fetch(`/api/variants?sessionId=${id}`).then((r) => r.json());
+  return {
+    n: d.variants?.length ?? 0,
+    recommended: (d.variants ?? []).filter((v) => v.recommended).length,
+    distinct: new Set((d.variants ?? []).map((v) => v.prescription)).size,
+    hasWhy: (d.variants ?? []).every((v) => (v.why ?? "").length > 10),
+  };
+}, nextHl);
+if (varApi.n !== 2) fail(`S-9: 進め方が2案になっていない（${varApi.n}）`);
+if (varApi.recommended !== 1) fail(`S-9: おすすめが1つでない（${varApi.recommended}）`);
+if (varApi.distinct !== 2) fail("S-9: 2案の中身が同じ（選ぶ意味が無い）");
+if (!varApi.hasWhy) fail("S-9: 案に理由が付いていない");
+// TODAYから選べること
+const varCard = page.locator("section.card", { hasText: "この練習の進め方" }).first();
+if ((await varCard.count()) === 0) fail("S-9: TODAYに進め方の2案が出ていない");
+else {
+  if ((await varCard.getByRole("button", { name: "この進め方にする" }).count()) !== 2) {
+    fail("S-9: TODAYで2案とも選べない");
+  }
+  await varCard.getByRole("button", { name: "この進め方にする" }).first().click();
+  await page.waitForTimeout(1200);
+  const afterVar = await page.textContent("body");
+  if (!/この進め方にしました|ルールに反します/.test(afterVar)) {
+    fail("S-9: 選んだ結果が反映されない");
+  }
+}
+step("S-9 進め方の2案OK（理由つき・TODAYで選べる）");
+await shot("36_variants");
+
 // CFEは動かないこと
 const cfeGuard = await page.evaluate(async (id) => {
   const before = (await fetch("/api/dashboard").then((r) => r.json())).cfe?.estimated800mSec;
