@@ -14,18 +14,99 @@
 <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
 <link rel="stylesheet" href="./styles.css">
 <style>
-  /* 起動時スプラッシュ（bundle読込までの間） */
+  /*
+   * 起動時スプラッシュ（bundle読込までの間）。
+   * 読み込みの1〜2秒に、読める情報を1つだけ出す（R-2）。
+   * アニメーションも光彩も入れない。緑は数字1つにだけ使う。
+   */
   #splash {
     position: fixed; inset: 0; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 6px;
-    background: #0a0a0a; z-index: 99;
+    align-items: center; justify-content: center;
+    background: #0a0a0a; z-index: 99; padding: 24px;
   }
-  #splash b { font-size: 26px; font-weight: 900; color: #fff; letter-spacing: -0.02em; }
-  #splash span { font-size: 8px; letter-spacing: 0.28em; color: #6b7280; font-weight: 700; }
+  #splash .mark { width: 74px; height: 40px; margin-bottom: 18px; }
+  /* アイコンのワードマークと同じ傾き（R-3） */
+  #splash b {
+    font-size: 30px; font-weight: 900; color: #fff; letter-spacing: -0.02em; line-height: 1;
+    transform: skewX(-8deg); display: inline-block;
+  }
+  #splash .tag { font-size: 8px; letter-spacing: 0.28em; color: #6b7280; font-weight: 700; margin-top: 7px; }
+  /* 数字を主役にする。ラベルは小さく、値は大きく */
+  #splash .info { margin-top: 30px; text-align: center; display: none; }
+  #splash .info .label { font-size: 9px; letter-spacing: 0.16em; color: #6b7280; font-weight: 700; }
+  #splash .info .value {
+    font-size: 30px; font-weight: 800; color: #fff; line-height: 1.1; margin-top: 5px;
+    font-variant-numeric: tabular-nums; letter-spacing: -0.03em;
+  }
+  #splash .info .sub {
+    font-size: 12px; font-weight: 700; color: #b6ff00; margin-top: 7px;
+    font-variant-numeric: tabular-nums;
+  }
 </style>
 </head>
 <body>
-<div id="splash"><b>FORGE</b><span>800M PERFORMANCE</span></div>
+<div id="splash">
+  <!-- 400mトラック。アイコン（pwa/icon.svg）と同じ形 -->
+  <svg class="mark" viewBox="0 0 148 80" fill="none" stroke="#b6ff00" stroke-width="12" aria-hidden="true">
+    <path d="M68 6 H40 A34 34 0 0 0 40 74 H68"/>
+    <path d="M80 6 H108 A34 34 0 0 1 108 74 H80"/>
+    <path d="M68 22 H52 A18 18 0 0 0 52 58 H68"/>
+    <path d="M80 22 H96 A18 18 0 0 1 96 58 H80"/>
+  </svg>
+  <b>FORGE</b>
+  <span class="tag">800M PERFORMANCE</span>
+  <div class="info" id="splash-info">
+    <div class="label" id="splash-label"></div>
+    <div class="value" id="splash-value"></div>
+    <div class="sub" id="splash-sub"></div>
+  </div>
+</div>
+<script>
+  // R-2: 前回起動時に書いておいた値を出す（bundle読込前なのでDBは読めない）。
+  //
+  // ここも必ず即時関数で包むこと。上のコメントと同じ理由で、
+  // トップレベルの const は bundle.js と同じスコープを共有する。
+  // 変数名も1文字を避ける（minifier が付ける名前と衝突する）。
+  //
+  // 組み立てはTS側（app/components/splash-cache.ts）でやってある。
+  // ここでやるのは「保存したレース日から今日までの日数を引く」だけ。
+  // 何日も開かなかったときに、古い日数をそのまま出さないため。
+  (function () {
+    try {
+      var splashRaw = localStorage.getItem("forge:splash");
+      if (!splashRaw) return;
+      var splashData = JSON.parse(splashRaw);
+      var splashLabel = "";
+      var splashValue = "";
+      var splashSub = splashData.gapText || splashData.fallbackText || "";
+
+      if (splashData.raceDate) {
+        var nowMs = new Date();
+        var todayMs = Date.UTC(nowMs.getFullYear(), nowMs.getMonth(), nowMs.getDate());
+        var raceMs = Date.parse(splashData.raceDate + "T00:00:00Z");
+        var restDays = Math.round((raceMs - todayMs) / 86400000);
+        if (isFinite(restDays) && restDays >= 0) {
+          splashLabel = "レースまで";
+          splashValue = restDays + "日";
+        }
+      }
+      // レースが無い／過ぎている場合は、代わりの1行を主役に上げる
+      if (!splashValue && splashSub) {
+        splashLabel = "";
+        splashValue = splashSub;
+        splashSub = "";
+      }
+      if (!splashValue) return;
+
+      document.getElementById("splash-label").textContent = splashLabel;
+      document.getElementById("splash-value").textContent = splashValue;
+      document.getElementById("splash-sub").textContent = splashSub;
+      document.getElementById("splash-info").style.display = "block";
+    } catch (splashErr) {
+      /* 出せなくてもロゴだけで成立する */
+    }
+  })();
+</script>
 <div id="root"></div>
 <script src="./bundle.js"></script>
 <script>
