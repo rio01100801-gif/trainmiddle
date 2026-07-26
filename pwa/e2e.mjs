@@ -1990,6 +1990,47 @@ for (const f of ["icon-180.png", "icon-192.png", "icon-512.png", "icon-maskable-
 step(`R-3 マークOK（ヘッダー ${Math.round(markBox?.width ?? 0)}×${Math.round(markBox?.height ?? 0)} / アイコン4種）`);
 await shot("34_mark_header");
 
+// ---- 16e. S-11: 同期は未設定でも成立すること ----
+/*
+ * 同期は「足すだけ」の機能。設定しなければ何も起きず、
+ * アプリはこれまでどおり端末の中だけで動く必要がある。
+ * 未設定の状態で操作できてしまうと、通信エラーで詰まる。
+ */
+await page.goto("http://localhost:8791/#/sync");
+await page.waitForTimeout(800);
+const syncText = await page.textContent("body");
+if (!/設定しなければ何も起きず/.test(syncText)) fail("S-11: 未設定でも動くことが書かれていない");
+if (!/service_role/.test(syncText)) fail("S-11: 入れてはいけない鍵の注意が無い");
+const signInBtn = page.getByRole("button", { name: "Googleでサインイン" });
+if ((await signInBtn.count()) === 0) fail("S-11: サインインの導線が無い");
+else if (!(await signInBtn.first().isDisabled())) {
+  fail("S-11: 接続先が未設定なのにサインインが押せる");
+}
+const syncNowBtn = page.getByRole("button", { name: "いま同期する" });
+if ((await syncNowBtn.count()) === 0) fail("S-11: 同期の実行ボタンが無い");
+else if (!(await syncNowBtn.first().isDisabled())) {
+  fail("S-11: 未設定なのに同期が押せる（通信エラーで詰まる）");
+}
+// 中途半端な設定では保存させない
+await page.locator('label:has-text("Project URL") input').fill("https://demo.supabase.co");
+await page.waitForTimeout(300);
+if (!(await page.getByRole("button", { name: "保存する" }).first().isDisabled())) {
+  fail("S-11: anon key が空でも保存できてしまう");
+}
+await page.locator('label:has-text("anon public key") input').fill("test-anon-key");
+await page.waitForTimeout(300);
+if (await page.getByRole("button", { name: "保存する" }).first().isDisabled()) {
+  fail("S-11: 正しい設定なのに保存できない");
+}
+// 設定画面からも辿れること
+await page.goto("http://localhost:8791/#/settings");
+await page.waitForTimeout(600);
+if (!(await page.textContent("body")).includes("他の端末と記録を引き継ぎます")) {
+  fail("S-11: 設定画面から同期に辿れない");
+}
+step("S-11 同期の設定OK（未設定でも成立・中途半端な設定では動かさない）");
+await shot("37_sync");
+
 // ---- 17. Q-3: 取り込み済みの過去データを作り直せること ----
 await page.goto("http://localhost:8791/#/data");
 await page.waitForTimeout(700);

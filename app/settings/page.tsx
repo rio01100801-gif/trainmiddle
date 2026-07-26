@@ -37,6 +37,7 @@ const SETTINGS_GROUPS: { title: string; items: { href: string; what: string }[] 
     items: [
       { href: "/past", what: "練習日誌を貼り付けてまとめて登録。現在地の推定に使います" },
       { href: "/data", what: "書き出しと復元。端末のストレージが消えたときの備えです" },
+      { href: "/sync", what: "他の端末と記録を引き継ぎます。設定しなければ何も起きません" },
     ],
   },
 ];

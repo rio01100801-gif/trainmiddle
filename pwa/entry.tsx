@@ -23,6 +23,7 @@ import Warnings from "../app/warnings/page";
 import SessionDetail from "../app/session/page";
 import SharedDataPage from "../app/data/page";
 import RunPage from "../app/run/page";
+import SyncPage from "../app/sync/page";
 
 import { installApiShim } from "./api-shim";
 import { AppState, emptyState, loadState, MemoryStore, persistState } from "./memory-store";
@@ -166,14 +167,18 @@ function HealthImportCard() {
 
       <details className="text-[11px] mt-3">
         <summary style={{ color: "var(--text-3)" }}>
-          自動同期にならない理由と、将来の対応
+          自動同期にならない理由と、手を減らす方法
         </summary>
         <p className="mt-1.5 leading-relaxed" style={{ color: "var(--text-2)" }}>
           HealthKit（ヘルスケアのデータを直接読む仕組み）は iOS のネイティブアプリ専用で、
           Safari やホーム画面に追加したアプリからは技術的に呼び出せません。
-          そのため現状は手動での書き出し・取り込みになります。
-          自動同期を実現するには iOS ネイティブアプリ化（Apple Developer Program 年99ドルが必要）
-          が前提になります。
+          この制約は工夫では超えられないので、書き出しファイルの取り込みが基本になります。
+        </p>
+        <p className="mt-1.5 leading-relaxed" style={{ color: "var(--text-2)" }}>
+          手を減らすなら <b style={{ color: "var(--text)" }}>iOSのショートカット</b>を使います。
+          「毎朝、安静時心拍と睡眠をヘルスケアから読んで送る」オートメーションを組めば、
+          日次データだけは自動で入ります。手順は README に書いてあります
+          （設定 → 同期 で接続先を設定してから）。
         </p>
       </details>
     </Card>
@@ -243,6 +248,7 @@ const PAGES: Record<string, React.ComponentType> = {
   "/session": SessionDetail,
   "/data": DataPage,
   "/run": RunPage,
+  "/sync": SyncPage,
 };
 
 function usePath(): string {

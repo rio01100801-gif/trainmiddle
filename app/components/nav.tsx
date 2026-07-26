@@ -98,6 +98,7 @@ export const SETTINGS_ITEMS: Item[] = [
   { href: "/heat", label: "暑熱順化", icon: ico(I.sun) },
   { href: "/past", label: "過去データの一括入力", icon: ico(I.history) },
   { href: "/data", label: "データ管理", icon: ico(I.db) },
+  { href: "/sync", label: "同期（他の端末と）", icon: ico(I.db) },
 ];
 
 /** 設定以外の到達先（PC左サイドバーにだけ並べる） */
@@ -119,6 +120,7 @@ export const SCREEN_TITLES: Record<string, string> = {
   "/heat": "暑熱順化",
   "/past": "過去データ",
   "/data": "データ管理",
+  "/sync": "同期",
   "/warnings": "警告一覧",
   "/race": "レース分析",
   "/meet": "大会モード",

@@ -401,6 +401,73 @@ E2Eは「ボタンが覆われているか」ではなく
 実際に重なるかは端末ごとに変わるので、座標の重なりを条件にすると
 E2Eの画面幅でたまたま重ならないときに素通りするためです。
 
+## S-11 同期（Googleログイン＋Supabase）と Appleヘルス
+
+**設定しなければ何も起きません。** アプリはこれまでどおり端末の中だけで動きます。
+同期は足すだけの機能で、使わない選択がそのまま成立します。
+
+### 方式: スナップショット同期
+
+M-12 の書き出し（`BackupFile`）をそのままクラウドに置きます。
+レコード単位の同期にしないのは、全エンティティに更新時刻と削除の墓標が要り、
+`Store` の51メソッド × 2実装に同じ変更を入れることになるためです。
+利用者は1人・端末は1〜2台なので、そこまでの精度に見合いません。
+
+**黙って上書きしません。** どちらが動いたかは「前回同期した状態」から判断します。
+時刻の新しさだけで決めると、時計がずれた端末の古いデータで新しいデータを潰します。
+両方が動いていたら必ず選ばせます（統合／この端末を優先／クラウドを優先）。
+判断は `src/lib/core/sync.ts` にあり、**ネットワークを持ち込んでいません**（テスト可能）。
+
+SDKを入れず REST を直接叩いています。使うのは「サインイン」と
+「1つのファイルの読み書き」だけで、数百KBのSDKは起動時間に直接効くためです。
+
+### Supabase の準備（1回だけ）
+
+1. https://supabase.com でサインアップ → **New project**（無料枠で足ります）
+   - Region は **Northeast Asia (Tokyo)**
+2. **Storage** → New bucket → 名前を `forge`（Private のまま）
+3. bucket のポリシーを追加（自分のファイルだけ読み書きできるようにする）
+   - Storage → forge → Policies → New policy → *For full customization*
+   - `SELECT` / `INSERT` / `UPDATE` を対象に、条件は `auth.role() = 'authenticated'`
+4. **Authentication → Providers → Google** を有効化
+   - Google Cloud Console で OAuth クライアントID（ウェブ）を作る
+   - 承認済みリダイレクトURIに、Supabaseが表示する
+     `https://xxxx.supabase.co/auth/v1/callback` を登録
+   - クライアントIDとシークレットを Supabase に貼る
+5. **Authentication → URL Configuration** の Redirect URLs に
+   `https://rio01100801-gif.github.io/trainmiddle/` を追加
+6. **Settings → API** から次の2つを控える
+   - Project URL（`https://xxxx.supabase.co`）
+   - **anon public** key
+
+アプリの **設定 → 同期** に6の2つを入れて保存し、Googleでサインインします。
+
+⚠️ **service_role キーは絶対に入れないこと。** あれば誰でも全データを読めます。
+anon key は公開前提の鍵なので端末に置いて構いません。
+
+⚠️ iOSのホーム画面から起動したPWAでは、サインインの遷移先がSafariで開いて
+**PWAに戻ってこないことがあります**。PWAとSafariはストレージが別なので、
+その場合はPWA側でもう一度サインインが要ります。
+
+### Appleヘルスの自動連携（iOSショートカット）
+
+**HealthKitはWebから読めません。** Safari やホーム画面に追加したアプリからは
+技術的に呼び出せず、これは工夫で超えられる制約ではありません。
+ネイティブ化（Apple Developer Program 年99ドル）は採らない方針なので、
+手を減らすなら **iOSのショートカット**を使います。
+
+1. ショートカットApp → オートメーション → 毎日 6:00
+2. アクション: **ヘルスケアサンプルを取得**（安静時心拍・睡眠時間）
+3. アクション: **URLの内容を取得**
+   - URL: `https://xxxx.supabase.co/storage/v1/object/forge/health.json`
+   - メソッド: POST ／ ヘッダに `apikey` と `Authorization: Bearer <anon key>`
+   - 本文: `{"date":"...","restingHr":..,"sleepHours":..}`
+4. アプリ側は同期のときにこれを取り込みます
+
+日次データ（安静時心拍・睡眠）はこれで自動になります。
+ワークアウトの詳細は書き出しファイルの取り込みのままです
+（ショートカットから出せる情報が限られるため）。
+
 ## PWA版（iPhone単体で動くバージョン）
 
 `pwa/` がソース、ビルド済みの配布物が `pwa-dist/` です。`pwa-dist/公開手順.txt` の通りに
