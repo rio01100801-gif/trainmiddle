@@ -214,6 +214,18 @@ export interface CustomMenu {
   distanceM?: number;
   reps?: number;
   restNote?: string;
+  /**
+   * S-6: 換算後の設定タイム（秒）。
+   * 他の選手のメニューを取り込んだときは、その選手の相対強度を自分に当てた値が入る。
+   * 入っていればカテゴリの標準比より優先する（その人が実際にやっていた強度のほうが、
+   * このメニューを借りる目的に合っているため）。
+   */
+  targetSec?: number;
+  /** S-6: 元にした選手。誰の練習かを残さないと、あとで数字の出どころが分からなくなる */
+  sourceAthlete?: {
+    name?: string;
+    pb800Sec: number;
+  };
   note?: string;
   /** 使用実績（生成時の優先度に使う） */
   timesUsed?: number;

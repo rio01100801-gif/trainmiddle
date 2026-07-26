@@ -1689,6 +1689,39 @@ else {
   const setText = await page.textContent("body");
   if (!/カテゴリの根拠/.test(setText)) fail("S-3: 本文からの判定根拠が出ていない");
   step("S-3 自作メニューの登録も本文から欄が組み上がるOK（他の入力画面と同じ）");
+
+  /*
+   * S-6: 他の選手のメニューを自分の設定に換算する。
+   * 構造をそのまま真似ると設定だけ速すぎる形になるので、そこが直っているかを見る。
+   */
+  const otherToggle = page.getByText("他の選手のメニューを取り込む（自分の設定に換算します）");
+  if ((await otherToggle.count()) === 0) fail("S-6: 他選手メニューの取り込みが無い");
+  else {
+    await otherToggle.click();
+    await page.waitForTimeout(300);
+    await menuBody.fill("300m×5 @39.0秒 r5分");
+    await page.locator('label:has-text("その選手の800m PB") input').fill("1:46.0");
+    await page.waitForTimeout(1200);
+    const convText = await page.textContent("body");
+    if (!/自分の設定に換算すると/.test(convText)) fail("S-6: 換算結果が出ない");
+    if (!/相手 39\.0秒/.test(convText)) fail("S-6: 相手の設定が併記されていない");
+    // 換算結果が実測ではないことを必ず出す
+    if (!/換算値は実測ではありません/.test(convText)) fail("S-6: 換算値であることが書かれていない");
+    // 自分のCFEは相手より遅いので、設定は相手より遅くなるはず
+    const conv = await page.evaluate(async () => {
+      const d = await fetch("/api/convert-menu", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prescription: "300m×5 @39.0秒 r5分", theirPb800Sec: 106 }),
+      }).then((r) => r.json());
+      return { target: d.converted?.targetSec, ratio: d.converted?.ratio };
+    });
+    if (!conv.target) fail("S-6: 換算後の設定が返らない");
+    else if (conv.target <= 39) {
+      fail(`S-6: 相手より遅いはずが速い設定になっている（${conv.target}秒）`);
+    }
+    step(`S-6 他選手メニューの換算OK（39.0秒 → ${conv.target}秒 / 比 ${conv.ratio}）`);
+  }
 }
 
 // ---- 15b. S-5: 確認ダイアログがFABに隠れず押せること ----

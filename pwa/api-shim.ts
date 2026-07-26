@@ -27,6 +27,7 @@ import {
   hrUsage,
   sessionPlanVariants,
   applySessionVariant,
+  convertMenuForMe,
   samePrescriptionGroups,
   cfeRangeFor,
   raceSplitPlan,
@@ -497,6 +498,12 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
       }
       return { ok: true, ...applyTaperPlan(repo, today, body?.sessionIds) };
     },
+  },
+
+  // ---- S-6 他選手のメニューを自分の設定に換算 ----
+  "/api/convert-menu": {
+    POST: (repo, body) =>
+      convertMenuForMe(repo, String(body?.prescription ?? ""), Number(body?.theirPb800Sec)),
   },
 
   // ---- S-9 次のポイント練習の進め方を2案 ----

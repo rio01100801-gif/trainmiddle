@@ -196,6 +196,19 @@ const MENU_CATEGORIES: SessionCategory[] = [
   "aerobic",
 ];
 
+/** S-6: 「1:46.0」「106」どちらの書き方も受ける */
+function parsePbInput(v: string): number | undefined {
+  const t = v.trim();
+  if (!t) return undefined;
+  if (t.includes(":")) {
+    const [m, s] = t.split(":");
+    const n = Number(m) * 60 + Number(s);
+    return isFinite(n) && n > 0 ? n : undefined;
+  }
+  const n = Number(t);
+  return isFinite(n) && n > 0 ? n : undefined;
+}
+
 const CAT_LABELS: Record<string, string> = {
   high_lactate: "高乳酸",
   race_economy: "経済走",
@@ -225,6 +238,45 @@ function CustomMenuCard() {
     fallbackKind: "interval",
   });
   const { category: parsedCategory } = fields;
+
+  // S-6: 他の選手のメニューを自分の設定に換算する
+  const [fromOther, setFromOther] = useState(false);
+  const [otherName, setOtherName] = useState("");
+  const [otherPb, setOtherPb] = useState("");
+  const [myCfeSec, setMyCfeSec] = useState<number | undefined>();
+  const [converted, setConverted] = useState<any>(null);
+  const [convertedText, setConvertedText] = useState("");
+
+  useEffect(() => {
+    fetch("/api/dashboard")
+      .then((r) => r.json())
+      .then((d) => setMyCfeSec(d?.cfe?.estimated800mSec))
+      .catch(() => {});
+  }, []);
+
+  const theirPbSec = parsePbInput(otherPb);
+  useEffect(() => {
+    if (!fromOther || !theirPbSec || !myCfeSec || !form.prescription.trim()) {
+      setConverted(null);
+      setConvertedText("");
+      return;
+    }
+    // 換算そのものはコア（athleteConvert）に任せる。画面では計算しない
+    fetch("/api/convert-menu", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        prescription: form.prescription,
+        theirPb800Sec: theirPbSec,
+      }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        setConverted(d.converted ?? null);
+        setConvertedText(d.text ?? "");
+      })
+      .catch(() => setConverted(null));
+  }, [fromOther, theirPbSec, myCfeSec, form.prescription]);
 
   // 本文からカテゴリが決まったら、こちらの選択にも反映する（二重管理にしない）
   useEffect(() => {
@@ -258,6 +310,12 @@ function CustomMenuCard() {
           distanceM: fields.slots[0]?.distanceM,
           reps: fields.slots.length > 0 ? fields.slots.length : undefined,
           restNote: fields.shape?.restNote,
+          // S-6: 換算できていれば、その設定と出どころを残す
+          targetSec: converted?.targetSec,
+          sourceAthlete:
+            fromOther && theirPbSec
+              ? { name: otherName || undefined, pb800Sec: theirPbSec }
+              : undefined,
           note: form.note || undefined,
         },
       }),
@@ -396,6 +454,73 @@ function CustomMenuCard() {
             1本の距離と本数は内容から読み取ります。設定タイムを入れておくと、
             生成のたびに計算し直さずそのまま使えます。
           </p>
+
+          {/*
+            S-6: 他の選手のメニューを取り込む。
+            構造をそのまま真似ると設定だけが速すぎる形になるので、
+            その選手の800mPBに対する相対強度を、自分のCFEに当て直す。
+          */}
+          <label className="flex items-center gap-1.5 text-[12px]" style={{ color: "var(--text-2)" }}>
+            <input
+              type="checkbox"
+              checked={fromOther}
+              onChange={(e) => setFromOther(e.target.checked)}
+              style={{ width: 16, height: 16, padding: 0 }}
+            />
+            他の選手のメニューを取り込む（自分の設定に換算します）
+          </label>
+          {fromOther ? (
+            <div className="rounded-lg p-2.5" style={{ background: "var(--surface-2)" }}>
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <label className="text-[13px]">
+                  <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
+                    選手名（任意）
+                  </span>
+                  <input
+                    className="w-full"
+                    value={otherName}
+                    onChange={(e) => setOtherName(e.target.value)}
+                    placeholder="例: 〇〇選手"
+                  />
+                </label>
+                <label className="text-[13px]">
+                  <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
+                    その選手の800m PB
+                  </span>
+                  <input
+                    className="w-full"
+                    value={otherPb}
+                    onChange={(e) => setOtherPb(e.target.value)}
+                    placeholder="1:46.0"
+                  />
+                </label>
+              </div>
+              {converted ? (
+                <>
+                  <div className="metric-label mb-1">自分の設定に換算すると</div>
+                  <div className="text-[13px] font-semibold leading-snug mb-1">
+                    {convertedText}
+                  </div>
+                  {converted.notes.map((n: string, i: number) => (
+                    <p
+                      key={i}
+                      className="text-[11px] leading-relaxed mt-1"
+                      style={{ color: "var(--amber)" }}
+                    >
+                      {n}
+                    </p>
+                  ))}
+                  <p className="text-[10.5px] leading-relaxed mt-1.5" style={{ color: "var(--text-3)" }}>
+                    換算値は実測ではありません。1回やってみて合わなければ動かしてください。
+                  </p>
+                </>
+              ) : (
+                <p className="text-[11.5px]" style={{ color: "var(--text-3)" }}>
+                  内容とその選手の800mPBを入れると、ここに自分向けの設定が出ます。
+                </p>
+              )}
+            </div>
+          ) : null}
           <label className="text-[13px]">
             <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
               メモ（任意）

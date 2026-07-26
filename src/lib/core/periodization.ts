@@ -616,6 +616,18 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
             targetPaces: custom.distanceM
               ? [
                   (() => {
+                    /*
+                     * S-6: 換算後の設定が入っていればそれを使う。
+                     * 他の選手のメニューを借りる目的は「その人の組み立てを再現すること」なので、
+                     * カテゴリの標準比（一般値）より、その人が実際にやっていた相対強度のほうが目的に合う。
+                     */
+                    if (custom.targetSec !== undefined && custom.targetSec > 0) {
+                      return {
+                        distanceM: custom.distanceM!,
+                        targetSecFast: custom.targetSec,
+                        targetSecSlow: custom.targetSec,
+                      };
+                    }
                     try {
                       return specificPace(grpBase, tpl.category, custom.distanceM);
                     } catch {

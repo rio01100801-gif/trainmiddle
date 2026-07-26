@@ -45,6 +45,11 @@ import {
   sessionVariants,
   type SessionVariant,
 } from "./core/progression";
+import {
+  convertMenu,
+  describeConverted,
+  type ConvertedMenu,
+} from "./core/athleteConvert";
 import { assignExpectedPaces, diagnoseRounds, generateRecoverySessions, RoundResult } from "./core/rounds";
 import {
   handleSkip,
@@ -2171,6 +2176,30 @@ const CATEGORY_JP_LABELS: Record<string, string> = {
   neural: "神経系",
   aerobic: "有酸素",
 };
+
+/**
+ * S-6: 他の選手のメニューを自分の設定に換算する。
+ *
+ * 解釈も換算もコアに任せる。表記辞書とCFEを渡すのがここの役目。
+ */
+export function convertMenuForMe(
+  repo: Store,
+  prescription: string,
+  theirPb800Sec: number
+): { converted?: ConvertedMenu; text?: string; error?: string } {
+  const cfe = repo.getCfe();
+  if (!cfe) return { error: "現在地（CFE）がまだありません。先にプロフィールと過去データを入れてください" };
+  const converted = convertMenu({
+    prescription,
+    theirPb800Sec,
+    myCfeSec: cfe.estimated800mSec,
+    parseOptions: {
+      grpSecPerM: cfe.estimated800mSec / 800,
+      phrases: repo.listPhrases(),
+    },
+  });
+  return { converted, text: describeConverted(converted) };
+}
 
 /** S-7: カテゴリごとの直近の傾向。生成の材料にする */
 function recentTrendByCategory(
