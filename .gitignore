@@ -10,4 +10,5 @@ harness/out.css
 harness/fixtures.json
 harness/node_modules/
 tsconfig.tsbuildinfo
+shots/
 .claude/settings.local.json

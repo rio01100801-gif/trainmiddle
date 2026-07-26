@@ -4,7 +4,7 @@
  * 4. 実測マーカー登録 5. 日次チェック 6. 結果入力→CFE補正
  * 7. リロード→データ永続化確認 8. 各画面スクリーンショット
  */
-import { DIST, launchOptions, loadChromium } from "./e2e-env.mjs";
+import { DIST, ROOT, launchOptions, loadChromium } from "./e2e-env.mjs";
 import http from "http";
 import fs from "fs";
 import path from "path";
@@ -37,8 +37,16 @@ const errors = [];
 page.on("pageerror", (e) => errors.push("pageerror: " + e));
 page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
 
-const shot = (name) => page.screenshot({ path: `/home/claude/pwa-shots/${name}.png`, fullPage: true });
-fs.mkdirSync("/home/claude/pwa-shots", { recursive: true });
+/*
+ * スクリーンショットの置き場所。
+ * 以前は開発コンテナの絶対パス（/home/claude/...）だったので、
+ * Windows では C:\home\claude\ に散らばって誰も見なかった。
+ * 見た目の確認（アイコン・ロード画面）は目で見ないと意味が無いので、
+ * リポジトリ直下の shots/ に置く（.gitignore 済み）。
+ */
+const SHOT_DIR = path.join(ROOT, "shots");
+const shot = (name) => page.screenshot({ path: path.join(SHOT_DIR, `${name}.png`), fullPage: true });
+fs.mkdirSync(SHOT_DIR, { recursive: true });
 const step = (msg) => console.log("STEP:", msg);
 const fail = (msg) => { console.log("FAIL:", msg); process.exitCode = 1; };
 
@@ -1559,6 +1567,133 @@ else {
   step("Q-2 足りていないカテゴリの提案OK（根拠が数字つき・固定曜日は不変）");
   await shot("31_coverage");
 }
+
+// ---- 16b. R-1: 心拍が使われていること ----
+await page.goto("http://localhost:8791/#/analysis");
+await page.waitForTimeout(900);
+await page.getByRole("button", { name: "現在地", exact: true }).click();
+await page.waitForTimeout(900);
+const hrCard = page.locator("section.card", { hasText: "心拍の使われ方" }).first();
+if ((await hrCard.count()) === 0) fail("R-1: 心拍の使われ方カードが無い");
+else {
+  const hrApi = await page.evaluate(async () => {
+    const d = await fetch("/api/insights").then((r) => r.json());
+    return d.hr;
+  });
+  if (!hrApi) fail("R-1: /api/insights に hr が無い（PWA側のシムが対になっていない可能性）");
+  else {
+    // 記録画面で1本ごとの心拍を入れてあるので、最大心拍の基準が立つはず
+    if (!hrApi.reference) fail("R-1: 最大心拍の基準が立たない（心拍を入れた記録があるのに）");
+    if (!Array.isArray(hrApi.lines) || hrApi.lines.length === 0) fail("R-1: 心拍の判定行が空");
+    // 短い本の練習では強度を判定しないこと（心拍が定常に達しないため）
+    const shortRep = hrApi.lines.find((l) => l.note.includes("定常"));
+    const anyVerdict = hrApi.lines.some((l) =>
+      ["in_band", "below", "above", "not_applicable", "no_data"].includes(l.verdict)
+    );
+    if (!anyVerdict) fail("R-1: 判定の種類が想定外");
+    if (shortRep && shortRep.verdict !== "not_applicable") {
+      fail("R-1: 短い本の練習で強度を判定してしまっている");
+    }
+  }
+  step("R-1 心拍の使われ方OK（基準・判定・短い本の除外）");
+  await shot("32_hr_usage");
+}
+
+// ---- 16c. R-2: ロード画面に意味のある値が出ること ----
+const splashSaved = await page.evaluate(() => {
+  try {
+    return JSON.parse(localStorage.getItem("forge:splash") ?? "null");
+  } catch {
+    return null;
+  }
+});
+if (!splashSaved) fail("R-2: 次回起動用の値が保存されていない");
+else if (!splashSaved.raceDate) fail("R-2: レース日が保存されていない");
+else if (!splashSaved.gapText) fail("R-2: 目標との差が保存されていない");
+
+/*
+ * スプラッシュは bundle.js を読み終わると消えるので、普通に開くと一瞬しか見られない。
+ * bundle.js を止めて足を固定する。
+ *
+ * このとき **別のコンテキストで開く**。今のページは Service Worker が
+ * 有効になっていて bundle.js をキャッシュから返すため、
+ * page.route を張っても素通りする（SW経由の取得は横取りされない）。
+ * 新しいコンテキストなら SW はまだ登録されていないので、確実に止まる。
+ * 保存済みの値は addInitScript で流し込む（保存自体は上で確認済み）。
+ */
+if (splashSaved) {
+  const splashCtx = await b.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 1.5,
+  });
+  const sp = await splashCtx.newPage();
+  await sp.addInitScript((v) => {
+    try {
+      localStorage.setItem("forge:splash", v);
+    } catch {
+      /* 書けなくてもテストの意味は変わらない */
+    }
+  }, JSON.stringify(splashSaved));
+  await sp.route("**/bundle.js", (route) => route.abort());
+  await sp.goto("http://localhost:8791/");
+  await sp.waitForTimeout(500);
+
+  const splashText = (await sp.locator("#splash").textContent().catch(() => "")) ?? "";
+  if (!splashText.includes("FORGE")) fail("R-2: スプラッシュが出ていない");
+  if (!/レースまで/.test(splashText)) fail(`R-2: レースまでの日数が出ていない（${splashText}）`);
+  if (!/\d+日/.test(splashText)) fail("R-2: 日数の数字が出ていない");
+  if (!/目標.*秒|到達/.test(splashText)) fail("R-2: 目標との差が出ていない");
+  if ((await sp.locator("#splash svg.mark path").count()) !== 4) {
+    fail("R-2: スプラッシュのトラックマークが崩れている");
+  }
+  // 画面外にはみ出していないこと（iPhone幅で数字が切れると読めない）
+  const infoBox = await sp.locator("#splash-value").boundingBox();
+  if (infoBox && (infoBox.x < 0 || infoBox.x + infoBox.width > 390)) {
+    fail("R-2: スプラッシュの数字が画面幅からはみ出している");
+  }
+  await sp.screenshot({ path: path.join(SHOT_DIR, "33_splash.png") });
+
+  // 何も保存されていない初回起動でも、ロゴだけで成立すること
+  const firstCtx = await b.newContext({ viewport: { width: 390, height: 844 } });
+  const fp = await firstCtx.newPage();
+  await fp.route("**/bundle.js", (route) => route.abort());
+  await fp.goto("http://localhost:8791/");
+  await fp.waitForTimeout(400);
+  const firstText = (await fp.locator("#splash").textContent().catch(() => "")) ?? "";
+  if (!firstText.includes("FORGE")) fail("R-2: 初回起動でスプラッシュが出ない");
+  if (/レースまで/.test(firstText)) fail("R-2: 保存が無いのに値が出ている");
+  const firstErrors = [];
+  fp.on("pageerror", (e) => firstErrors.push(String(e)));
+  if (firstErrors.length) fail(`R-2: 初回起動でスクリプトが落ちている（${firstErrors[0]}）`);
+  await fp.screenshot({ path: path.join(SHOT_DIR, "33_splash_first.png") });
+  await firstCtx.close();
+  await splashCtx.close();
+}
+// 通常起動ではスプラッシュが消えること
+await page.goto("http://localhost:8791/");
+await page.waitForFunction(() => !document.getElementById("splash"), { timeout: 15000 });
+step("R-2 ロード画面OK（レースまでの日数と目標との差／初回は素／読み込み後に消える）");
+
+// ---- 16d. R-3: マークが崩れていないこと ----
+await page.goto("http://localhost:8791/#/");
+await page.waitForTimeout(800);
+const markPaths = await page.locator("header svg path").count();
+if (markPaths < 4) fail(`R-3: ヘッダーのマークが崩れている（path ${markPaths}本）`);
+const markBox = await page.locator("header svg").first().boundingBox();
+if (!markBox) fail("R-3: ヘッダーのマークが描画されていない");
+else if (markBox.width < 20 || markBox.height < 10) {
+  fail(`R-3: ヘッダーのマークが小さすぎる（${Math.round(markBox.width)}×${Math.round(markBox.height)}）`);
+}
+// アイコンが配信物に入っていること
+for (const f of ["icon-180.png", "icon-192.png", "icon-512.png", "icon-maskable-512.png"]) {
+  const ok = await page.evaluate(
+    async (name) => (await fetch("./" + name)).ok,
+    f
+  );
+  if (!ok) fail(`R-3: ${f} が配信物に無い`);
+}
+step(`R-3 マークOK（ヘッダー ${Math.round(markBox?.width ?? 0)}×${Math.round(markBox?.height ?? 0)} / アイコン4種）`);
+await shot("34_mark_header");
 
 // ---- 17. Q-3: 取り込み済みの過去データを作り直せること ----
 await page.goto("http://localhost:8791/#/data");

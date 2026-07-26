@@ -127,16 +127,31 @@ export const SCREEN_TITLES: Record<string, string> = {
 };
 
 /**
- * FORGE ロゴ。
- * F を縦ステム＋右上がりの2本の腕で構成する。
- * 腕の傾きが「上昇・前進」を示す。ランナーやトラックの絵は使わない。
+ * FORGE マーク（R-3）。400mトラック。
+ *
+ * アプリアイコン（pwa/icon.svg）と同じ形。ヘッダー・サイドバー・
+ * 起動画面で同じものが出るようにしておく。
+ *
+ * 中央の切れ目（スタート／フィニッシュ）は、黒い矩形を重ねるのではなく
+ * 左右2本のパスに分けて描く。重ねる方式だと、背景色が違う場所
+ * （サイドバーは #070707）で切れ目だけ色が合わなくなる。
+ *
+ * `size` は高さ。トラックは横長なので幅はその約1.85倍になる。
  */
 export function ForgeMark({ size = 18 }: { size?: number }) {
   return (
-    <svg viewBox="0 0 100 100" style={{ width: size, height: size }} aria-hidden>
-      <path d="M0 0 H22 V100 H0 Z" fill="var(--forge)" />
-      <path d="M22 16 L100 0 L100 20 L22 36 Z" fill="var(--forge)" />
-      <path d="M22 54 L72 44 L72 64 L22 74 Z" fill="var(--forge)" />
+    <svg
+      viewBox="0 0 148 80"
+      style={{ height: size, width: size * 1.85 }}
+      fill="none"
+      stroke="var(--forge)"
+      strokeWidth={12}
+      aria-hidden
+    >
+      <path d="M68 6 H40 A34 34 0 0 0 40 74 H68" />
+      <path d="M80 6 H108 A34 34 0 0 1 108 74 H80" />
+      <path d="M68 22 H52 A18 18 0 0 0 52 58 H68" />
+      <path d="M80 22 H96 A18 18 0 0 1 96 58 H80" />
     </svg>
   );
 }
@@ -146,9 +161,20 @@ export function Logo({ compact = false }: { compact?: boolean }) {
     <div className="flex items-center gap-2">
       <ForgeMark size={compact ? 16 : 20} />
       <div className="flex flex-col">
+        {/*
+          アイコンのワードマークが斜体なので、画面側も同じ傾きにする（R-3）。
+          font-style: italic ではなく skew を使うのは、
+          等幅の数字と同じ幾何的な傾きにしたいため（フォント任せだと形が変わる）。
+        */}
         <b
           className="font-black leading-none tracking-tight"
-          style={{ fontSize: compact ? 15 : 19, letterSpacing: "0.02em" }}
+          style={{
+            fontSize: compact ? 15 : 19,
+            letterSpacing: "0.02em",
+            transform: "skewX(-8deg)",
+            transformOrigin: "left center",
+            display: "inline-block",
+          }}
         >
           FORGE
         </b>

@@ -5,6 +5,7 @@ import { localToday } from "@/lib/core/dates";
 import { Card, Sparkline, fmtSec } from "./components/ui";
 import { withQuery } from "./components/route";
 import { SessionEditSheet } from "./components/session-edit-sheet";
+import { saveSplashSummary } from "./components/splash-cache";
 
 /**
  * ホーム画面（改修指示書 フェーズA）
@@ -54,7 +55,16 @@ export default function Home() {
   const load = useCallback(() => {
     fetch("/api/dashboard")
       .then((r) => r.json())
-      .then((x) => (x.error ? setErr(x.error) : setD(x)))
+      .then((x) => {
+        if (x.error) {
+          setErr(x.error);
+          return;
+        }
+        setD(x);
+        // R-2: 次回の起動画面に出す値を置いておく。
+        // スプラッシュは bundle 読込前に出るので、その場ではDBを読めない
+        saveSplashSummary(x);
+      })
       .catch((e) => setErr(String(e)));
   }, []);
 

@@ -11,7 +11,7 @@
  *
  * リリースのたびに VERSION を必ず上げること（上げないと install が走らない）。
  */
-const VERSION = "forge-v15";
+const VERSION = "forge-v16";
 const ASSETS = [
   "./",
   "./index.html",
@@ -21,6 +21,7 @@ const ASSETS = [
   "./icon-180.png",
   "./icon-192.png",
   "./icon-512.png",
+  "./icon-maskable-512.png",
 ];
 
 /** 更新を必ず取りに行く対象（アプリ本体） */

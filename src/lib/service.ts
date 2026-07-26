@@ -34,6 +34,12 @@ import {
   weeksUntil,
   type CoverageReview,
 } from "./core/coverage";
+import {
+  heatHrEvidence,
+  hrMaxReference,
+  relativeIntensity,
+  type HrMaxReference,
+} from "./core/heartRate";
 import { assignExpectedPaces, diagnoseRounds, generateRecoverySessions, RoundResult } from "./core/rounds";
 import {
   handleSkip,
@@ -2139,6 +2145,68 @@ const CATEGORY_JP_LABELS: Record<string, string> = {
   neural: "神経系",
   aerobic: "有酸素",
 };
+
+export interface HrUsageLine {
+  date: string;
+  name: string;
+  category: SessionCategory;
+  verdict: string;
+  note: string;
+}
+
+/**
+ * R-1: 心拍が何に効いているかを、直近の記録に対して実際に出す。
+ *
+ * 「保存されているか」ではなく「使われているか」を画面で確かめられるようにする。
+ * 心拍が無い記録は判定できないと出す（空欄を good 扱いにしない）。
+ */
+export function hrUsage(
+  repo: Store,
+  today: string,
+  limit = 8
+): {
+  reference?: HrMaxReference;
+  lines: HrUsageLine[];
+  /** 暑熱フラグの付いた日について、心拍が裏づけになっているか */
+  heat: (HrUsageLine & { supported: boolean })[];
+} {
+  const athlete = repo.getAthlete();
+  const sessions = repo.listSessions();
+  const results = repo.listResults();
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  const reference = hrMaxReference(athlete, results, repo.listMarkers());
+
+  const recent = results
+    .filter((r) => r.date <= today && byId.has(r.sessionId))
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, limit);
+
+  const lines: HrUsageLine[] = [];
+  const heat: (HrUsageLine & { supported: boolean })[] = [];
+  for (const r of recent) {
+    const s = byId.get(r.sessionId)!;
+    const ri = relativeIntensity(s, r, reference);
+    lines.push({
+      date: r.date,
+      name: s.name,
+      category: s.category,
+      verdict: ri.verdict,
+      note: ri.note,
+    });
+    if (r.heatFlagged) {
+      const ev = heatHrEvidence(sessions, results, r);
+      heat.push({
+        date: r.date,
+        name: s.name,
+        category: s.category,
+        verdict: ev.supported ? "supported" : "not_supported",
+        note: ev.note,
+        supported: ev.supported,
+      });
+    }
+  }
+  return { reference, lines, heat };
+}
 
 /** M-8: 600m通過からの残り200m */
 export function splitAnalysis(repo: Store): SplitTrend {

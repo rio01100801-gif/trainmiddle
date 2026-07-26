@@ -31,6 +31,7 @@ export default function SetupPage() {
     pb400: "",
     pb800: "",
     pb1500: "",
+    maxHrBpm: "",
     heatTolerance: "normal",
     recoveryProfile: "normal",
   });
@@ -50,6 +51,7 @@ export default function SetupPage() {
           pb400: fmtInput(athlete.pb400mSec),
           pb800: fmtInput(athlete.pb800mSec),
           pb1500: fmtInput(athlete.pb1500mSec),
+          maxHrBpm: athlete.maxHrBpm ? String(athlete.maxHrBpm) : "",
           heatTolerance: athlete.heatTolerance ?? "normal",
           recoveryProfile: athlete.recoveryProfile ?? "normal",
         });
@@ -71,6 +73,8 @@ export default function SetupPage() {
       pb400mSec: parseTime(form.pb400),
       pb800mSec: pb800,
       pb1500mSec: parseTime(form.pb1500),
+      // R-1: 相対強度の基準。任意。入っていなければ記録の最高値を使う
+      maxHrBpm: form.maxHrBpm ? Number(form.maxHrBpm) : undefined,
       heatTolerance: form.heatTolerance as Athlete["heatTolerance"],
       recoveryProfile: form.recoveryProfile as Athlete["recoveryProfile"],
       injuryHistory: [],
@@ -113,6 +117,8 @@ export default function SetupPage() {
           {F("400m PB", "pb400", "49.0")}
           {F("800m PB（必須）", "pb800", "1:49.51")}
           {F("1500m PB", "pb1500", "3:56.0")}
+          {/* R-1: 相対強度の基準。任意。年齢からの推定式は使わない */}
+          {F("最大心拍(bpm・任意)", "maxHrBpm", "196")}
           <label className="block text-sm mb-2">
             <span className="block text-xs mb-0.5" style={{ color: "var(--text-2)" }}>
               暑熱耐性

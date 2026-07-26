@@ -13,6 +13,7 @@
     "build:pwa": "bun scripts/build-pwa.mjs",
     "build:css": "tailwindcss -i app/globals.css -o pwa-dist/styles.css --minify",
     "build:static": "node scripts/build-static.mjs",
+    "build:icons": "node scripts/build-icons.mjs",
     "build:all": "npm run build:pwa && npm run build:css && npm run build:static",
     "e2e": "node pwa/e2e.mjs",
     "e2e:update": "node pwa/e2e-update.mjs",

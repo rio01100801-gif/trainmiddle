@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<!--
+  FORGE アプリアイコン（R-3）
+
+  これが原本。PNG は scripts/build-icons.mjs が Chromium で書き出す。
+  PNGを直接編集しないこと（次のビルドで上書きされる）。
+
+  形の意味: ワードマーク＋400mトラック。走路の2本線と、
+  中央の切れ目（スタート／フィニッシュライン）だけで構成する。
+  ランナーの絵や光彩は入れない（FORGE: 演出禁止・数値と形だけ）。
+
+  文字はフォントに依存させずストロークで描いている。
+  書き出す環境にフォントが入っているかで結果が変わると、
+  同じSVGから違うアイコンが出てしまう。
+-->
+  <rect width="512" height="512" rx="112" fill="#0a0a0a"/>
+
+  <!-- ワードマーク FORGE。skewX でイタリックにする -->
+  <g transform="translate(64 120) skewX(-12)"
+     fill="none" stroke="#ffffff" stroke-width="22" stroke-linecap="butt">
+    <!-- F -->
+    <g transform="translate(0 0)">
+      <path d="M11 0 V100"/>
+      <path d="M0 11 H62"/>
+      <path d="M0 51 H52"/>
+    </g>
+    <!-- O -->
+    <g transform="translate(76 0)">
+      <path d="M11 11 H59 V89 H11 Z"/>
+    </g>
+    <!-- R -->
+    <g transform="translate(160 0)">
+      <path d="M11 0 V100"/>
+      <path d="M0 11 H55"/>
+      <path d="M55 11 V46"/>
+      <path d="M0 46 H55"/>
+      <!-- 脚はボウルの接合部から出す。y=89 が他の文字の下端（線幅22の中心）に揃う -->
+      <path d="M38 46 L62 89"/>
+    </g>
+    <!-- G -->
+    <g transform="translate(240 0)">
+      <path d="M59 11 H11 V89 H59 V57 H37"/>
+    </g>
+    <!-- E -->
+    <g transform="translate(324 0)">
+      <path d="M11 0 V100"/>
+      <path d="M0 11 H60"/>
+      <path d="M0 51 H52"/>
+      <path d="M0 89 H60"/>
+    </g>
+  </g>
+
+  <!-- 400mトラック。外周と内周の2本 -->
+  <g fill="none" stroke="#b6ff00" stroke-width="22">
+    <rect x="51" y="292" width="410" height="160" rx="80"/>
+    <rect x="107" y="326" width="298" height="92" rx="46"/>
+  </g>
+  <!-- スタート／フィニッシュの切れ目。中央を縦に抜く -->
+  <rect x="248" y="280" width="16" height="184" fill="#0a0a0a"/>
+</svg>

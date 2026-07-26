@@ -24,6 +24,7 @@ import {
   rebuildPastDerived,
   coverageReview,
   applyCoverageProposal,
+  hrUsage,
   samePrescriptionGroups,
   cfeRangeFor,
   raceSplitPlan,
@@ -520,6 +521,7 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
         limiter: limiterAssessment(repo),
         split: splitAnalysis(repo),
         contact: contactTimeStatus(repo, today),
+        hr: hrUsage(repo, today),
         review: weeklyReview(repo, today, params.get("weekStart") ?? undefined),
       };
     },

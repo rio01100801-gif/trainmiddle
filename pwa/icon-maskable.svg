@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<!--
+  maskable 用（R-3）
+
+  maskable のアイコンは、OS側が好きな形（円・角丸・水滴など）で切り抜く。
+  切り抜かれても残る保証があるのは中央80%だけなので、
+  通常のアイコンをそのまま使うとトラックの左右が欠ける。
+  ここでは中央60%に収めて、どの形で抜かれても形が保たれるようにする。
+
+  背景は全面を塗る（切り抜いた外側が透明だと、OSが白で埋めることがある）。
+-->
+  <rect width="512" height="512" fill="#0a0a0a"/>
+
+  <g fill="none" stroke="#b6ff00" stroke-width="30">
+    <rect x="108" y="184" width="296" height="144" rx="72"/>
+    <rect x="163" y="217" width="186" height="78" rx="39"/>
+  </g>
+  <rect x="246" y="170" width="20" height="172" fill="#0a0a0a"/>
+</svg>

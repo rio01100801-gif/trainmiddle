@@ -665,6 +665,59 @@ function GapPanel() {
           {contact?.narrative}
         </p>
       </Card>
+
+      {/*
+        R-1: 心拍が何に効いているかを画面で確かめられるようにする。
+        「保存されているか」ではなく「使われているか」を見るための枠なので、
+        心拍が無い記録は判定できないと出す（空欄を良い状態として扱わない）。
+      */}
+      <Card title="心拍の使われ方">
+        <p className="text-[11.5px] leading-relaxed mb-2.5" style={{ color: "var(--text-3)" }}>
+          {d.hr?.reference?.note ??
+            "最大心拍の基準がありません。プロフィールに入れるか、最大心拍つきの記録を1件入れると相対強度が出ます。"}
+        </p>
+        {(d.hr?.lines ?? []).length === 0 ? (
+          <p className="text-[12px]" style={{ color: "var(--text-2)" }}>
+            記録がまだありません。
+          </p>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            {(d.hr.lines ?? []).map((l: any, i: number) => (
+              <div key={i} className="text-[11.5px] leading-relaxed">
+                <span className="num" style={{ color: "var(--text-3)" }}>
+                  {l.date.slice(5).replace("-", "/")}
+                </span>{" "}
+                <span
+                  style={{
+                    color:
+                      l.verdict === "in_band"
+                        ? "var(--forge)"
+                        : l.verdict === "below" || l.verdict === "above"
+                        ? "var(--amber)"
+                        : "var(--text-3)",
+                  }}
+                >
+                  {l.note}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        {(d.hr?.heat ?? []).length > 0 ? (
+          <div className="border-t mt-2.5 pt-2.5" style={{ borderColor: "var(--border)" }}>
+            <div className="metric-label mb-1">暑熱の切り分け</div>
+            {(d.hr.heat ?? []).map((l: any, i: number) => (
+              <p
+                key={i}
+                className="text-[11.5px] leading-relaxed mb-1"
+                style={{ color: l.supported ? "var(--amber)" : "var(--text-3)" }}
+              >
+                <span className="num">{l.date.slice(5).replace("-", "/")}</span> {l.note}
+              </p>
+            ))}
+          </div>
+        ) : null}
+      </Card>
     </div>
   );
 }

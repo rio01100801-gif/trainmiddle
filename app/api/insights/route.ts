@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { openRepo } from "@/lib/db/node";
 import {
   contactTimeStatus,
+  hrUsage,
   limiterAssessment,
   splitAnalysis,
   weeklyReview,
@@ -19,6 +20,7 @@ export async function GET(req: NextRequest) {
     limiter: limiterAssessment(repo),
     split: splitAnalysis(repo),
     contact: contactTimeStatus(repo, today),
+    hr: hrUsage(repo, today),
     review: weeklyReview(repo, today, p.get("weekStart") ?? undefined),
   });
 }

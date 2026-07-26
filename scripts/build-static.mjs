@@ -23,6 +23,7 @@ const FILES = [
   "icon-180.png",
   "icon-192.png",
   "icon-512.png",
+  "icon-maskable-512.png",
 ];
 
 fs.mkdirSync(to, { recursive: true });

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<!--
+  小サイズ（180 / 192）用の簡略版（R-3）
+
+  ホーム画面のアイコンは実寸で約60pt。この大きさにワードマークを入れると、
+  文字が潰れて「読めない汚れ」になり、かえって何のアプリか分からなくなる。
+  トラックだけにして線を太くし、形で判別できるようにする。
+
+  大サイズ（512）は pwa/icon.svg。形と色は揃えてある。
+-->
+  <rect width="512" height="512" rx="112" fill="#0a0a0a"/>
+
+  <g fill="none" stroke="#b6ff00" stroke-width="34">
+    <rect x="60" y="150" width="392" height="212" rx="106"/>
+    <rect x="141" y="199" width="230" height="114" rx="57"/>
+  </g>
+  <!-- スタート／フィニッシュの切れ目 -->
+  <rect x="245" y="134" width="22" height="244" fill="#0a0a0a"/>
+</svg>
