@@ -232,6 +232,13 @@ export default function CalendarPage() {
         </Card>
       ) : null}
 
+      {/*
+        S-12: 4週間のバランスはカレンダーで気づけると効く。
+        予定を組み替えるのはこの画面なので、「何が足りないか」をここに1行で出し、
+        詳しい内訳と入れ替えは分析タブに任せる（ここに全部置くと日付が見えなくなる）。
+      */}
+      <CoverageStrip />
+
       {editing ? (
         <SessionEditSheet
           session={editing}
@@ -374,6 +381,64 @@ export default function CalendarPage() {
         </Card>
       ) : null}
     </div>
+  );
+}
+
+const COVERAGE_JP: Record<string, string> = {
+  high_lactate: "高乳酸",
+  race_economy: "経済走",
+  modeling: "モデリング",
+  neural: "神経系",
+  cv: "CV",
+  threshold: "閾値",
+  aerobic: "有酸素",
+  off: "休養",
+};
+
+/**
+ * S-12 4週間のバランスの要約（1行）。
+ *
+ * 予定を組み替えるのはカレンダーなので、「何が足りていないか」はここで気づけるべき。
+ * ただし内訳の表まで置くと日付が押し出されるので、
+ * 出すのは不足しているもの1つと、分析タブへの導線だけにする。
+ */
+function CoverageStrip() {
+  const [d, setD] = useState<any>(null);
+
+  useEffect(() => {
+    fetch("/api/coverage")
+      .then((r) => r.json())
+      .then((x) => setD(x.review ?? null))
+      .catch(() => setD(null));
+  }, []);
+
+  if (!d) return null;
+  const top = (d.proposals ?? [])[0];
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <span className="metric-label">4週間のバランス</span>
+        <Link href="/analysis" className="text-[11px]" style={{ color: "var(--text-3)" }}>
+          内訳を見る →
+        </Link>
+      </div>
+      {top ? (
+        <p className="text-[12.5px] leading-relaxed">
+          <b style={{ color: "var(--amber)" }}>
+            {COVERAGE_JP[top.category] ?? top.category}が{top.shortfall}回 足りていません
+          </b>
+          <span style={{ color: "var(--text-3)" }}>
+            {" "}
+            ／ 直近4週の実績から。入れ替えるなら分析タブから選べます
+          </span>
+        </p>
+      ) : (
+        <p className="text-[12.5px]" style={{ color: "var(--text-2)" }}>
+          直近4週の配分は足りています。
+        </p>
+      )}
+    </Card>
   );
 }
 

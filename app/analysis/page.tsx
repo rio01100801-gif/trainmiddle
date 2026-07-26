@@ -478,20 +478,53 @@ function CoveragePanel() {
     }
   };
 
+  const top = (d.proposals ?? [])[0];
+
   return (
-    <Card title="直近4週の配分">
-      <p className="text-[12px] leading-relaxed mb-2.5" style={{ color: "var(--text-2)" }}>
-        {d.narrative}
+    <Card title="4週間のバランス">
+      {/*
+        S-12: 表だけ出しても何を見ればいいのか伝わらない。
+        「何のための画面か」「で、どうするのか」を先に書く。
+      */}
+      <p className="text-[11.5px] leading-relaxed mb-2.5" style={{ color: "var(--text-3)" }}>
+        この4週間でどの種類の練習を何回やったかです。
+        固定曜日の枠に収まる範囲でメニューが出るので、特定の種類だけ薄いまま進むことがあります。
+        <b style={{ color: "var(--text-2)" }}>
+          {" "}
+          今日の設定を変える話（ホームの「今日の設定」）とは別で、こちらは1か月の組み立ての話です。
+        </b>
       </p>
+
+      {/* おすすめを1つだけ先に出す。表を読んでから考えさせない */}
+      <div
+        className="rounded-lg p-2.5 mb-3"
+        style={{ background: "var(--surface-2)" }}
+      >
+        <div className="metric-label mb-1">おすすめ</div>
+        {top ? (
+          <>
+            <div className="text-[14px] font-semibold leading-snug mb-1">
+              {COVERAGE_JP[top.category] ?? top.category}を あと{top.shortfall}回 増やす
+            </div>
+            <p className="text-[11.5px] leading-relaxed" style={{ color: "var(--text-2)" }}>
+              {top.reason}
+            </p>
+          </>
+        ) : (
+          <div className="text-[13px] font-semibold leading-snug">
+            いまの配分で足りています。変える必要はありません
+          </div>
+        )}
+      </div>
 
       <div className="overflow-x-auto mb-3">
         <table className="w-full text-[11px]">
           <thead>
             <tr style={{ color: "var(--text-3)" }}>
-              <th className="text-left py-1">カテゴリ</th>
-              <th className="text-right">実施</th>
-              <th className="text-right">基準</th>
-              <th className="text-right">差</th>
+              <th className="text-left py-1">種類</th>
+              <th className="text-right">やった</th>
+              <th className="text-right">目安</th>
+              <th className="text-right">不足</th>
             </tr>
           </thead>
           <tbody>
@@ -512,6 +545,9 @@ function CoveragePanel() {
         </table>
       </div>
 
+      {(d.proposals ?? []).length > 0 ? (
+        <div className="metric-label mb-1">入れ替えるなら</div>
+      ) : null}
       {(d.proposals ?? []).map((p: any) => (
         <div
           key={p.category}

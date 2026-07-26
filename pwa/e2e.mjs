@@ -902,6 +902,59 @@ const heatAdj = await page.evaluate(async (id) => {
 if (!heatAdj.applied) fail("M-9: WBGTから補正が掛からない");
 if (!(heatAdj.offset > 0)) fail("M-9: 暑熱下でも設定が緩まない");
 if (!heatAdj.reasons.join().includes("WBGT")) fail("M-9: 補正の根拠が出ていない");
+/*
+ * S-10: 調整案が「何を言っているのか」画面で分かること。
+ * ここは案がまだ適用されていない＝必ず出ている状態なので、この位置で確かめる。
+ * （このあと適用してしまうと案が消え、確認できなくなる）
+ */
+/*
+ * 案が必ず出る条件を作ってから見る。
+ *
+ * 直近の実測だけに頼ると、その日の材料の集まり方（暑熱フラグ・日付の前後）で
+ * 案が出たり出なかったりして、確かめたい表示に辿り着けない。
+ * 当日のコンディション（脚の疲労）は必ず調整に効くので、これで固定する。
+ * 出す内容そのものは実測から作られるので、検証の意味は変わらない。
+ */
+await page.evaluate(async () => {
+  const now = new Date();
+  const d = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+    now.getDate()
+  ).padStart(2, "0")}`;
+  await fetch("/api/daily", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ date: d, legFatigue: 4, overallFatigue: 4, sleepQuality: 2, motivation: 3 }),
+  });
+});
+
+await page.goto("http://localhost:8791/#/");
+await page.waitForTimeout(1500);
+const adjText = await page.textContent("body");
+if (!/の設定を (ゆるめる|上げる)提案/.test(adjText)) {
+  const why = await page.evaluate(async () => {
+    const a = await fetch("/api/adaptive").then((r) => r.json());
+    return {
+      hasChange: a.proposal?.hasChange ?? null,
+      forSession: a.session?.name ?? null,
+      paces: a.session?.targetPaces?.length ?? null,
+      verdict: a.context?.trend?.verdict ?? null,
+      samples: a.context?.trend?.samples?.length ?? null,
+      offset: a.proposal?.offsetSecPerRep ?? null,
+      reasons: a.proposal?.reasons ?? [],
+    };
+  });
+  fail(`S-10: 調整案の見出しが出ていない（${JSON.stringify(why)}）`);
+}
+if (!/いまの設定/.test(adjText) || !/変えた場合/.test(adjText)) {
+  fail("S-10: 変更前後の処方が並んでいない（差分を読ませない形になっていない）");
+}
+if (!/そう判断した材料/.test(adjText)) fail("S-10: 判断材料の見出しが無い");
+if (!/能力の推定（CFE）は動かしません/.test(adjText)) {
+  fail("S-10: 設定とCFEの違いが書かれていない");
+}
+step("S-10 設定の調整案の説明OK（前後の処方・材料・CFEに触れないこと）");
+await shot("35_today_adjust");
+
 // CFEは動かないこと
 const cfeGuard = await page.evaluate(async (id) => {
   const before = (await fetch("/api/dashboard").then((r) => r.json())).cfe?.estimated800mSec;
@@ -1586,8 +1639,8 @@ await page.goto("http://localhost:8791/#/analysis");
 await page.waitForTimeout(900);
 await page.getByRole("button", { name: "現在地", exact: true }).click();
 await page.waitForTimeout(900);
-const covCard = page.locator("section.card", { hasText: "直近4週の配分" }).first();
-if ((await covCard.count()) === 0) fail("Q-2: 直近4週の配分カードが無い");
+const covCard = page.locator("section.card", { hasText: "4週間のバランス" }).first();
+if ((await covCard.count()) === 0) fail("Q-2: 4週間のバランスカードが無い");
 else {
   const covText = await covCard.textContent();
   // 判断の根拠を数字で出していること（回数を伴わない指摘にしない）
@@ -1626,8 +1679,30 @@ else {
       }
     }
   }
+  /*
+   * S-12: 表を出すだけでは伝わらないので、
+   * 「何のための画面か」と「で、どうするのか」が文章で出ていること。
+   */
+  if (!covText.includes("おすすめ")) fail("S-12: おすすめが出ていない");
+  if (!/1か月の組み立て/.test(covText)) {
+    fail("S-12: 今日の設定調整との違いが説明されていない");
+  }
   step("Q-2 足りていないカテゴリの提案OK（根拠が数字つき・固定曜日は不変）");
   await shot("31_coverage");
+}
+
+// ---- 16a-2. S-12: カレンダーからも気づけること ----
+await page.goto("http://localhost:8791/#/calendar");
+await page.waitForTimeout(1100);
+const calCov = page.locator("section.card", { hasText: "4週間のバランス" }).first();
+if ((await calCov.count()) === 0) fail("S-12: カレンダーに4週間のバランスが出ていない");
+else {
+  const t = (await calCov.textContent()) ?? "";
+  if (!/足りていません|足りています/.test(t)) fail("S-12: カレンダーの要約に結論が無い");
+  if ((await calCov.getByRole("link", { name: /内訳を見る/ }).count()) === 0) {
+    fail("S-12: 内訳への導線が無い");
+  }
+  step("S-12 カレンダーからバランスに気づけるOK");
 }
 
 // ---- 16b. R-1: 心拍が使われていること ----

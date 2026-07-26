@@ -36,6 +36,16 @@ function dowOf(s: string) {
   return DOW[new Date(s + "T00:00:00Z").getUTCDay()];
 }
 
+/** 設定の調整（M-2）の対象になるカテゴリ。ジョグと休養には設定が無い */
+const QUALITY_CATEGORIES = new Set([
+  "high_lactate",
+  "race_economy",
+  "modeling",
+  "cv",
+  "threshold",
+  "neural",
+]);
+
 const CATEGORY_LABEL: Record<string, string> = {
   high_lactate: "高乳酸",
   race_economy: "経済走",
@@ -92,7 +102,20 @@ export default function Home() {
   return (
     <div className="flex flex-col gap-3">
       <Today d={d} today={today} onChanged={load} />
-      <TodayAdjust sessionId={d.todaySession?.id} today={today} />
+      {/*
+        ポイント練習の日だけ、その日の枠に固定する。
+        今日がジョグや休養だと設定の調整は出ないので、その場合は指定せず、
+        次のポイント練習の案を出させる（カードの見出しもそれを想定している）。
+        固定したままだと、ジョグの日には調整案が一切見えなかった。
+      */}
+      <TodayAdjust
+        sessionId={
+          d.todaySession && QUALITY_CATEGORIES.has(d.todaySession.category)
+            ? d.todaySession.id
+            : undefined
+        }
+        today={today}
+      />
       <Notices today={today} />
       <WeekStrip d={d} today={today} />
       <AnalysisSwipe d={d} today={today} />
@@ -155,7 +178,9 @@ function TodayAdjust({ sessionId, today }: { sessionId?: string; today: string }
       <div className="flex items-center justify-between gap-2 mb-2">
         <span className="metric-label">
           {p?.hasChange
-            ? "設定の調整案"
+            ? `${d.session.date === today ? "今日" : "次のポイント練習"}の設定を ${
+                p.offsetSecPerRep > 0 ? "ゆるめる提案" : "上げる提案"
+              }`
             : d.session.date === today
             ? "この練習の進め方"
             : "次のポイント練習の進め方"}
@@ -165,6 +190,19 @@ function TodayAdjust({ sessionId, today }: { sessionId?: string; today: string }
         </span>
       </div>
 
+      {/*
+        S-10: 「設定の調整案」とだけ出しても、何をどうしたいのか伝わらない。
+        1行で「何を見て」「どちらに」「なぜ」動かすのかを言い切る。
+        FORGEの原則どおり、勝手に適用はせず本人が選ぶ。
+      */}
+      {p?.hasChange ? (
+        <p className="text-[12.5px] leading-relaxed mb-2.5" style={{ color: "var(--text-2)" }}>
+          {p.offsetSecPerRep > 0
+            ? "直近の実測とその日の状態から見て、この設定は速すぎます。実行できる設定に落とす案です。"
+            : "直近の実測から見て、この設定には余裕があります。少し上げる案です。"}
+        </p>
+      ) : null}
+
       {blocked ? (
         <p className="text-[13px] leading-relaxed mb-2" style={{ color: "var(--red)" }}>
           赤信号です。この日に質練習は入れません。有酸素か休養に置き換えてください。
@@ -173,18 +211,46 @@ function TodayAdjust({ sessionId, today }: { sessionId?: string; today: string }
 
       {p?.hasChange ? (
         <>
-          <div className="text-[14px] font-semibold mb-1 num">
-            1本あたり {p.offsetSecPerRep > 0 ? "+" : ""}
-            {p.offsetSecPerRep.toFixed(1)}秒
-            {p.afterReps !== p.beforeReps ? ` ／ 本数 ${p.beforeReps} → ${p.afterReps}` : ""}
+          {/* 何がどう変わるのかを、処方の文面そのもので見せる（差分を読ませない） */}
+          <div
+            className="rounded-lg p-2.5 mb-2.5"
+            style={{ background: "var(--surface-2)" }}
+          >
+            <div className="text-[10px] mb-1" style={{ color: "var(--text-3)" }}>
+              いまの設定
+            </div>
+            <div className="text-[12.5px] leading-snug mb-2" style={{ color: "var(--text-3)" }}>
+              {p.beforePrescription}
+            </div>
+            <div className="text-[10px] mb-1" style={{ color: "var(--text-3)" }}>
+              変えた場合
+            </div>
+            <div className="text-[13px] leading-snug font-semibold">{p.afterPrescription}</div>
+            <div className="text-[11.5px] num mt-1.5" style={{ color: "var(--forge)" }}>
+              1本あたり {p.offsetSecPerRep > 0 ? "+" : ""}
+              {p.offsetSecPerRep.toFixed(1)}秒
+              {p.afterReps !== p.beforeReps ? ` ／ 本数 ${p.beforeReps} → ${p.afterReps}本` : ""}
+            </div>
           </div>
-          <ul className="mb-2.5">
+
+          <div className="text-[10px] mb-1" style={{ color: "var(--text-3)" }}>
+            そう判断した材料
+          </div>
+          <ul className="mb-2">
             {p.reasons.map((r: string, i: number) => (
               <li key={i} className="text-[12px] leading-relaxed" style={{ color: "var(--text-2)" }}>
                 ・{r}
               </li>
             ))}
           </ul>
+          {/*
+            混同されやすいので必ず書く。
+            動かすのは「今日出せる設定」であって「能力の推定（CFE）」ではない。
+          */}
+          <p className="text-[11px] leading-relaxed mb-2.5" style={{ color: "var(--text-3)" }}>
+            変えるのは今日の設定だけです。能力の推定（CFE）は動かしません。
+            暑かった・寝ていない・設定が高すぎた、はどれも能力が落ちた理由にならないためです。
+          </p>
         </>
       ) : null}
 
