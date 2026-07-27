@@ -606,6 +606,34 @@ async function storageFailure(
   );
 }
 
+/**
+ * Supabase Storageは、存在するバケット内の未作成オブジェクトにも
+ * HTTP 400 + { code: "not_found", message: "Object not found" }を返す。
+ * 同じ400でもBucket not foundやRLS違反は設定不備なので、本文まで一致した場合だけ
+ * 「初回同期でまだsnapshot.jsonがない」と判断する。
+ */
+async function isMissingSnapshot(response: Response): Promise<boolean> {
+  if (response.status === 404) return true;
+  if (response.status !== 400) return false;
+  try {
+    const value: unknown = await response.clone().json();
+    if (!value || typeof value !== "object") return false;
+    const payload = value as Record<string, unknown>;
+    const codeValue =
+      typeof payload.code === "string"
+        ? payload.code
+        : typeof payload.error === "string"
+          ? payload.error
+          : "";
+    const code = codeValue.toLowerCase();
+    const message =
+      typeof payload.message === "string" ? payload.message.trim().toLowerCase() : "";
+    return code === "not_found" && message === "object not found";
+  } catch {
+    return false;
+  }
+}
+
 /** クラウドのスナップショットを取る。無ければ undefined */
 export async function fetchSnapshot(
   cfg: SyncConfig,
@@ -617,9 +645,9 @@ export async function fetchSnapshot(
   const r = await fetchImpl(`${runtime.url}/storage/v1/object/${BUCKET}/${OBJECT}`, {
     headers: headers(runtime, session),
   });
-  // 400はバケット未作成・RLS不備でも返る。空扱いにすると原因を隠したまま
-  // first_pushへ進み、書き込み時にだけ失敗するため、404だけを未作成とみなす。
-  if (r.status === 404) return undefined;
+  // 400全体を空扱いにはしない。Supabase固有の「Object not found」だけを
+  // 初回状態として扱い、Bucket not found・RLS不備は詳細エラーへ進める。
+  if (await isMissingSnapshot(r)) return undefined;
   if (!r.ok) throw await storageFailure(r, "読み取り");
   return r.json();
 }

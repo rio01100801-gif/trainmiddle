@@ -224,7 +224,7 @@ describe("Supabase Storage同期", () => {
   const config = { url: "https://storage.supabase.co", anonKey: KEY };
   const session = { accessToken: "user-access-token" };
 
-  it("404だけを未作成スナップショットとして扱う", async () => {
+  it("404を未作成スナップショットとして扱う", async () => {
     const fetchImpl: typeof fetch = async () =>
       new Response(JSON.stringify({ message: "Object not found" }), {
         status: 404,
@@ -232,6 +232,35 @@ describe("Supabase Storage同期", () => {
       });
 
     await expect(fetchSnapshot(config, session, { fetchImpl })).resolves.toBeUndefined();
+  });
+
+  it("SupabaseのHTTP 400 not_found / Object not foundを初回状態として扱う", async () => {
+    const fetchImpl: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          statusCode: "404",
+          error: "not_found",
+          message: "Object not found",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } }
+      );
+
+    await expect(fetchSnapshot(config, session, { fetchImpl })).resolves.toBeUndefined();
+  });
+
+  it("HTTP 400でもBucket not foundは初回状態にせず設定不備を返す", async () => {
+    const fetchImpl: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          code: "not_found",
+          message: "Bucket not found",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } }
+      );
+
+    await expect(fetchSnapshot(config, session, { fetchImpl })).rejects.toThrow(
+      "Privateバケット「forge」を作成"
+    );
   });
 
   it("読み取りの400を空扱いせずバケット・RLS診断として返す", async () => {

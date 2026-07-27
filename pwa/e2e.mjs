@@ -2133,9 +2133,13 @@ await page.route(/^https:\/\/[^/]+\.supabase\.co\//, async (route) => {
     }
     if (request.method() === "GET") {
       await route.fulfill({
-        status: 200,
+        status: 400,
         contentType: "application/json",
-        body: "{}",
+        body: JSON.stringify({
+          statusCode: "404",
+          error: "not_found",
+          message: "Object not found",
+        }),
         headers: corsHeaders,
       });
       return;
@@ -2306,6 +2310,7 @@ errors.push(...storageRlsConsole.filter((e) => !e.includes("status of 403")));
 
 // ポリシー修正後は同じ画面から再試行でき、x-upsertでクラウドへ保存される
 syncStorageMode = "ready";
+const errorsBeforeMissingSnapshot = errors.length;
 await page.getByRole("button", { name: "いま同期する" }).click();
 await page.waitForTimeout(300);
 syncBody = await page.textContent("body");
@@ -2315,6 +2320,8 @@ if (!syncBody.includes("クラウドへ送りました")) {
 if (!syncStorageWriteSeen) {
   fail("S-11: Storageへの書き込みがx-upsertになっていない");
 }
+const missingSnapshotConsole = errors.splice(errorsBeforeMissingSnapshot);
+errors.push(...missingSnapshotConsole.filter((e) => !e.includes("status of 400")));
 
 // Supabase接続設定だけを削除し、練習データ用IndexedDBには触れない
 await page.getByRole("button", { name: "接続設定を消す" }).click();
