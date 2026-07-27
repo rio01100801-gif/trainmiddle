@@ -107,8 +107,8 @@ export default function MeetPage() {
           <p className="text-sm">単一ラウンドの大会です。</p>
         )}
         <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>
-          ラウンド間の日に質練習は置けません（RULE-20）。テーパーの基準日は {anchor.peakDate}（{roundLabel[race.peakTargetRound]}）、
-          質練習は初戦3日前（{anchor.qualityCutoffDate}）までに完了している必要があります。
+          ラウンド間の日に高負荷練習・神経刺激は置けません（RULE-20）。テーパーの基準日は {anchor.peakDate}（{roundLabel[race.peakTargetRound]}）、
+          高負荷練習は初戦3日前（{anchor.qualityCutoffDate}）までに完了している必要があります。
         </p>
       </Card>
 

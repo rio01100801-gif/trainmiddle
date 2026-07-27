@@ -24,6 +24,8 @@ export async function POST(req: NextRequest) {
   const session = {
     id: `s-user-${Date.now()}`,
     status: "planned",
+    origin: "manual",
+    userEdited: true,
     targetPaces: [],
     transfer800m: 3,
     transfer1500m: 3,
@@ -58,7 +60,7 @@ export async function PATCH(req: NextRequest) {
       { status: 400 }
     );
   }
-  repo.saveSession({ ...session, ...updates });
+  repo.saveSession({ ...session, ...updates, status: "modified", userEdited: true });
   const violations = runRuleEngine(
     buildRuleContext(repo, localToday())
   );

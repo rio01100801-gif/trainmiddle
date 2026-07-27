@@ -36,8 +36,8 @@ function dowOf(s: string) {
   return DOW[new Date(s + "T00:00:00Z").getUTCDay()];
 }
 
-/** 設定の調整（M-2）の対象になるカテゴリ。ジョグと休養には設定が無い */
-const QUALITY_CATEGORIES = new Set([
+/** 設定ペースの調整（M-2）が可能なカテゴリ。負荷分類の「高負荷」とは別。 */
+const ADJUSTABLE_PACE_CATEGORIES = new Set([
   "high_lactate",
   "race_economy",
   "modeling",
@@ -110,7 +110,7 @@ export default function Home() {
       */}
       <TodayAdjust
         sessionId={
-          d.todaySession && QUALITY_CATEGORIES.has(d.todaySession.category)
+          d.todaySession && ADJUSTABLE_PACE_CATEGORIES.has(d.todaySession.category)
             ? d.todaySession.id
             : undefined
         }
@@ -122,7 +122,11 @@ export default function Home() {
         選んだ結果は既存の予定に書き込むだけで、案そのものは保存しない。
       */}
       <SessionVariants
-        sessionId={d.todaySession && QUALITY_CATEGORIES.has(d.todaySession.category) ? d.todaySession.id : undefined}
+        sessionId={
+          d.todaySession && ADJUSTABLE_PACE_CATEGORIES.has(d.todaySession.category)
+            ? d.todaySession.id
+            : undefined
+        }
         today={today}
         onApplied={load}
       />

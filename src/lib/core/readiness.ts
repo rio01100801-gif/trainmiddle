@@ -14,7 +14,7 @@
  */
 import type { Athlete, Session, SessionResult, Signal } from "./types";
 import { diffDays } from "./dates";
-import { isQuality } from "./rules";
+import { isHighLoadSession } from "./trainingClassification";
 
 export interface ReadinessComponent {
   label: string;
@@ -36,9 +36,9 @@ export interface ReadinessInput {
   /** 黄信号が3日以上連続して赤扱いになっている場合 true */
   signalEscalated?: boolean;
   acwr?: number;
-  /** 直近の質練習からの日数（今回のセッション日基準）。無ければ十分に空いているとみなす */
+  /** 直近の高負荷練習からの日数（今回のセッション日基準）。無ければ十分に空いているとみなす */
   daysSinceLastQuality?: number;
-  /** 直近の質練習の結果（新しい順で最大3件） */
+  /** 直近の高負荷練習の結果（新しい順で最大3件） */
   recentQualityResults?: SessionResult[];
   /** 当日の予想気温 */
   tempC?: number;
@@ -87,21 +87,21 @@ export function computeReadiness(input: ReadinessInput): Readiness {
     b.push({ label: "ACWR", delta: 0, detail: `${acwr.toFixed(2)}（適正）` });
   }
 
-  // --- 3. 前回質練習からの回復間隔（質練習のときだけ効く） ---
-  if (isQuality(session.category)) {
+  // --- 3. 前回高負荷練習からの回復間隔（高負荷練習のときだけ効く） ---
+  if (isHighLoadSession(session)) {
     const d = daysSinceLastQuality;
     if (d === undefined) {
-      b.push({ label: "回復間隔", delta: 0, detail: "直近に質練習なし" });
+      b.push({ label: "回復間隔", delta: 0, detail: "直近に高負荷練習なし" });
     } else if (d <= 1) {
-      b.push({ label: "回復間隔", delta: -15, detail: `前回の質練習から${d}日（中1日未満）` });
+      b.push({ label: "回復間隔", delta: -15, detail: `前回の高負荷練習から${d}日（中1日未満）` });
     } else if (d === 2) {
-      b.push({ label: "回復間隔", delta: -5, detail: "前回の質練習から2日（中1日）" });
+      b.push({ label: "回復間隔", delta: -5, detail: "前回の高負荷練習から2日（中1日）" });
     } else {
-      b.push({ label: "回復間隔", delta: 0, detail: `前回の質練習から${d}日` });
+      b.push({ label: "回復間隔", delta: 0, detail: `前回の高負荷練習から${d}日` });
     }
   }
 
-  // --- 4. 直近の質練習の達成状況（未達が続くと設定が現状と乖離している） ---
+  // --- 4. 直近の高負荷練習の達成状況（未達が続くと設定が現状と乖離している） ---
   const recent = recentQualityResults.slice(0, 3);
   let achieveDelta = 0;
   for (const r of recent) {

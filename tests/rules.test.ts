@@ -82,8 +82,8 @@ describe("RULE-01 高乳酸の頻度と間隔", () => {
   });
 });
 
-describe("RULE-03 質練習の間隔", () => {
-  it("連日の質練習でERROR", () => {
+describe("RULE-03 高負荷練習の間隔", () => {
+  it("種類が異なる高負荷練習が連日ならERROR", () => {
     const c = ctx({
       sessions: [
         makeSession("2026-04-06", "race_economy"),
@@ -104,7 +104,7 @@ describe("RULE-03 質練習の間隔", () => {
     expect(violationsOf(runRuleEngine(c), "RULE-03").length).toBe(0);
   });
 
-  it("同日に質練習2つでERROR", () => {
+  it("同日に高負荷練習2つでERROR", () => {
     const c = ctx({
       sessions: [
         makeSession("2026-04-06", "race_economy"),
@@ -115,8 +115,8 @@ describe("RULE-03 質練習の間隔", () => {
   });
 });
 
-describe("RULE-04 週内質練習の上限", () => {
-  it("週3回の質練習でERROR", () => {
+describe("RULE-04 週内高負荷の種類と組み合わせ", () => {
+  it("高負荷3日でも特異的が2日以下ならWARNに留める", () => {
     const c = ctx({
       sessions: [
         makeSession("2026-04-06", "race_economy"),
@@ -124,10 +124,39 @@ describe("RULE-04 週内質練習の上限", () => {
         makeSession("2026-04-10", "cv"),
       ],
     });
-    expect(violationsOf(runRuleEngine(c), "RULE-04").length).toBe(1);
+    const violation = violationsOf(runRuleEngine(c), "RULE-04")[0];
+    expect(violation.level).toBe("WARN");
+    expect(violation.message).toContain("高負荷が3日");
   });
 
-  it("neural は質練習にカウントしない（週3回入れても違反なし）", () => {
+  it("高乳酸・中距離特異的が週3日ならERROR", () => {
+    const c = ctx({
+      sessions: [
+        makeSession("2026-04-06", "high_lactate"),
+        makeSession("2026-04-08", "race_economy"),
+        makeSession("2026-04-10", "modeling"),
+      ],
+    });
+    expect(violationsOf(runRuleEngine(c), "RULE-04")[0].level).toBe("ERROR");
+  });
+
+  it("有酸素高強度が週4日なら理由と変更案を一致させる", () => {
+    const c = ctx({
+      sessions: [
+        makeSession("2026-04-06", "cv"),
+        makeSession("2026-04-08", "threshold"),
+        makeSession("2026-04-10", "cv"),
+        makeSession("2026-04-12", "threshold"),
+      ],
+    });
+    const violation = violationsOf(runRuleEngine(c), "RULE-04")[0];
+    expect(violation.level).toBe("ERROR");
+    expect(violation.message).toContain("種類を問わず高負荷日");
+    expect(violation.suggestion).toContain("有酸素高強度");
+    expect(violation.suggestion).not.toContain("高乳酸・中距離特異的の1回");
+  });
+
+  it("短いneuralは高負荷にカウントしない（週3回入れても違反なし）", () => {
     const c = ctx({
       sessions: [
         makeSession("2026-04-06", "race_economy"),
@@ -138,6 +167,21 @@ describe("RULE-04 週内質練習の上限", () => {
       ],
     });
     expect(violationsOf(runRuleEngine(c), "RULE-04").length).toBe(0);
+  });
+
+  it("長い反復をneuralにしても軽負荷として扱わない", () => {
+    const neural = makeSession("2026-04-07", "neural", {
+      name: "スピード持久",
+      prescription: "300m × 5本 r5分",
+    });
+    const c = ctx({
+      sessions: [makeSession("2026-04-06", "threshold"), neural],
+    });
+    expect(violationsOf(runRuleEngine(c), "RULE-03")).toHaveLength(1);
+    const classification = violationsOf(runRuleEngine(c), "RULE-04").find((v) =>
+      v.message.includes("短い完全回復の刺激とは別")
+    );
+    expect(classification?.sessionIds).toContain(neural.id);
   });
 });
 

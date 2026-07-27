@@ -84,4 +84,22 @@ describe("4週間バランス", () => {
     expect(signal?.message).toContain("2回");
     expect(signal?.dates).toEqual(["2026-07-05", "2026-07-10"]);
   });
+
+  it("短い神経刺激と高容量のスピード持久を高負荷日で区別する", () => {
+    const short = makeSession("2026-07-07", "neural", {
+      status: "completed",
+      prescription: "100m × 4本（完全休息）",
+    });
+    const demanding = makeSession("2026-07-09", "neural", {
+      status: "completed",
+      prescription: "300m × 5本 r5分",
+    });
+    const balance = buildFourWeekBalance({
+      sessions: [short, demanding],
+      results: [makeResult(short), makeResult(demanding)],
+      today: "2026-07-12",
+    });
+    expect(balance.weeks.at(-1)!.highLoadDays).toBe(1);
+    expect(balance.weeks.at(-1)!.categories.neuromuscular.completed).toBe(2);
+  });
 });

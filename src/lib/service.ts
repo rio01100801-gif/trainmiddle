@@ -27,7 +27,8 @@ import {
   revertCfeForSession,
 } from "./core/cfe";
 import { buildAerobicProfile, GRP_RATIOS, specificPace } from "./core/pace";
-import { runRuleEngine, weeklySummary, RuleContext, isQuality } from "./core/rules";
+import { runRuleEngine, weeklySummary, RuleContext } from "./core/rules";
+import { isHighLoadSession } from "./core/trainingClassification";
 import { generatePlan, phaseForDate } from "./core/periodization";
 import {
   reviewCoverage,
@@ -227,6 +228,70 @@ export function buildRuleContext(repo: Store, evaluationDate: string): RuleConte
 // セットアップ / プラン生成
 // ---------------------------------------------------------------------------
 
+/** 目標に紐づくレースだけを、目標→通過点の順で返す。 */
+export function racesForGoal(repo: Store): Race[] {
+  const goal = repo.getGoal();
+  if (!goal) return [];
+  const byId = new Map(repo.listRaces().map((race) => [race.id, race]));
+  return [goal.targetRaceId, ...(goal.subRaceIds ?? [])]
+    .map((id) => byId.get(id))
+    .filter((race): race is Race => race !== undefined);
+}
+
+/**
+ * 目標とレースを同じ保存単位として更新し、保存後の実体を返す。
+ *
+ * 画面だけが新しい値でDBが古い、または並び替えで通過点レースのIDが変わる状態を避ける。
+ * 目標から外したレースも過去の競技記録になり得るため、保存層からは削除しない。
+ */
+export function saveGoalAndRaces(
+  repo: Store,
+  goal: Goal,
+  races: Race[]
+): { goal: Goal; races: Race[] } {
+  const unique = new Map<string, Race>();
+  for (const race of races) {
+    const borderPlace =
+      race.borderPlace !== undefined && Number.isFinite(race.borderPlace)
+        ? Math.max(1, Math.trunc(race.borderPlace))
+        : undefined;
+    const borderTimeSec =
+      race.borderTimeSec !== undefined && Number.isFinite(race.borderTimeSec)
+        ? race.borderTimeSec
+        : undefined;
+    unique.set(
+      race.id,
+      assignExpectedPaces(
+        {
+          ...race,
+          borderPlace,
+          borderTimeSec,
+        },
+        goal.targetTimeSec
+      )
+    );
+  }
+
+  if (!unique.has(goal.targetRaceId)) {
+    throw new Error("本命レースが保存対象に含まれていません");
+  }
+  const normalizedGoal: Goal = {
+    ...goal,
+    subRaceIds: (goal.subRaceIds ?? []).filter(
+      (id, index, ids) =>
+        id !== goal.targetRaceId && unique.has(id) && ids.indexOf(id) === index
+    ),
+  };
+
+  for (const race of unique.values()) repo.saveRace(race);
+  repo.saveGoal(normalizedGoal);
+
+  return {
+    goal: repo.getGoal()!,
+    races: racesForGoal(repo),
+  };
+}
+
 export function setupCfeIfNeeded(repo: Store, today: string): void {
   if (repo.getCfe()) return;
   const athlete = repo.getAthlete();
@@ -270,7 +335,29 @@ export function regeneratePlan(repo: Store, startDate: string): {
     cfe.estimated800mSec,
     heatFlaggedDates(repo)
   );
-  repo.deleteAllPlannedSessions();
+
+  /*
+   * 再生成で置き換えるのは自動生成された未実施枠だけ。
+   * - 新形式は origin で識別する。
+   * - 旧形式は s-user-* / 固定 / backfilled を手動データとして保護し、
+   *   planned の自動生成候補だけを置き換える。
+   * - 本人が編集した予定、完了・中止済みは残す。
+   */
+  for (const session of repo.listSessions()) {
+    const legacyGeneratedPlanned =
+      session.origin === undefined &&
+      session.status === "planned" &&
+      !session.id.startsWith("s-user-") &&
+      !session.backfilled &&
+      !session.isFixed;
+    const generatedUnfinished =
+      (session.origin === "generated" || session.origin === "recovery") &&
+      !session.userEdited &&
+      (session.status === "planned" || session.status === "modified");
+    if (legacyGeneratedPlanned || generatedUnfinished) {
+      repo.deleteSession(session.id);
+    }
+  }
   repo.deleteAllPlannedStrengths();
 
   const weekTemplate = repo.getWeekTemplate();
@@ -331,17 +418,32 @@ export function regeneratePlan(repo: Store, startDate: string): {
   // 固定セッション(is_fixed)は deleteAllPlannedSessions の対象だが、
   // ユーザー登録の固定枠は status を "modified" 扱いにしない設計のため、
   // ここでは生成分のみ保存する（固定枠はUIから個別登録）。
-  repo.saveSessions(plan.sessions);
+  // 手動追加・本人編集・旧固定枠が同じ日/時間帯にある場合は、その枠を優先する。
+  // 残した直後に自動生成分を足して二重表示にしない。
+  const occupiedSlots = new Set(
+    repo.listSessions().map((session) => `${session.date}|${session.timeOfDay}`)
+  );
+  const generatedSessions = plan.sessions.filter(
+    (session) => !occupiedSlots.has(`${session.date}|${session.timeOfDay}`)
+  );
+  repo.saveSessions(generatedSessions);
   repo.saveStrengths(plan.strengthSessions);
 
   // ラウンド間回復プロトコルを生成
   for (const r of races) {
-    if (r.rounds.length >= 2) repo.saveSessions(generateRecoverySessions(r));
+    if (r.rounds.length >= 2) {
+      const recovery = generateRecoverySessions(r).filter(
+        (session) => !repo.listSessions().some(
+          (saved) => saved.date === session.date && saved.timeOfDay === session.timeOfDay
+        )
+      );
+      repo.saveSessions(recovery);
+    }
   }
 
   const violations = runRuleEngine(buildRuleContext(repo, startDate));
   return {
-    sessionCount: plan.sessions.length,
+    sessionCount: generatedSessions.length,
     strengthCount: plan.strengthSessions.length,
     violations,
     templateViolations: weekTemplate ? validateWeekTemplate(weekTemplate) : [],
@@ -544,7 +646,7 @@ export function processSkip(
   // 直前の質練習がスキップされていたか（SKIP-04）
   const prevQuality = repo
     .listSessions()
-    .filter((s) => isQuality(s.category) && s.date < session.date)
+    .filter((s) => isHighLoadSession(s) && s.date < session.date)
     .sort((a, b) => a.date.localeCompare(b.date))
     .at(-1);
   const races = repo.listRaces().filter((r) => r.priority !== "C");
@@ -844,13 +946,13 @@ export function todaySession(
   });
 
   const lastQuality = all
-    .filter((s) => isQuality(s.category) && s.date < today && s.status === "completed")
+    .filter((s) => isHighLoadSession(s) && s.date < today && s.status === "completed")
     .sort((a, b) => a.date.localeCompare(b.date))
     .at(-1);
 
   const resultsBySession = new Map(repo.listResults().map((r) => [r.sessionId, r]));
   const recentQualityResults = all
-    .filter((s) => isQuality(s.category) && s.date < today && resultsBySession.has(s.id))
+    .filter((s) => isHighLoadSession(s) && s.date < today && resultsBySession.has(s.id))
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 3)
     .map((s) => resultsBySession.get(s.id)!);
@@ -880,7 +982,7 @@ export function todaySession(
 
 /** 「今日のメニュー」に出すべき主役セッションの優先度（質練習 > neural > 有酸素） */
 function sessionPriority(s: Session): number {
-  if (isQuality(s.category)) return 3;
+  if (isHighLoadSession(s)) return 3;
   if (s.category === "neural") return 2;
   return 1;
 }
@@ -908,8 +1010,9 @@ export function dashboard(repo: Store, today: string) {
     strengthSessions: ctx.strengthSessions,
   });
   const acwrNow = acwr(loads, today);
+  const calendarRaces = racesForGoal(repo);
   const targetRace = goal
-    ? repo.listRaces().find((r) => r.id === goal.targetRaceId)
+    ? calendarRaces.find((r) => r.id === goal.targetRaceId)
     : undefined;
   const feasibility =
     goal && cfe && targetRace
@@ -954,7 +1057,7 @@ export function dashboard(repo: Store, today: string) {
 
   // 前回ポイント練習からの経過（RECOVERY 副指標）
   const lastQuality = allSessions
-    .filter((s) => isQuality(s.category) && s.date < today && s.status === "completed")
+    .filter((s) => isHighLoadSession(s) && s.date < today && s.status === "completed")
     .sort((a, b) => a.date.localeCompare(b.date))
     .at(-1);
   const daysSinceQuality = lastQuality ? diffDays(lastQuality.date, today) : undefined;
@@ -1015,6 +1118,7 @@ export function dashboard(repo: Store, today: string) {
     acwr: acwrNow,
     feasibility,
     targetRace,
+    races: calendarRaces,
   };
 }
 
@@ -1574,7 +1678,7 @@ export function adaptiveProposals(
         s.date >= today &&
         s.date <= until &&
         !s.isFixed &&
-        isQuality(s.category) &&
+        isHighLoadSession(s) &&
         s.targetPaces.length > 0
     )
     .sort((a, b) => a.date.localeCompare(b.date))
@@ -1649,7 +1753,7 @@ export function rejectAdaptiveProposal(
 /** 処方に中止基準を添えた文字列（表示用。保存されている処方は変えない） */
 export function prescriptionText(session: Session): string {
   const tp = session.targetPaces[0];
-  if (!tp || !isQuality(session.category)) return session.prescription;
+  if (!tp || !isHighLoadSession(session)) return session.prescription;
   const target = (tp.targetSecFast + tp.targetSecSlow) / 2;
   return prescriptionWithCriteria(session.prescription, target, abortCriteria(session.category, target));
 }
@@ -1853,7 +1957,7 @@ function findAlternatives(
   const occupied = new Set(
     repo
       .listSessions()
-      .filter((s) => s.id !== session.id && isQuality(s.category))
+      .filter((s) => s.id !== session.id && isHighLoadSession(s))
       .map((s) => s.date)
   );
   const offsets = [1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6, 7, -7];
@@ -1904,7 +2008,13 @@ export function editSession(
 
   const base = runRuleEngine(buildRuleContext(repo, today));
   const baseKeys = new Set(base.map(violationKey));
-  const next: Session = { ...session, ...updates, id: session.id, status: "modified" };
+  const next: Session = {
+    ...session,
+    ...updates,
+    id: session.id,
+    status: "modified",
+    userEdited: true,
+  };
   const after = evaluateWith(repo, sessionId, next, today);
   const newViolations = after.filter((v) => !baseKeys.has(violationKey(v)));
   const hasError = newViolations.some((v) => v.level === "ERROR");
@@ -1995,6 +2105,8 @@ export function addSession(
     riskLevel: input.riskLevel ?? "mid",
     phase: input.phase ?? "Specific",
     status: "planned",
+    origin: "manual",
+    userEdited: true,
     isFixed: input.isFixed ?? false,
     timeOfDay: input.timeOfDay ?? "pm",
     distanceKm: input.distanceKm,
@@ -2323,7 +2435,7 @@ export function applySessionVariant(
     raceDate: race?.dateStart,
   });
   for (const change of volumeChanges) {
-    repo.saveSession(change.next);
+    repo.saveSession({ ...change.next, userEdited: true });
     repo.logChange(
       {
         sessionId: change.sessionId,

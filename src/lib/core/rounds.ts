@@ -123,8 +123,6 @@ export function recoveryProtocol(gapDays: number): string[] {
   return days;
 }
 
-let recSeq = 0;
-
 /** ラウンド間の日に回復プロトコルのセッションを生成する（RULE-20の許可対象） */
 export function generateRecoverySessions(race: Race): Session[] {
   const dates = [...new Set(race.rounds.map((r) => r.datetime.slice(0, 10)))].sort();
@@ -135,9 +133,9 @@ export function generateRecoverySessions(race: Race): Session[] {
     for (let d = 1; d < gap; d++) {
       const date = addDays(dates[i - 1], d);
       const line = protocol[Math.min(d - 1, protocol.length - 1)];
-      recSeq++;
       out.push({
-        id: `rec-${race.id}-${recSeq}`,
+        // レースと日付から決まるIDにして、再生成しても同じ回復枠をupsertする。
+        id: `rec-${race.id}-${date}`,
         date,
         category: line.includes("150m") || line.includes("流し") ? "neural" : "aerobic",
         name: "ラウンド間回復",
@@ -149,6 +147,7 @@ export function generateRecoverySessions(race: Race): Session[] {
         phase: "Taper",
         rationale: rationaleFor("aerobic"),
         status: "planned",
+        origin: "recovery",
         isFixed: false,
         timeOfDay: "am",
         isRecoveryProtocol: true,

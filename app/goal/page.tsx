@@ -2,6 +2,13 @@
 import { useEffect, useState } from "react";
 import { Card, ViolationList } from "../components/ui";
 import { localToday } from "@/lib/core/dates";
+import type {
+  AdvancementRule,
+  Goal,
+  Race,
+  RacePriority,
+  RoundType,
+} from "@/lib/core/types";
 
 function parseTime(v: string): number {
   if (v.includes(":")) {
@@ -11,52 +18,86 @@ function parseTime(v: string): number {
   return Number(v);
 }
 
-type RoundForm = { type: string; datetime: string };
+function formatTimeInput(seconds: number | undefined): string {
+  if (seconds === undefined) return "";
+  const minutes = Math.floor(seconds / 60);
+  const rest = (seconds - minutes * 60).toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return `${minutes}:${rest.padStart(2, "0")}`;
+}
+
+function legacyBorderPlace(race: Race): number | undefined {
+  if (race.borderPlace !== undefined) return race.borderPlace;
+  const match = /上位\s*(\d+)\s*着/.exec(race.advancementDetail ?? "");
+  return match ? Number(match[1]) : undefined;
+}
+
+type RoundForm = { type: RoundType; datetime: string };
+type SubRaceForm = {
+  id: string;
+  name: string;
+  dateStart: string;
+  priority: Exclude<RacePriority, "A">;
+};
+type GoalResponse = { goal: Goal | null; races: Race[]; error?: string };
 
 export default function GoalPage() {
   const [target, setTarget] = useState("1:48.9");
   const [raceName, setRaceName] = useState("");
+  const [targetRaceId, setTargetRaceId] = useState("race-target");
   const [dateStart, setDateStart] = useState("");
-  const [advance, setAdvance] = useState("place");
+  const [advance, setAdvance] = useState<AdvancementRule>("place");
+  const [placeBorder, setPlaceBorder] = useState("");
   const [border, setBorder] = useState("");
   const [rounds, setRounds] = useState<RoundForm[]>([
     { type: "heat", datetime: "" },
     { type: "final", datetime: "" },
   ]);
-  const [subRaces, setSubRaces] = useState<
-    { name: string; dateStart: string; priority: string }[]
-  >([]);
+  const [subRaces, setSubRaces] = useState<SubRaceForm[]>([]);
   const [planStart, setPlanStart] = useState(localToday());
   const [msg, setMsg] = useState("");
   const [violations, setViolations] = useState<any[]>([]);
 
+  const hydrate = ({ goal, races }: GoalResponse) => {
+    if (!goal) return;
+    const m = Math.floor(goal.targetTimeSec / 60);
+    const s = (goal.targetTimeSec - m * 60).toFixed(2);
+    setTarget(`${m}:${s}`);
+    const byId = new Map(races.map((race) => [race.id, race]));
+    const main = byId.get(goal.targetRaceId);
+    if (main) {
+      setTargetRaceId(main.id);
+      setRaceName(main.name);
+      setDateStart(main.dateStart);
+      setAdvance(main.advancementRule ?? "place");
+      setPlaceBorder(
+        legacyBorderPlace(main) === undefined ? "" : String(legacyBorderPlace(main))
+      );
+      setBorder(formatTimeInput(main.borderTimeSec));
+      setRounds(
+        main.rounds.map((round) => ({
+          type: round.type,
+          datetime: round.datetime.slice(0, 16),
+        }))
+      );
+    }
+    setSubRaces(
+      (goal.subRaceIds ?? [])
+        .map((id) => byId.get(id))
+        .filter((race): race is Race => race !== undefined)
+        .map((race) => ({
+          id: race.id,
+          name: race.name,
+          dateStart: race.dateStart,
+          priority: race.priority === "C" ? "C" : "B",
+        }))
+    );
+  };
+
   useEffect(() => {
-    fetch("/api/goal")
+    fetch("/api/goal", { cache: "no-store" })
       .then((r) => r.json())
-      .then(({ goal, races }) => {
-        if (goal) {
-          const m = Math.floor(goal.targetTimeSec / 60);
-          const s = (goal.targetTimeSec - m * 60).toFixed(2);
-          setTarget(`${m}:${s}`);
-          const main = races.find((r: any) => r.id === goal.targetRaceId);
-          if (main) {
-            setRaceName(main.name);
-            setDateStart(main.dateStart);
-            setAdvance(main.advancementRule ?? "place");
-            setRounds(
-              main.rounds.map((r: any) => ({
-                type: r.type,
-                datetime: r.datetime.slice(0, 16),
-              }))
-            );
-          }
-          setSubRaces(
-            races
-              .filter((r: any) => r.id !== goal.targetRaceId)
-              .map((r: any) => ({ name: r.name, dateStart: r.dateStart, priority: r.priority }))
-          );
-        }
-      });
+      .then((data: GoalResponse) => hydrate(data))
+      .catch((error) => setMsg(`目標を読み込めませんでした: ${String(error)}`));
   }, []);
 
   const save = async () => {
@@ -64,10 +105,28 @@ export default function GoalPage() {
       setMsg("本命レースの開催初日は必須です");
       return;
     }
-    const raceId = "race-target";
-    const races = [
+    const borderTimeSec = border ? parseTime(border) : undefined;
+    const borderPlace = placeBorder ? Number(placeBorder) : undefined;
+    if (
+      (advance === "time" || advance === "place_and_time") &&
+      border !== "" &&
+      (!Number.isFinite(borderTimeSec) || (borderTimeSec ?? 0) <= 0)
+    ) {
+      setMsg("タイムによる通過ボーダーを正しく入力してください");
+      return;
+    }
+    if (
+      (advance === "place" || advance === "place_and_time") &&
+      placeBorder !== "" &&
+      (!Number.isInteger(borderPlace) || (borderPlace ?? 0) <= 0)
+    ) {
+      setMsg("着順による通過ボーダーを正しく入力してください");
+      return;
+    }
+
+    const races: Race[] = [
       {
-        id: raceId,
+        id: targetRaceId,
         name: raceName || "本命レース",
         dateStart,
         priority: "A",
@@ -76,30 +135,43 @@ export default function GoalPage() {
           .map((r) => ({ type: r.type, datetime: r.datetime })),
         peakTargetRound: "final",
         advancementRule: advance,
-        borderTimeSec: border ? parseTime(border) : undefined,
+        advancementDetail: [
+          advance !== "time" && borderPlace ? `各組上位${borderPlace}着` : "",
+          advance !== "place" && borderTimeSec ? `タイム ${formatTimeInput(borderTimeSec)}` : "",
+        ]
+          .filter(Boolean)
+          .join("＋"),
+        borderPlace: advance !== "time" ? borderPlace : undefined,
+        borderTimeSec: advance !== "place" ? borderTimeSec : undefined,
       },
       ...subRaces
         .filter((s) => s.dateStart)
-        .map((s, i) => ({
-          id: `race-sub-${i}`,
-          name: s.name || `通過点レース${i + 1}`,
+        .map((s, index): Race => ({
+          id: s.id,
+          name: s.name || `通過点レース${index + 1}`,
           dateStart: s.dateStart,
           priority: s.priority,
           rounds: [{ type: "final", datetime: `${s.dateStart}T14:00:00` }],
           peakTargetRound: "final",
         })),
     ];
-    const goal = {
+    const goal: Goal = {
       targetEvent: "800m",
       targetTimeSec: parseTime(target),
-      targetRaceId: raceId,
+      targetRaceId,
       subRaceIds: races.slice(1).map((r) => r.id),
     };
-    await fetch("/api/goal", {
+    const response = await fetch("/api/goal", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ goal, races }),
     });
+    const saved = (await response.json()) as GoalResponse & { ok?: boolean };
+    if (!response.ok || saved.error) {
+      setMsg(saved.error ?? "保存できませんでした");
+      return;
+    }
+    hydrate(saved);
     setMsg("保存しました。");
   };
 
@@ -148,12 +220,30 @@ export default function GoalPage() {
           </label>
           <label className="block text-sm mb-2">
             <span className="block text-xs mb-0.5">通過条件</span>
-            <select className="w-full" value={advance} onChange={(e) => setAdvance(e.target.value)}>
+            <select
+              className="w-full"
+              value={advance}
+              onChange={(e) => setAdvance(e.target.value as AdvancementRule)}
+            >
               <option value="place">着順通過（place）</option>
               <option value="time">タイム通過（time）</option>
               <option value="place_and_time">着順＋タイム（place_and_time）</option>
             </select>
           </label>
+          {advance !== "time" ? (
+            <label className="block text-sm mb-2">
+              <span className="block text-xs mb-0.5">着順による通過ボーダー（各組）</span>
+              <input
+                type="number"
+                min={1}
+                inputMode="numeric"
+                className="w-full"
+                value={placeBorder}
+                onChange={(e) => setPlaceBorder(e.target.value)}
+                placeholder="2"
+              />
+            </label>
+          ) : null}
           {advance !== "place" ? (
             <label className="block text-sm mb-2">
               <span className="block text-xs mb-0.5">過去大会のボーダータイム</span>
@@ -170,7 +260,7 @@ export default function GoalPage() {
               value={r.type}
               onChange={(e) => {
                 const next = [...rounds];
-                next[i] = { ...r, type: e.target.value };
+                next[i] = { ...r, type: e.target.value as RoundType };
                 setRounds(next);
               }}
             >
@@ -232,7 +322,10 @@ export default function GoalPage() {
               value={s.priority}
               onChange={(e) => {
                 const next = [...subRaces];
-                next[i] = { ...s, priority: e.target.value };
+                next[i] = {
+                  ...s,
+                  priority: e.target.value === "C" ? "C" : "B",
+                };
                 setSubRaces(next);
               }}
             >
@@ -246,7 +339,17 @@ export default function GoalPage() {
         ))}
         <button
           className="text-xs underline" style={{ color: "var(--text-3)" }}
-          onClick={() => setSubRaces([...subRaces, { name: "", dateStart: "", priority: "B" }])}
+          onClick={() =>
+            setSubRaces([
+              ...subRaces,
+              {
+                id: `race-sub-${Date.now().toString(36)}-${subRaces.length}`,
+                name: "",
+                dateStart: "",
+                priority: "B",
+              },
+            ])
+          }
         >
           + 通過点レース追加
         </button>

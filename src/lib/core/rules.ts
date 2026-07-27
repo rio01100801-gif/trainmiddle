@@ -5,12 +5,12 @@
  * 警告 + 具体的な修正案を提示する。
  *
  * カテゴリの取り扱い:
- * - 質練習     = high_lactate / modeling / race_economy / cv / threshold
+ * - 高負荷     = high_lactate / modeling / race_economy / cv / threshold
  * - 特異的     = high_lactate / modeling / race_economy
  * - 有酸素系質 = cv / threshold
  * - 高乳酸相当 = high_lactate / modeling（RULE-01/07/22 で同等に扱う。
  *   モデリング核はレース再現＝解糖系フル動員のため）
- * - neural は解糖系ではないため質練習にカウントしない（仕様書 4-3）
+ * - neural は短い完全回復・低容量なら高負荷にカウントしない
  */
 import type {
   Athlete,
@@ -27,31 +27,33 @@ import type {
 import { addDays, diffDays, isMidsummer, isSummer, weekStart } from "./dates";
 import { isGrayZonePace } from "./pace";
 import {
+  HIGH_LOAD_CATEGORIES,
+  hasDeepGlycolyticCostCategory,
   isAerobicHighSession,
+  isDemandingNeuromuscularSession,
   isGlycolyticSession,
+  isHighLoadCategory,
   isHighLoadSession,
   isMiddleDistanceSpecificSession,
+  isSpecificCategory,
+  neuromuscularDose,
+  trainingLoadClass,
 } from "./trainingClassification";
 
-export const QUALITY_CATEGORIES: SessionCategory[] = [
-  "high_lactate",
-  "modeling",
-  "race_economy",
-  "cv",
-  "threshold",
-];
-export const SPECIFIC_CATEGORIES: SessionCategory[] = [
-  "high_lactate",
-  "modeling",
-  "race_economy",
-];
-export const AEROBIC_QUALITY_CATEGORIES: SessionCategory[] = ["cv", "threshold"];
-export const HL_EQUIV_CATEGORIES: SessionCategory[] = ["high_lactate", "modeling"];
+/** @deprecated 互換用。新規コードは HIGH_LOAD_CATEGORIES を使う。 */
+export const QUALITY_CATEGORIES: SessionCategory[] = [...HIGH_LOAD_CATEGORIES];
+export const SPECIFIC_CATEGORIES: SessionCategory[] = HIGH_LOAD_CATEGORIES.filter(isSpecificCategory);
+export const AEROBIC_HIGH_CATEGORIES: SessionCategory[] = HIGH_LOAD_CATEGORIES.filter(
+  (category) => trainingLoadClass(category) === "aerobic_high"
+);
+export const HL_EQUIV_CATEGORIES: SessionCategory[] = HIGH_LOAD_CATEGORIES.filter(
+  hasDeepGlycolyticCostCategory
+);
 
 /** @deprecated 互換用。新しい判定では Session を受け取る isHighLoadSession を使う。 */
-export const isQuality = (c: SessionCategory) => QUALITY_CATEGORIES.includes(c);
-export const isSpecific = (c: SessionCategory) => SPECIFIC_CATEGORIES.includes(c);
-export const isHlEquiv = (c: SessionCategory) => HL_EQUIV_CATEGORIES.includes(c);
+export const isQuality = (c: SessionCategory) => isHighLoadCategory(c);
+export const isSpecific = (c: SessionCategory) => isSpecificCategory(c);
+export const isHlEquiv = (c: SessionCategory) => hasDeepGlycolyticCostCategory(c);
 
 export interface RuleContext {
   sessions: Session[];
@@ -320,9 +322,12 @@ function rule04(ctx: RuleContext): RuleViolation[] {
     const glycolytic = list.filter(isGlycolyticSession);
     const specific = list.filter(isMiddleDistanceSpecificSession);
     const aerobicHigh = list.filter(isAerobicHighSession);
+    const demandingNeural = list.filter(isDemandingNeuromuscularSession);
     const demanding = [...glycolytic, ...specific];
-    const tooManySpecific = demanding.length > 2;
-    const tooManyOverall = list.length > 3;
+    const demandingDays = new Set(demanding.map((session) => session.date)).size;
+    const highLoadDays = new Set(list.map((session) => session.date)).size;
+    const tooManySpecific = demandingDays > 2;
+    const tooManyOverall = highLoadDays > 3;
     if (tooManySpecific || tooManyOverall) {
       out.push(
         finalize(
@@ -330,26 +335,38 @@ function rule04(ctx: RuleContext): RuleViolation[] {
             rule: "RULE-04",
             level: "ERROR",
             message:
-              `週(${w}〜)に高負荷が${list.length}回あります。` +
+              `週(${w}〜)に高負荷日が${highLoadDays}日あります。` +
               `内訳は高乳酸・解糖系${glycolytic.length}回、中距離特異的${specific.length}回、` +
-              `有酸素高強度${aerobicHigh.length}回です。特異的な疲労が同じ週に集中しています。`,
+              `有酸素高強度${aerobicHigh.length}回` +
+              (demandingNeural.length > 0
+                ? `、高容量の神経・スプリント${demandingNeural.length}回`
+                : "") +
+              "です。" +
+              (tooManySpecific
+                ? "高乳酸・中距離特異的な疲労が同じ週に集中しています。"
+                : "種類を問わず高負荷日が同じ週に集中しています。"),
             dates: list.map((s) => s.date),
             sessionIds: list.map((s) => s.id),
-            suggestion:
-              "高乳酸・中距離特異的の1回を有酸素系または回復メニューへ変更する案があります。",
+            suggestion: tooManySpecific
+              ? "高乳酸・中距離特異的の1回を有酸素系または回復メニューへ変更する案があります。"
+              : "有酸素高強度または高容量の神経・スプリントの1回を低強度有酸素へ変更する案があります。",
           },
           list
         )
       );
-    } else if (list.length === 3) {
+    } else if (highLoadDays === 3) {
       out.push(
         finalize(
           {
             rule: "RULE-04",
             level: "WARN",
             message:
-              `週(${w}〜)は高負荷が3回です（高乳酸・解糖系${glycolytic.length}、` +
-              `中距離特異的${specific.length}、有酸素高強度${aerobicHigh.length}）。` +
+              `週(${w}〜)は高負荷が3日です（高乳酸・解糖系${glycolytic.length}、` +
+              `中距離特異的${specific.length}、有酸素高強度${aerobicHigh.length}` +
+              (demandingNeural.length > 0
+                ? `、高容量の神経・スプリント${demandingNeural.length}`
+                : "") +
+              "）。" +
               "一律に禁止はしませんが、実施結果と回復日の確保を確認してください。",
             dates: list.map((s) => s.date),
             sessionIds: list.map((s) => s.id),
@@ -359,19 +376,36 @@ function rule04(ctx: RuleContext): RuleViolation[] {
         )
       );
     }
+    for (const session of demandingNeural) {
+      const dose = neuromuscularDose(session);
+      out.push(
+        finalize(
+          {
+            rule: "RULE-04",
+            level: "WARN",
+            message: `「${session.name}」は神経・スプリント分類ですが、${dose.reason ?? "高容量の内容です"}。短い完全回復の刺激とは別に扱います。`,
+            dates: [session.date],
+            sessionIds: [session.id],
+            suggestion:
+              "神経刺激にするなら1本を短くして完全回復を取り、スピード持久が目的なら中距離特異的または高乳酸として分類してください。",
+          },
+          [session]
+        )
+      );
+    }
   }
   return out;
 }
 
 /**
- * RULE-05 [WARN] 有酸素系質練習(cv+threshold)が2回以上、かつ
+ * RULE-05 [WARN] 有酸素高強度(cv+threshold)が2回以上、かつ
  * 特異的(high_lactate+race_economy)が1回以下 → 有酸素偏重
  */
 function rule05(ctx: RuleContext): RuleViolation[] {
   const out: RuleViolation[] = [];
   const q = ctx.sessions.filter((s) => active(s));
   for (const [w, list] of groupByWeek(q)) {
-    const aq = list.filter((s) => AEROBIC_QUALITY_CATEGORIES.includes(s.category));
+    const aq = list.filter((s) => AEROBIC_HIGH_CATEGORIES.includes(s.category));
     const sp = list.filter((s) => isSpecific(s.category));
     if (aq.length >= 2 && sp.length <= 1) {
       out.push(
@@ -379,7 +413,7 @@ function rule05(ctx: RuleContext): RuleViolation[] {
           {
             rule: "RULE-05",
             level: "WARN",
-            message: `週(${w}〜)は有酸素系質練習${aq.length}回に対し特異的セッション${sp.length}回で「有酸素偏重」です。800m選手には不適な週構成です。`,
+            message: `週(${w}〜)は有酸素高強度${aq.length}回に対し特異的セッション${sp.length}回で「有酸素偏重」です。800m選手には不適な週構成です。`,
             dates: aq.map((s) => s.date),
             sessionIds: aq.map((s) => s.id),
             suggestion: "cv / threshold の1回を race_economy または high_lactate に置き換えてください。",
@@ -471,7 +505,7 @@ function rule07(ctx: RuleContext): RuleViolation[] {
   return out;
 }
 
-/** RULE-08 [ERROR] レース7日前以降、質練習は neural（200m以下・完全休息）のみ */
+/** RULE-08 [ERROR] レース7日前以降、高負荷練習は禁止。短い neural のみ可 */
 function rule08(ctx: RuleContext): RuleViolation[] {
   const out: RuleViolation[] = [];
   for (const race of aRaces(ctx)) {
@@ -487,7 +521,7 @@ function rule08(ctx: RuleContext): RuleViolation[] {
           {
             rule: "RULE-08",
             level: "ERROR",
-            message: `${race.name}(${rd})の7日前以降に質練習「${s.name}」(${s.date})が配置されています。この期間の質はneural（200m以下・完全休息）のみです。`,
+            message: `${race.name}(${rd})の7日前以降に高負荷練習「${s.name}」(${s.date})が配置されています。この期間の刺激は短いneural（200m以下・完全休息）のみです。`,
             dates: [s.date],
             sessionIds: [s.id],
             suggestion: "neural（流し・150m×2〜3 完全休息）に置き換えるか削除してください。",
@@ -497,7 +531,7 @@ function rule08(ctx: RuleContext): RuleViolation[] {
                 field: "category",
                 before: s.category,
                 after: "neural",
-                reason: "レース7日前以降の質練習はneuralのみ（RULE-08）",
+                reason: "レース7日前以降の高負荷練習は禁止（RULE-08）",
                 triggeredBy: "RULE-08",
                 direction: "down",
                 action: "modify",
@@ -625,7 +659,7 @@ function rule11(ctx: RuleContext): RuleViolation[] {
   return out;
 }
 
-/** RULE-12 [ERROR] 直近14日に赤信号 → 次の質練習を aerobic に自動置換し再評価 */
+/** RULE-12 [ERROR] 直近14日に赤信号 → 次の高負荷練習を aerobic に自動置換し再評価 */
 function rule12(ctx: RuleContext): RuleViolation[] {
   const out: RuleViolation[] = [];
   const reds = ctx.dailyChecks.filter(
@@ -653,17 +687,17 @@ function rule12(ctx: RuleContext): RuleViolation[] {
       {
         rule: "RULE-12",
         level: "ERROR",
-        message: `直近14日以内(${lastRed})に赤信号があります。次の質練習「${nextQuality.name}」(${nextQuality.date})を有酸素に置換し、状態を再評価してください。`,
+        message: `直近14日以内(${lastRed})に赤信号があります。次の高負荷練習「${nextQuality.name}」(${nextQuality.date})を有酸素に置換し、状態を再評価してください。`,
         dates: [lastRed, nextQuality.date],
         sessionIds: [nextQuality.id],
-        suggestion: "質練習を軽いジョグに置き換え、安静時HR・睡眠が平常に戻るまで質を再開しないでください。",
+        suggestion: "高負荷練習を軽いジョグに置き換え、安静時HR・睡眠が平常に戻るまで再開しないでください。",
         autofix: [
           {
             sessionId: nextQuality.id,
             field: "category",
             before: nextQuality.category,
             after: "aerobic",
-            reason: `赤信号(${lastRed})後の最初の質練習のため`,
+            reason: `赤信号(${lastRed})後の最初の高負荷練習のため`,
             triggeredBy: "RULE-12",
             direction: "down",
             action: "replace_with_aerobic",
@@ -791,7 +825,7 @@ function rule17(ctx: RuleContext): RuleViolation[] {
   return out;
 }
 
-/** RULE-18 [ERROR] heavy補強を質練習の前日に配置してはならない */
+/** RULE-18 [ERROR] heavy補強を高負荷練習の前日に配置してはならない */
 function rule18(ctx: RuleContext): RuleViolation[] {
   const out: RuleViolation[] = [];
   const heavies = ctx.strengthSessions.filter(
@@ -805,10 +839,10 @@ function rule18(ctx: RuleContext): RuleViolation[] {
       out.push({
         rule: "RULE-18",
         level: "ERROR",
-        message: `${st.date} のheavy補強が翌日の質練習「${nextDayQuality[0].name}」の前日に配置されています。`,
+        message: `${st.date} のheavy補強が翌日の高負荷練習「${nextDayQuality[0].name}」の前日に配置されています。`,
         dates: [st.date, nextDayQuality[0].date],
         sessionIds: [st.id, ...nextDayQuality.map((s) => s.id)],
-        suggestion: `heavy補強は質練習当日(${nextDayQuality[0].date})のpmにブロック化してください（回復日を汚さない原則）。`,
+        suggestion: `heavy補強は高負荷練習当日(${nextDayQuality[0].date})のpmにブロック化してください（回復日を汚さない原則）。`,
       });
     }
   }

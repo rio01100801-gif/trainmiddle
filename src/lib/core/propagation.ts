@@ -12,7 +12,7 @@ import type {
   SkipReason,
 } from "./types";
 import { addDays, diffDays, weekStart } from "./dates";
-import { isQuality } from "./rules";
+import { isHighLoadSession } from "./trainingClassification";
 
 // ---------------------------------------------------------------------------
 // 4-5-3. 波及ルール
@@ -109,7 +109,7 @@ export function propagate(input: PropagationInput): SessionChange[] {
     });
   }
 
-  // PROP-04: next_day_legs="heavy" が2セッション連続 → 翌週の質練習を1本削除しoffに
+  // PROP-04: next_day_legs="heavy" が2セッション連続 → 翌週の高負荷練習を1本削除しoffに
   const legs = [...(input.recentNextDayLegs ?? []), result.nextDayLegs].filter(Boolean);
   const lastTwo = legs.slice(-2);
   if (lastTwo.length === 2 && lastTwo.every((l) => l === "heavy")) {
@@ -117,7 +117,7 @@ export function propagate(input: PropagationInput): SessionChange[] {
     const nextWeekEnd = addDays(nextWeekStart, 6);
     const q = upcoming.find(
       (s) =>
-        isQuality(s.category) &&
+        isHighLoadSession(s) &&
         s.date >= nextWeekStart &&
         s.date <= nextWeekEnd &&
         !s.isFixed
@@ -158,7 +158,7 @@ export function propagate(input: PropagationInput): SessionChange[] {
   return changes;
 }
 
-/** PROP-06: 赤信号発生 → 直後3日間の質練習を aerobic/off に置換 */
+/** PROP-06: 赤信号発生 → 直後3日間の高負荷練習を aerobic/off に置換 */
 export function propagateRedSignal(
   redDate: string,
   upcomingSessions: Session[]
@@ -169,7 +169,7 @@ export function propagateRedSignal(
       s.status === "planned" &&
       diffDays(redDate, s.date) >= 0 &&
       diffDays(redDate, s.date) <= 3 &&
-      isQuality(s.category)
+      isHighLoadSession(s)
   );
   for (const s of window) {
     changes.push({
@@ -237,11 +237,11 @@ export function handleSkip(
     };
   }
 
-  const isQualitySession = isQuality(session.category);
+  const highLoadSession = isHighLoadSession(session);
 
   // SKIP-05: レース14日以内のスキップ → 理由を問わず後ろ倒ししない。削除のみ
   if (
-    isQualitySession &&
+    highLoadSession &&
     opts.daysToNearestRace !== undefined &&
     opts.daysToNearestRace <= 14
   ) {
@@ -254,7 +254,7 @@ export function handleSkip(
     };
   }
 
-  if (isQualitySession) {
+  if (highLoadSession) {
     // SKIP-02: fatigue / red_signal / injury → 後ろ倒ししない。削除する
     if (reason === "fatigue" || reason === "red_signal" || reason === "injury") {
       return {
@@ -281,12 +281,12 @@ export function handleSkip(
 
   // neural その他
   return {
-    action: isQualitySession ? "delete" : "none",
-    message: isQualitySession
+    action: highLoadSession ? "delete" : "none",
+    message: highLoadSession
       ? "その他理由の質練習スキップは削除します。"
       : "neural のスキップは補填不要です。",
-    triggeredBy: isQualitySession ? "SKIP-02" : "SKIP-01",
-    phaseRollbackSuggested: isQualitySession && opts.previousQualitySkipped,
+    triggeredBy: highLoadSession ? "SKIP-02" : "SKIP-01",
+    phaseRollbackSuggested: highLoadSession && opts.previousQualitySkipped,
   };
 }
 

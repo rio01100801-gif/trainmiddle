@@ -11,6 +11,7 @@
  * 生成前にテンプレート自体の問題として警告する（後から気づくと手遅れになるため）。
  */
 import type { RuleViolation, SessionCategory } from "./types";
+import { isHighLoadCategory, isSpecificCategory } from "./trainingClassification";
 
 /** 0=日曜 … 6=土曜（JavaScript の Date#getDay と同じ並び） */
 export type Dow = 0 | 1 | 2 | 3 | 4 | 5 | 6;
@@ -28,7 +29,7 @@ export const DOW_LABELS: Record<Dow, string> = {
 /**
  * 曜日に割り当てる枠。
  * - "auto": 自動生成に任せる（既定）
- * - "point": ポイント練習（質練習）。具体的なカテゴリはフェーズに応じて自動で決まる
+ * - "point": 高負荷を含むポイント練習。具体的なカテゴリはフェーズに応じて自動で決まる
  * - 個別カテゴリ: そのカテゴリに固定する
  */
 export type WeekdaySlot = "auto" | "point" | SessionCategory;
@@ -95,16 +96,11 @@ export function normalizeWeekTemplate(t: WeekTemplate): WeekTemplate {
   };
 }
 
-/** その枠が質練習（ポイント練習）か */
+/** その枠が高負荷を含むポイント練習か */
 export function isPointSlot(slot: WeekdaySlot): boolean {
-  return (
-    slot === "point" ||
-    slot === "high_lactate" ||
-    slot === "race_economy" ||
-    slot === "modeling" ||
-    slot === "cv" ||
-    slot === "threshold"
-  );
+  if (slot === "point") return true;
+  if (slot === "auto") return false;
+  return isHighLoadCategory(slot);
 }
 
 // ---------------------------------------------------------------------------
@@ -123,18 +119,37 @@ export function validateWeekTemplate(t: WeekTemplate): RuleViolation[] {
     (d) => modeOf(t, d) === "fixed" && isPointSlot(slotOf(t, d))
   );
 
-  // --- 週内のポイント練習回数（RULE-04: 最大2回） ---
-  if (pointDows.length > 2) {
+  const demandingDows = pointDows.filter((d) => {
+    const slot = slotOf(t, d);
+    return slot !== "point" && slot !== "auto" && isSpecificCategory(slot);
+  });
+  const tooManyDemanding = demandingDows.length > 2;
+  const tooManyOverall = pointDows.length > 3;
+
+  // --- RULE-04 と同じく、回数だけでなく高負荷の種類を分けて評価する ---
+  if (tooManyDemanding || tooManyOverall) {
     out.push({
       rule: "RULE-04",
       level: "ERROR",
-      message: `高負荷練習を週${pointDows.length}回（${pointDows
+      message: `高負荷練習を週${pointDows.length}日（${pointDows
         .map((d) => DOW_LABELS[d])
-        .join("・")}）固定しています。高乳酸・中距離特異的・有酸素高強度が集中します。`,
+        .join("・")}）固定しています。うち高乳酸・中距離特異的は${demandingDows.length}日です。`,
       dates: [],
       sessionIds: [],
       suggestion:
         "1つを「優先」または指定なしに変え、回復状況と前後の負荷から移動できる余地を残してください。",
+    });
+  } else if (pointDows.length === 3) {
+    out.push({
+      rule: "RULE-04",
+      level: "WARN",
+      message: `高負荷練習を週3日（${pointDows
+        .map((d) => DOW_LABELS[d])
+        .join("・")}）固定しています。一律に禁止はしませんが、実施結果と回復日の確保が必要です。`,
+      dates: [],
+      sessionIds: [],
+      suggestion:
+        "疲労・RPEが高い場合に有酸素高強度の1日を動かせるよう、少なくとも1つを「優先」にする案があります。",
     });
   }
 

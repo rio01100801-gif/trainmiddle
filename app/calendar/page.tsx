@@ -12,6 +12,7 @@ import {
 import { SessionEditSheet } from "../components/session-edit-sheet";
 import { localToday } from "@/lib/core/dates";
 import type { CoverageReview } from "@/lib/core/coverage";
+import type { Race, Session } from "@/lib/core/types";
 
 /**
  * カレンダー（改修指示書 フェーズC）
@@ -65,50 +66,73 @@ const STATE_MARK: Record<DayState, { icon: string; label: string; color: string 
 
 const LONG_PRESS_MS = 450;
 
+interface EditConflict {
+  sessionId: string;
+  date: string;
+  error?: string;
+  newViolations?: { rule: string; message: string }[];
+  alternatives?: { date: string; note: string }[];
+}
+
 export default function CalendarPage() {
   const todayStr = localToday();
   const [mode, setMode] = useState<"week" | "month">("week");
   const [anchor, setAnchor] = useState(weekStart(todayStr));
   const [weeks, setWeeks] = useState(2);
-  const [sessions, setSessions] = useState<any[]>([]);
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [results, setResults] = useState<any[]>([]);
   const [injuries, setInjuries] = useState<any[]>([]);
-  const [races, setRaces] = useState<any[]>([]);
+  const [races, setRaces] = useState<Race[]>([]);
   const [violationsByDate, setViolationsByDate] = useState<Record<string, number>>({});
   const [violations, setViolations] = useState<any[]>([]);
   const [moving, setMoving] = useState<any | null>(null);
   const [editing, setEditing] = useState<any | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
-  const [conflict, setConflict] = useState<any | null>(null);
+  const [conflict, setConflict] = useState<EditConflict | null>(null);
   const [msg, setMsg] = useState("");
+  const loadSequence = useRef(0);
 
   const from = mode === "week" ? anchor : monthStart(anchor);
   const span = mode === "week" ? weeks * 7 : 42;
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
     const to = addDays(from, span - 1);
-    fetch(`/api/sessions?from=${from}&to=${to}`)
-      .then((r) => r.json())
-      .then((d) => setSessions(d.sessions ?? []));
-    fetch("/api/results")
-      .then((r) => r.json())
-      .then((d) => setResults(d.results ?? []))
-      .catch(() => {});
-    fetch("/api/injuries")
-      .then((r) => r.json())
-      .then((d) => setInjuries(d.injuries ?? []))
-      .catch(() => {});
-    fetch("/api/dashboard")
-      .then((r) => r.json())
-      .then((d) => {
-        setViolationsByDate(d.violationsByDate ?? {});
-        setViolations(d.violations ?? []);
-        setRaces(d.targetRace ? [d.targetRace] : []);
-      })
-      .catch(() => {});
+    try {
+      const [sessionResponse, resultResponse, injuryResponse, dashboardResponse] =
+        await Promise.all([
+          fetch(`/api/sessions?from=${from}&to=${to}`, { cache: "no-store" }),
+          fetch("/api/results", { cache: "no-store" }),
+          fetch("/api/injuries", { cache: "no-store" }),
+          fetch("/api/dashboard", { cache: "no-store" }),
+        ]);
+      const [sessionData, resultData, injuryData, dashboardData] = await Promise.all([
+        sessionResponse.json(),
+        resultResponse.json(),
+        injuryResponse.json(),
+        dashboardResponse.json(),
+      ]);
+      // 表示期間の切替や保存直後の再取得が競合しても、最後に開始した取得だけを反映する。
+      if (sequence !== loadSequence.current) return;
+      setSessions(sessionData.sessions ?? []);
+      setResults(resultData.results ?? []);
+      setInjuries(injuryData.injuries ?? []);
+      setViolationsByDate(dashboardData.violationsByDate ?? {});
+      setViolations(dashboardData.violations ?? []);
+      setRaces(
+        dashboardData.races ??
+          (dashboardData.targetRace ? [dashboardData.targetRace] : [])
+      );
+    } catch (error) {
+      if (sequence === loadSequence.current) {
+        setMsg(`カレンダーを再取得できませんでした: ${String(error)}`);
+      }
+    }
   }, [from, span]);
 
-  useEffect(load, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   /**
    * M-5: 移動は必ずルール検査を通す。
@@ -138,7 +162,7 @@ export default function CalendarPage() {
   const days: string[] = [];
   for (let i = 0; i < span; i++) days.push(addDays(from, i));
 
-  const sessionsByDate = new Map<string, any[]>();
+  const sessionsByDate = new Map<string, Session[]>();
   for (const s of sessions) {
     if (!sessionsByDate.has(s.date)) sessionsByDate.set(s.date, []);
     sessionsByDate.get(s.date)!.push(s);
@@ -250,7 +274,14 @@ export default function CalendarPage() {
             setEditing(null);
             setMsg(`${editing.name} の移動先の日付をタップしてください。`);
           }}
-          onDone={(m) => {
+          onDone={(m, savedSession) => {
+            if (savedSession) {
+              setSessions((current) =>
+                current.map((session) =>
+                  session.id === savedSession.id ? savedSession : session
+                )
+              );
+            }
             setEditing(null);
             setMsg(m);
             load();
@@ -322,6 +353,7 @@ export default function CalendarPage() {
             date={date}
             today={todayStr}
             sessions={sessionsByDate.get(date) ?? []}
+            races={races.filter((race) => race.dateStart === date)}
             state={stateOf(date)}
             warnCount={violationsByDate[date] ?? 0}
             moving={moving}
@@ -453,6 +485,7 @@ function DayRow({
   date,
   today,
   sessions,
+  races,
   state,
   warnCount,
   moving,
@@ -462,7 +495,8 @@ function DayRow({
 }: {
   date: string;
   today: string;
-  sessions: any[];
+  sessions: Session[];
+  races: Race[];
   state: DayState;
   warnCount: number;
   moving: any | null;
@@ -528,12 +562,19 @@ function DayRow({
             {mark.icon}
           </span>
           <span className="min-w-0 flex-1">
-            {sessions.length === 0 ? (
+            {sessions.length === 0 && races.length === 0 ? (
               <span className="text-[12px]" style={{ color: "var(--text-3)" }}>
                 予定なし
               </span>
             ) : (
-              sessions.map((s) => (
+              <>
+                {races.map((race) => (
+                  <span key={race.id} className="block text-[12.5px] truncate">
+                    <b style={{ color: "var(--cat-modeling)" }}>レース {race.priority}</b>{" "}
+                    <span style={{ color: "var(--text-2)" }}>{race.name}</span>
+                  </span>
+                ))}
+                {sessions.map((s: Session) => (
                 <span
                   key={s.id}
                   className="block text-[12.5px] truncate"
@@ -553,8 +594,17 @@ function DayRow({
                       固定
                     </span>
                   ) : null}
+                  {s.prescription ? (
+                    <span
+                      className="block text-[10.5px] truncate"
+                      style={{ color: "var(--text-3)" }}
+                    >
+                      {s.prescription}
+                    </span>
+                  ) : null}
                 </span>
-              ))
+                ))}
+              </>
             )}
           </span>
         </RowBody>

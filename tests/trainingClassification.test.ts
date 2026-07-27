@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  isDemandingNeuromuscularSession,
   isGlycolyticSession,
   isHighLoadSession,
   isLongRun,
+  neuromuscularDose,
   trainingLoadClass,
 } from "@/lib/core/trainingClassification";
 import { runRuleEngine } from "@/lib/core/rules";
@@ -35,6 +37,23 @@ describe("練習の主負荷分類", () => {
     });
     expect(trainingLoadClass(neural.category)).toBe("neuromuscular");
     expect(isHighLoadSession(neural)).toBe(false);
+  });
+
+  it("300m反復をneuralにしても高負荷から除外しない", () => {
+    const neural = makeSession("2026-07-07", "neural", {
+      prescription: "300m × 5本 r5分",
+    });
+    expect(neuromuscularDose(neural).fastVolumeM).toBe(1500);
+    expect(isDemandingNeuromuscularSession(neural)).toBe(true);
+    expect(isHighLoadSession(neural)).toBe(true);
+  });
+
+  it("100mの完全回復でも20本なら高容量として検出する", () => {
+    const neural = makeSession("2026-07-07", "neural", {
+      prescription: "100m × 20本（完全休息）",
+    });
+    expect(neuromuscularDose(neural).fastVolumeM).toBe(2000);
+    expect(isHighLoadSession(neural)).toBe(true);
   });
 });
 

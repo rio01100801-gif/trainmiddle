@@ -169,6 +169,22 @@ describe("F-2 設定タイムからカテゴリを決める", () => {
   });
 });
 
+describe("練習名から主負荷を分類する", () => {
+  it("レースペース練習を実際のレースと誤認しない", () => {
+    const r = inferCategory("800mレースペース 600m×3", {});
+    expect(r.kind).toBe("interval");
+    expect(r.category).toBe("race_economy");
+    expect(r.certain).toBe(true);
+  });
+
+  it("坂ダッシュ・VO2max・スピード持久を区別する", () => {
+    expect(inferCategory("坂ダッシュ 10本", {}).category).toBe("neural");
+    expect(inferCategory("100mスプリント 6本", {}).category).toBe("neural");
+    expect(inferCategory("VO2max 1000m×5", {}).category).toBe("cv");
+    expect(inferCategory("スピード持久 300m×5", {}).category).toBe("high_lactate");
+  });
+});
+
 describe("F-2 実際の日誌がそのまま通ること", () => {
   it("全13行が登録可能になる（未確定ゼロ）", () => {
     const notReady = rows.filter((r) => !r.ready);

@@ -72,8 +72,21 @@ describe("3-1 テンプレート自体の検証（生成前に警告する）", 
     expect(validateWeekTemplate(t).filter((v) => v.level === "ERROR")).toEqual([]);
   });
 
-  it("ポイント練習を週3回にするとERROR", () => {
+  it("内容未定のポイント練習を週3回固定するとWARN", () => {
     const t = T({ 2: "point", 4: "point", 6: "point" });
+    const v = validateWeekTemplate(t);
+    expect(v.some((x) => x.rule === "RULE-04" && x.level === "WARN")).toBe(true);
+    expect(v.some((x) => x.rule === "RULE-04" && x.level === "ERROR")).toBe(false);
+  });
+
+  it("高乳酸・中距離特異的を週3回固定するとERROR", () => {
+    const t = T({ 1: "high_lactate", 3: "race_economy", 6: "modeling" });
+    const v = validateWeekTemplate(t);
+    expect(v.some((x) => x.rule === "RULE-04" && x.level === "ERROR")).toBe(true);
+  });
+
+  it("高負荷を週4回固定すると種類にかかわらずERROR", () => {
+    const t = T({ 1: "cv", 3: "threshold", 5: "cv", 0: "threshold" });
     const v = validateWeekTemplate(t);
     expect(v.some((x) => x.rule === "RULE-04" && x.level === "ERROR")).toBe(true);
   });

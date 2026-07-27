@@ -58,13 +58,13 @@ import {
   importBackup,
   backupStatus,
   interpretPrescription,
+  saveGoalAndRaces,
 } from "../src/lib/service";
 import { parseContactCsv } from "../src/lib/core/contactTime";
 import type { PastEntry } from "../src/lib/core/backfill";
 import type { PhraseRule } from "../src/lib/core/bulkImport";
 import { runRuleEngine, weeklySummary } from "../src/lib/core/rules";
 import { buildAerobicProfile } from "../src/lib/core/pace";
-import { assignExpectedPaces } from "../src/lib/core/rounds";
 import {
   normalizeWeekTemplate,
   validateWeekTemplate,
@@ -98,13 +98,8 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
     GET: (repo) => ({ goal: repo.getGoal() ?? null, races: repo.listRaces() }),
     POST: (repo, body) => {
       const { goal, races } = body;
-      if (races) {
-        for (const r of races) {
-          repo.saveRace(goal ? assignExpectedPaces(r, goal.targetTimeSec) : r);
-        }
-      }
-      if (goal) repo.saveGoal(goal);
-      return { ok: true };
+      if (!goal || !races) return { error: "目標とレースが必要です" };
+      return { ok: true, ...saveGoalAndRaces(repo, goal, races) };
     },
   },
 
@@ -127,6 +122,8 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
       const session = {
         id: `s-user-${Date.now()}`,
         status: "planned",
+        origin: "manual",
+        userEdited: true,
         targetPaces: [],
         transfer800m: 3,
         transfer1500m: 3,
@@ -149,7 +146,7 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
             "固定セッション（チーム練習等）は移動・変更できません（RULE-15）。前後の自由枠を組み替えてください。",
         };
       }
-      repo.saveSession({ ...session, ...updates });
+      repo.saveSession({ ...session, ...updates, status: "modified", userEdited: true });
       return { ok: true, violations: runRuleEngine(buildRuleContext(repo, localToday())) };
     },
   },

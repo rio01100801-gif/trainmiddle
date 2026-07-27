@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Card, ConfirmButton } from "./ui";
 import { withQuery } from "./route-query";
 import { PrescriptionFields, prescriptionPayload, usePrescriptionFields } from "./prescription-fields";
+import type { Session } from "@/lib/core/types";
 
 /**
  * M-5 / P-1 メニューの変更シート。
@@ -30,7 +31,7 @@ export function SessionEditSheet({
   title?: string;
   onClose: () => void;
   onMove?: () => void;
-  onDone: (msg: string) => void;
+  onDone: (msg: string, session?: Session) => void;
 }) {
   const [prescription, setPrescription] = useState(session.prescription ?? "");
   const [busy, setBusy] = useState(false);
@@ -75,7 +76,7 @@ export function SessionEditSheet({
         setViolations(out.newViolations ?? []);
         return;
       }
-      onDone("メニューを変更しました。");
+      onDone("メニューを変更しました。", out.session as Session | undefined);
     } finally {
       setBusy(false);
     }

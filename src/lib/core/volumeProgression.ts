@@ -157,6 +157,9 @@ export function planVolumeProgression(input: {
         session.date >= from &&
         session.date <= to &&
         session.status === "planned" &&
+        session.origin !== "manual" &&
+        !session.id.startsWith("s-user-") &&
+        !session.userEdited &&
         !session.isFixed &&
         session.phase !== "Taper" &&
         (!input.raceDate || diffDays(session.date, input.raceDate) > 14) &&

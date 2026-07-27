@@ -34,7 +34,7 @@ export const COVERAGE_WEEKS = 4;
 export const COVERAGE_MIN_SHORTFALL = 2;
 
 /** 提案の対象にするカテゴリ。有酸素と休養は「足りない」の対象にしない */
-const QUALITY_CATEGORIES: SessionCategory[] = [
+const COVERAGE_TARGET_CATEGORIES: SessionCategory[] = [
   "high_lactate",
   "race_economy",
   "modeling",
@@ -191,7 +191,7 @@ export function reviewCoverage(input: CoverageInput): CoverageReview {
   const actual = actualCounts(sessions, today);
 
   const targets: CoverageTarget[] = [];
-  for (const category of QUALITY_CATEGORIES) {
+  for (const category of COVERAGE_TARGET_CATEGORIES) {
     const baseCount = base[category] ?? 0;
     const w = weights.get(category);
     // 制限因子の重みを掛ける。掛けても基準が0のものは0のまま（そのフェーズで使わない種目）

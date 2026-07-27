@@ -402,12 +402,33 @@ interface CategoryRule {
 
 export const CATEGORY_RULES: CategoryRule[] = [
   { words: ["オフ", "休養", "完全休養", "off", "OFF", "休み"], kind: "off", category: "off", certain: true },
+  // 「レースペース」を実際のレースと誤認しないよう、練習名の規則を先に評価する。
+  { words: ["モデリング", "分割800", "分割８００"], kind: "interval", category: "modeling", certain: true },
+  { words: ["高乳酸", "解糖系", "スピード持久", "ロングスプリント"], kind: "interval", category: "high_lactate", certain: true },
+  { words: ["800mペース", "８００ｍペース", "レースペース"], kind: "interval", category: "race_economy", certain: true },
+  { words: ["VO2max", "VO2", "vo2max", "vo2", "最大酸素摂取量", "CVインターバル", "CV走", "CV", "cv"], kind: "interval", category: "cv", certain: true },
+  {
+    words: [
+      "坂ダッシュ",
+      "ヒルスプリント",
+      "hill sprint",
+      "短距離スプリント",
+      "スプリント",
+      "加速走",
+      "流し",
+      "WS",
+      "ウィンドスプリント",
+      "ウインドスプリント",
+    ],
+    kind: "interval",
+    category: "neural",
+    certain: true,
+  },
   { words: ["レース", "試合", "記録会"], kind: "race", certain: true },
   { words: ["TT", "タイムトライアル"], kind: "timetrial", certain: true },
-  { words: ["ロングラン", "LSD"], kind: "continuous", category: "aerobic", certain: true },
+  { words: ["ロングラン", "ロング走", "LSD"], kind: "continuous", category: "aerobic", certain: true },
   { words: ["ペース走", "閾値", "Ｔ走", "T走", "テンポ"], kind: "continuous", category: "threshold", certain: true },
   { words: ["ジョグ", "jog", "ジョギング", "ジョッグ", "ラン"], kind: "continuous", category: "aerobic", certain: true },
-  { words: ["流し", "WS", "ウィンドスプリント", "ウインドスプリント"], kind: "interval", category: "neural", certain: true },
   /*
    * 補強は SessionCategory を増やさず、既存の StrengthSession へ流す。
    * SessionCategory はルールエンジン22本・GRP比率・転移度・負荷計算が

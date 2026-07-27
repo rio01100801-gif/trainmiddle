@@ -78,6 +78,8 @@ export interface Race {
   peakTargetRound: RoundType; // 通常 "final"
   advancementRule?: AdvancementRule;
   advancementDetail?: string;
+  /** 着順通過の場合の各組の通過順位（例: 2 = 各組2着まで） */
+  borderPlace?: number;
   /** advancement_rule = "time" の場合の過去大会ボーダータイム（ユーザー入力） */
   borderTimeSec?: number;
 }
@@ -119,7 +121,7 @@ export interface FitnessMarker {
  * - "modeling" はレース再現セッション（GRP 100〜99%）。4-2/4-5で独立に扱われるため
  *   カテゴリとして分離する。制約ルール上は high_lactate 相当として扱う箇所がある
  *   （RULE-01/07/22 参照）。
- * - "neural" は解糖系ではない。質練習の回数にカウントしない（仕様書 4-3 重要）。
+ * - "neural" は解糖系ではない。短い完全回復・低容量なら高負荷日に数えない。
  */
 export type SessionCategory =
   | "high_lactate"
@@ -132,6 +134,7 @@ export type SessionCategory =
   | "off";
 
 export type SessionStatus = "planned" | "completed" | "modified" | "skipped";
+export type SessionOrigin = "generated" | "manual" | "recovery";
 export type RiskLevel = "low" | "mid" | "high";
 export type TimeOfDay = "am" | "pm";
 export type Phase = "Base" | "Build" | "Specific" | "Modeling" | "Taper";
@@ -172,6 +175,13 @@ export interface Session {
   phase: Phase;
   rationale?: SessionRationale;
   status: SessionStatus;
+  /**
+   * 予定の作成元。旧データでは未設定なので、IDとstatusから保守的に判定する。
+   * 再生成時に手動追加・本人編集を消さず、自動生成分だけを識別するために使う。
+   */
+  origin?: SessionOrigin;
+  /** カレンダー等から本人が内容・日付を変更した自動生成予定 */
+  userEdited?: boolean;
   /** true = チーム練習等で変更不可。ルールエンジンは動かさない（RULE-15） */
   isFixed: boolean;
   fixedSource?: string;

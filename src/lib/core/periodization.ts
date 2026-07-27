@@ -19,6 +19,7 @@ import { baseTime } from "./cfe";
 import { AerobicProfile, specificPace } from "./pace";
 import { rationaleFor } from "./rationale";
 import { buildSessionSpec } from "./progression";
+import { isHighLoadCategory } from "./trainingClassification";
 import type { TrendVerdict } from "./adaptive";
 import {
   type CustomMenu,
@@ -348,10 +349,10 @@ const longRunTemplate = longRun;
 
 function hasAdjacentHighLoad(template: (DayTemplate | null)[], index: number): boolean {
   const current = template[index];
-  if (!current || !isPointCategory(current.category)) return false;
+  if (!current || !isHighLoadCategory(current.category)) return false;
   return [index - 1, index + 1].some((i) => {
     const other = i >= 0 && i < template.length ? template[i] : null;
-    return !!other && isPointCategory(other.category);
+    return !!other && isHighLoadCategory(other.category);
   });
 }
 
@@ -401,7 +402,7 @@ export function applyWeekPreferences(
       if (
         modeOf(preference, dow) !== "fixed" &&
         out[index] &&
-        isPointCategory(out[index]!.category)
+        isHighLoadCategory(out[index]!.category)
       ) {
         out[index] = jog(40);
       }
@@ -421,7 +422,7 @@ export function applyWeekPreferences(
       if (!candidate || index === target) return false;
       const candidateDow = DOW_BY_WEEK_INDEX[index];
       if (modeOf(preference, candidateDow) === "fixed") return false;
-      if (wantsPoint) return isPointCategory(candidate.category);
+      if (wantsPoint) return isHighLoadCategory(candidate.category);
       if (slot === "aerobic" && preference.longRunDow === dow) {
         return candidate.category === "aerobic" && candidate.name === "ロングラン";
       }
@@ -493,16 +494,14 @@ export interface GeneratedPlan {
   limiterSwaps: { date: string; from: SessionCategory; to: SessionCategory; note: string }[];
 }
 
-let planSeq = 0;
-function nid(prefix: string): string {
-  planSeq++;
-  return `${prefix}-${Date.now().toString(36)}-${planSeq}`;
+function generatedSessionId(date: string, timeOfDay: Session["timeOfDay"]): string {
+  return `s-plan-${date}-${timeOfDay}`;
 }
 
 /**
  * 目標レース日から逆算してプランを生成する。
  * - 通過点レース(B/C)の前3日のみ軽くする「無調整に近い」設計
- * - 補強は質練習日のpmにブロック化（4-8-1）
+ * - 補強は高負荷練習日のpmにブロック化（4-8-1）
  * - テーパーの最終高乳酸はレース8日前に配置（RULE-07: 7〜9日前）
  */
 export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
@@ -603,7 +602,7 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
           risk: "mid",
         };
       }
-      // レース7日前以降は質練習を置かない（RULE-08）: テンプレ側でneural/jogのみだが保険
+      // レース7日前以降は高負荷練習を置かない（RULE-08）: テンプレ側でneural/jogのみだが保険
       if (
         daysToTarget < 7 &&
         ["high_lactate", "race_economy", "modeling", "cv", "threshold"].includes(
@@ -761,8 +760,11 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
           : built.distanceKm;
         built.prescription += `（高乳酸翌日のため通常ジョグ+20〜30秒/kmに減速: 目安 ${fmtPacePerKm(slowed)}）`;
       }
+      const timeOfDay = tpl.timeOfDay ?? "pm";
       const session: Session = {
-        id: nid("s"),
+        // 同じ日・同じ時間帯の自動生成枠は同じIDにする。
+        // 再生成やスナップショット同期を繰り返しても別レコードとして増殖させないため。
+        id: generatedSessionId(date, timeOfDay),
         date,
         category: tpl.category,
         name: custom ? custom.name : tpl.name,
@@ -774,6 +776,7 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
         phase,
         rationale: rationaleFor(tpl.category),
         status: "planned",
+        origin: "generated",
         isFixed:
           modeOf(input.weekTemplate, dow) === "fixed" &&
           slotMatchesCategory(slotOf(input.weekTemplate, dow), tpl.category),
@@ -782,7 +785,7 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
           slotMatchesCategory(slotOf(input.weekTemplate, dow), tpl.category)
             ? `${DOW_LABEL_FOR_SOURCE[dow]}曜の固定設定`
             : undefined,
-        timeOfDay: tpl.timeOfDay ?? "pm",
+        timeOfDay,
         distanceKm: built.distanceKm,
         durationMin: built.durationMin,
         paceSecPerKm: built.paceSecPerKm,
@@ -794,7 +797,7 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
         lastHlDate = date;
       }
 
-      // 4-8: 補強を質練習日のpmにブロック化
+      // 4-8: 補強を高負荷練習日のpmにブロック化
       const st = strengthForPhase(phase, date, session);
       if (st) strengthSessions.push(st);
     }
@@ -807,11 +810,6 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
   }
 
   return { sessions, strengthSessions, phaseByWeek, usedCustomMenus, limiterSwaps };
-}
-
-/** 質練習カテゴリか（ポイント練習の枠を埋めるときの判定） */
-function isPointCategory(c: SessionCategory): boolean {
-  return ["high_lactate", "race_economy", "modeling", "cv", "threshold"].includes(c);
 }
 
 const DOW_LABEL_FOR_SOURCE: Record<Dow, string> = {
@@ -828,7 +826,7 @@ function slotMatchesCategory(
   slot: ReturnType<typeof slotOf>,
   category: SessionCategory
 ): boolean {
-  if (slot === "point") return isPointCategory(category);
+  if (slot === "point") return isHighLoadCategory(category);
   if (slot === "auto") return false;
   return slot === category;
 }
@@ -902,20 +900,14 @@ function categoryTemplate(
 }
 
 /**
- * 4-8-2. フェーズ別の補強内容。質練習日（ポイント練習日）のpmに配置する。
+ * 4-8-2. フェーズ別の補強内容。高負荷日（ポイント練習日）のpmに配置する。
  */
 function strengthForPhase(
   phase: Phase,
   date: string,
   session: Session
 ): StrengthSession | undefined {
-  const isQualityDay = [
-    "high_lactate",
-    "race_economy",
-    "modeling",
-    "cv",
-    "threshold",
-  ].includes(session.category);
+  const highLoadDay = isHighLoadCategory(session.category);
 
   const table: Record<
     Phase,
@@ -945,10 +937,10 @@ function strengthForPhase(
   };
 
   const spec = table[phase];
-  if (!spec || !isQualityDay) return undefined;
+  if (!spec || !highLoadDay) return undefined;
 
   return {
-    id: nid("st"),
+    id: `st-plan-${date}-pm`,
     date,
     timeOfDay: "pm",
     type: spec.type,

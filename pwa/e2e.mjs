@@ -90,13 +90,44 @@ await page.waitForTimeout(400);
 await page.locator('label:has-text("目標タイム") input').fill("1:48.90");
 await page.locator('label:has-text("大会名") input').first().fill("秋季選手権");
 await page.locator('label:has-text("開催初日") input').fill("2026-09-25");
+await page.locator('label:has-text("通過条件") select').selectOption("place_and_time");
+await page.locator('label:has-text("着順による通過ボーダー") input').fill("2");
+await page.locator('label:has-text("過去大会のボーダータイム") input').fill("1:51.0");
 // ラウンド日時
 const dt = page.locator('input[type="datetime-local"]');
 await dt.nth(0).fill("2026-09-25T10:00");
 await dt.nth(1).fill("2026-09-27T15:00");
+await page.getByRole("button", { name: "+ 通過点レース追加" }).click();
+const checkpointCard = page.locator("section.card", { hasText: "通過点レース" }).first();
+await checkpointCard.locator('input[placeholder="大会名"]').fill("夏季記録会");
+await checkpointCard.locator('input[type="date"]').fill("2026-08-16");
+await checkpointCard.locator("select").selectOption("B");
 await page.getByRole("button", { name: "目標・レースを保存" }).click();
 await page.waitForTimeout(400);
-step("目標・レース保存OK");
+await page.goto("http://localhost:8791/#/");
+await page.waitForTimeout(200);
+await page.goto("http://localhost:8791/#/goal");
+await page.waitForTimeout(600);
+if (
+  (await page.locator('label:has-text("着順による通過ボーダー") input').inputValue()) !==
+  "2"
+) {
+  fail("着順ボーダーが再読込後に消える");
+}
+if (
+  (await page.locator('label:has-text("過去大会のボーダータイム") input').inputValue()) !==
+  "1:51"
+) {
+  fail("タイムボーダーが再読込後に消える");
+}
+if (
+  (await page
+    .locator('section.card:has-text("通過点レース") input[placeholder="大会名"]')
+    .inputValue()) !== "夏季記録会"
+) {
+  fail("通過点レースが再読込後に消える");
+}
+step("目標・レース保存→再読込OK（着順・タイムボーダー／通過点レース）");
 
 // ---- 3b. 固定曜日設定 + 自作メニュー（3-1 / 3-2） ----
 await page.goto("http://localhost:8791/#/plan-settings");
@@ -210,6 +241,31 @@ if (!/プラン生成完了/.test(planText)) fail("プラン生成が完了し�
 step("プラン生成OK");
 await shot("02_plan_generated");
 
+// 同じ生成を繰り返しても、時刻ベースの別IDで予定が増殖しないこと
+await page.getByRole("button", { name: /プランを自動生成/ }).click();
+await page.waitForTimeout(1200);
+await page.getByRole("button", { name: /プランを自動生成/ }).click();
+await page.waitForTimeout(1200);
+const regeneration = await page.evaluate(async () => {
+  const data = await fetch("/api/sessions").then((response) => response.json());
+  const future = data.sessions.filter(
+    (session) => session.date >= "2026-07-27" && session.status !== "skipped"
+  );
+  const slots = future.map((session) => `${session.date}|${session.timeOfDay}`);
+  return {
+    count: future.length,
+    uniqueIds: new Set(future.map((session) => session.id)).size,
+    uniqueSlots: new Set(slots).size,
+  };
+});
+if (
+  regeneration.count !== regeneration.uniqueIds ||
+  regeneration.count !== regeneration.uniqueSlots
+) {
+  fail(`プラン再生成で予定が重複する: ${JSON.stringify(regeneration)}`);
+}
+step("プラン再生成3回OK（自動生成予定の重複なし）");
+
 // 3-2: 生成サマリに自作メニューの使用が出るか
 if (!/自作メニュー\d+種類を使用/.test(planText)) {
   fail("生成サマリに自作メニューの使用が出ない（3-2）: " + planText.slice(0, 300));
@@ -227,9 +283,16 @@ const calText = await page.textContent("body");
 if (!calText.includes("コーチ指定 300m×6")) {
   fail("自作メニューがカレンダーに反映されていない（3-2）");
 }
+const checkpointRow = page.locator("div.card", { hasText: "夏季記録会" }).first();
+if ((await checkpointRow.count()) === 0) {
+  fail("通過点レースがカレンダーに表示されない");
+}
+if ((await checkpointRow.textContent()).includes("予定なし")) {
+  fail("通過点レースの日が「予定なし」と表示される");
+}
 // 固定曜日どおりに置かれているか（木＝休養）
 if (!/木/.test(calText)) fail("カレンダーに曜日が出ていない");
-step("生成結果に固定曜日・自作メニューが反映OK");
+step("生成結果に固定曜日・自作メニュー・通過点レースが反映OK");
 
 // ---- 5. 実測マーカー ----
 await page.goto("http://localhost:8791/#/results");
@@ -1410,7 +1473,21 @@ calAddText = await page.textContent("body");
 if (!calAddText.includes("メニュー本文")) fail("✎を押しても編集シートが出ない");
 const editBox = await page.locator("section.card", { hasText: "メニュー本文" }).first().boundingBox();
 if (editBox && editBox.y > 844) fail(`編集シートが画面外に出ている（y=${Math.round(editBox.y)}px）`);
-step("カレンダー: ✎から編集シートが開くOK");
+const calendarEditSheet = page.locator("section.card", { hasText: "メニュー本文" }).first();
+const calendarEditBody = calendarEditSheet.locator("textarea").first();
+await calendarEditBody.fill(
+  `${await calendarEditBody.inputValue()}（カレンダー反映テスト）`
+);
+await page.waitForTimeout(900);
+await calendarEditSheet.getByRole("button", { name: "保存する", exact: true }).click();
+await page.waitForTimeout(1200);
+const reflectedCalendarRow = page.locator("div.card a.flex-1", {
+  hasText: "カレンダー反映テスト",
+});
+if ((await reflectedCalendarRow.count()) === 0) {
+  fail("カレンダーで保存したメニュー本文が一覧へ反映されない");
+}
+step("カレンダー: 編集保存→一覧・再取得への反映OK");
 await shot("26_calendar_edit");
 
 // ---- 10d-3. N-2: 「練習を足す」でも本文に合わせて欄が組み変わる ----

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openRepo } from "@/lib/db/node";
-import { assignExpectedPaces } from "@/lib/core/rounds";
+import { saveGoalAndRaces } from "@/lib/service";
 
 export const dynamic = "force-dynamic";
 
@@ -15,11 +15,15 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const repo = openRepo();
   const { goal, races } = await req.json();
-  if (races) {
-    for (const r of races) {
-      repo.saveRace(goal ? assignExpectedPaces(r, goal.targetTimeSec) : r);
-    }
+  if (!goal || !races) {
+    return NextResponse.json({ error: "目標とレースが必要です" }, { status: 400 });
   }
-  if (goal) repo.saveGoal(goal);
-  return NextResponse.json({ ok: true });
+  try {
+    return NextResponse.json({ ok: true, ...saveGoalAndRaces(repo, goal, races) });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : String(error) },
+      { status: 400 }
+    );
+  }
 }
