@@ -117,6 +117,41 @@ export default function SessionPage() {
         </Card>
       ) : null}
 
+      {session.generation ? (
+        <Card title="この形式を選んだ理由">
+          <div className="flex flex-wrap gap-2 mb-3">
+            <span
+              className="text-[10px] font-bold px-2 py-1 rounded-md"
+              style={{ background: "var(--surface-2)", color: "var(--text-2)" }}
+            >
+              進行段階 {session.generation.progressionStage}
+            </span>
+            <span
+              className="text-[10px] font-bold px-2 py-1 rounded-md"
+              style={{ background: "var(--surface-2)", color: "var(--text-2)" }}
+            >
+              判断材料 {session.generation.confidence === "high"
+                ? "十分"
+                : session.generation.confidence === "medium"
+                  ? "一部あり"
+                  : "不足"}
+            </span>
+          </div>
+          <ul className="list-disc pl-5 space-y-1">
+            {session.generation.selectionReasons.map((reason: string) => (
+              <li key={reason} className="text-[12px] leading-relaxed" style={{ color: "var(--text-2)" }}>
+                {reason}
+              </li>
+            ))}
+          </ul>
+          {session.generation.alternativeTemplateIds.length > 0 ? (
+            <p className="text-[11px] leading-relaxed mt-3" style={{ color: "var(--text-3)" }}>
+              代替候補も比較済みです。疲労や実施結果が変われば、次回は別形式を選ぶことがあります。
+            </p>
+          ) : null}
+        </Card>
+      ) : null}
+
       {r ? (
         <Card title="この練習をやる理由">
           <Row label="目的" value={r.purpose} />

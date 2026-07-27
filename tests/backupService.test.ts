@@ -105,6 +105,9 @@ describe("復元", () => {
     expect(dst.listSessions().some((session) => session.aerobicPurpose === "recovery")).toBe(
       true
     );
+    const generated = src.listSessions().find((session) => session.generation);
+    expect(generated).toBeDefined();
+    expect(dst.getSession(generated!.id)?.generation).toEqual(generated!.generation);
   });
 
   it("統合しても重複しない", () => {

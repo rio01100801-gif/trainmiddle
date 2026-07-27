@@ -6,6 +6,7 @@
  */
 import type {
   Athlete,
+  AthleteType,
   Goal,
   Phase,
   Race,
@@ -19,7 +20,7 @@ import { addDays, diffDays, fmtPacePerKm, fmtTime, weekStart } from "./dates";
 import { baseTime } from "./cfe";
 import { AerobicProfile, specificPace } from "./pace";
 import { rationaleFor } from "./rationale";
-import { buildSessionSpec } from "./progression";
+import { buildSessionSpec, type TemplateHistoryEntry } from "./progression";
 import { isHighLoadCategory } from "./trainingClassification";
 import type { TrendVerdict } from "./adaptive";
 import {
@@ -495,6 +496,10 @@ export interface GeneratePlanInput {
   recentTrend?: Partial<Record<SessionCategory, TrendVerdict>>;
   /** S-7: 直近の負荷が高い。増やす方向の漸進を止める */
   loadHigh?: boolean;
+  /** 候補形式の重み付けにだけ使う。安全ルールやフェーズを上書きしない */
+  athleteType?: AthleteType;
+  /** 完了済みの自動生成形式。再使用間隔と段階判定に使う */
+  templateHistory?: TemplateHistoryEntry[];
 }
 
 export interface GeneratedPlan {
@@ -533,6 +538,8 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
     to: SessionCategory;
     note: string;
   }[] = [];
+  // 呼び出し元の配列は変更せず、この生成中の選択も履歴へ足して偏りを抑える。
+  const templateHistory = [...(input.templateHistory ?? [])];
 
   /*
    * M-7: 制限因子に合わせて枠を振り替える。
@@ -700,14 +707,28 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
           trend: input.recentTrend?.[t.category],
           loadHigh: input.loadHigh,
           economyWeek: t.category === "race_economy" ? economyWeek : undefined,
+          aerobicProfile,
+          athleteType: input.athleteType,
+          templateHistory,
+          onDate,
         });
         if (!spec) return undefined;
         return {
+          name: spec.name,
           prescription: spec.prescription,
           targetPaces: spec.targetPaces,
           distanceKm: spec.distanceKm,
           durationMin: spec.durationMin,
           paceSecPerKm: undefined,
+          generation: {
+            templateId: spec.templateId,
+            variationGroup: spec.variationGroup,
+            progressionStage: spec.progressionStage,
+            selectionReasons: spec.selectionReasons,
+            alternativeTemplateIds: spec.alternativeTemplateIds,
+            confidence: spec.confidence,
+            repeatedForComparison: spec.repeatedForComparison,
+          },
         };
       };
 
@@ -717,7 +738,10 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
         ? pickCustomMenu(input.customMenus, tpl.category, date)
         : undefined;
 
-      const built = custom
+      const built: ReturnType<DayTemplate["buildPrescription"]> & {
+        name?: string;
+        generation?: Session["generation"];
+      } = custom
         ? {
             prescription: custom.prescription,
             targetPaces: custom.distanceM
@@ -780,7 +804,7 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
         id: generatedSessionId(date, timeOfDay),
         date,
         category: tpl.category,
-        name: custom ? custom.name : tpl.name,
+        name: custom ? custom.name : built.name ?? tpl.name,
         prescription: built.prescription,
         targetPaces: built.targetPaces,
         transfer800m: tpl.transfer800m,
@@ -804,8 +828,18 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
         paceSecPerKm: built.paceSecPerKm,
         aerobicPurpose: tpl.aerobicPurpose,
         surface: "track",
+        generation: custom ? undefined : built.generation,
       };
       sessions.push(session);
+      if (session.generation) {
+        templateHistory.push({
+          date: session.date,
+          category: session.category,
+          templateId: session.generation.templateId,
+          variationGroup: session.generation.variationGroup,
+          progressionStage: session.generation.progressionStage,
+        });
+      }
       if (custom) usedCustomMenus.push({ menuId: custom.id, date });
       if (tpl.category === "high_lactate" || tpl.category === "modeling") {
         lastHlDate = date;

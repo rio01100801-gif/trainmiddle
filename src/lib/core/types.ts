@@ -178,6 +178,23 @@ export interface TargetPace {
   isEstimated?: boolean;
 }
 
+/**
+ * 自動生成時に使ったテンプレートと判断根拠。
+ *
+ * 旧データには存在しないため任意。Session の JSON に同居させることで、
+ * SQLite / IndexedDB / exportBackup / Supabase snapshot の全経路で同じ情報を扱う。
+ */
+export interface SessionGenerationMeta {
+  templateId: string;
+  variationGroup: string;
+  progressionStage: number;
+  selectionReasons: string[];
+  alternativeTemplateIds: string[];
+  confidence: "low" | "medium" | "high";
+  /** 前回と同じ処方を比較目的で選んだ場合だけ true */
+  repeatedForComparison?: boolean;
+}
+
 export interface Session {
   id: string;
   date: string;
@@ -218,6 +235,8 @@ export interface Session {
   shoes?: string;
   /** ラウンド間の回復プロトコルとして生成されたセッション（RULE-20 の例外） */
   isRecoveryProtocol?: boolean;
+  /** 自動生成テンプレートの識別と説明。旧データでは未設定 */
+  generation?: SessionGenerationMeta;
   /**
    * 過去データの遡り入力から作られた実施済みセッション。
    * 負荷計算（ACWR）には使うが、ルールエンジンの評価対象からは外す。

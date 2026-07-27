@@ -112,6 +112,35 @@ describe("4-6 プラン自動生成", () => {
     expect(withoutRationale.length).toBe(0);
   });
 
+  it("複数候補を持つ自動生成セッションに選択根拠を保存する", () => {
+    const generated = plan.sessions.filter((session) =>
+      ["threshold", "cv", "high_lactate", "race_economy", "modeling"].includes(
+        session.category
+      ) && session.phase !== "Taper"
+    );
+    expect(generated.length).toBeGreaterThan(0);
+    for (const session of generated) {
+      expect(session.generation?.templateId).toBeTruthy();
+      expect(session.generation?.variationGroup).toBeTruthy();
+      expect(session.generation?.selectionReasons.length).toBeGreaterThan(0);
+      expect(session.generation?.alternativeTemplateIds.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("同じ入力ではテンプレート選択も含めて同じプランになる", () => {
+    const again = generatePlan({
+      athlete,
+      goal,
+      races: [race],
+      cfeSec: 111.0,
+      aerobicProfile: aerobic,
+      startDate: "2026-06-08",
+    });
+    expect(
+      again.sessions.map((session) => [session.id, session.generation?.templateId])
+    ).toEqual(plan.sessions.map((session) => [session.id, session.generation?.templateId]));
+  });
+
   it("補強は質練習日のpmにブロック化される（4-8-1）", () => {
     const qualityDates = new Set(
       plan.sessions

@@ -45,6 +45,7 @@ import {
   buildSessionSpec,
   sessionVariants,
   type SessionVariant,
+  type TemplateHistoryEntry,
 } from "./core/progression";
 import {
   convertMenu,
@@ -340,6 +341,30 @@ export function setupCfeIfNeeded(repo: Store, today: string): void {
   repo.saveCfe(initCfe(athlete.pb800mSec, today, recentRace));
 }
 
+/** 完了済み自動生成セッションだけを、次回の形式選択に使える履歴へ変換する。 */
+function completedTemplateHistory(repo: Store): TemplateHistoryEntry[] {
+  const resultsBySessionId = new Map(
+    repo.listResults().map((result) => [result.sessionId, result])
+  );
+  return repo.listSessions().flatMap((session) => {
+    if (!session.generation || session.status !== "completed") return [];
+    const result = resultsBySessionId.get(session.id);
+    return [
+      {
+        date: session.date,
+        category: session.category,
+        templateId: session.generation.templateId,
+        variationGroup: session.generation.variationGroup,
+        progressionStage: session.generation.progressionStage,
+        achievement: result?.achievement,
+        rpe: result?.rpe,
+        nextDayLegs: result?.nextDayLegs,
+        aborted: result?.aborted,
+      },
+    ];
+  });
+}
+
 export function regeneratePlan(repo: Store, startDate: string): {
   sessionCount: number;
   strengthCount: number;
@@ -367,6 +392,8 @@ export function regeneratePlan(repo: Store, startDate: string): {
     cfe.estimated800mSec,
     heatFlaggedDates(repo)
   );
+  const savedSessions = repo.listSessions();
+  const templateHistory = completedTemplateHistory(repo);
 
   /*
    * 再生成で置き換えるのは自動生成された未実施枠だけ。
@@ -375,7 +402,7 @@ export function regeneratePlan(repo: Store, startDate: string): {
    *   planned の自動生成候補だけを置き換える。
    * - 本人が編集した予定、完了・中止済みは残す。
    */
-  for (const session of repo.listSessions()) {
+  for (const session of savedSessions) {
     const legacyGeneratedPlanned =
       session.origin === undefined &&
       session.status === "planned" &&
@@ -427,6 +454,9 @@ export function regeneratePlan(repo: Store, startDate: string): {
     customMenus,
     limiterWeights,
     recentTrend,
+    athleteType:
+      athlete.athleteTypeOverride ?? diagnose(athlete, goal.targetTimeSec).athleteType,
+    templateHistory,
     // ACWRは補助指標。増加側で、かつ疲労・未達の実測がある場合だけ漸進を止める。
     loadHigh:
       acwrNow.acwr !== undefined &&
@@ -1642,9 +1672,29 @@ export function adaptiveContext(
   const checks = repo.listDailyChecks();
   const athlete = repo.getAthlete();
 
-  const trend = executionTrend(
-    executionSamples(sessions, results, session.category, session.date, undefined, session)
+  const sameDistanceSamples = executionSamples(
+    sessions,
+    results,
+    session.category,
+    session.date,
+    undefined,
+    session
   );
+  // 同じ反復距離が3回あれば秒差まで比較する。形式変更後で材料が足りなければ、
+  // カテゴリ内の target 比で補う（300mの秒差を400mへ直接足すことはしない）。
+  const trendSamples =
+    sameDistanceSamples.length >= 3
+      ? sameDistanceSamples
+      : executionSamples(
+          sessions,
+          results,
+          session.category,
+          session.date,
+          undefined,
+          undefined,
+          true
+        );
+  const trend = executionTrend(trendSamples);
   const jog = jogEfficiency(results, today);
   // Q-1: ポイント練習側の心拍。同じ設定・同じタイムでも心拍が上がっていれば疲労
   const qualityHr = qualityHrTrend(sessions, results, session.category, today);
@@ -2393,7 +2443,9 @@ function recentTrendByCategory(
   const results = repo.listResults();
   const out: Partial<Record<SessionCategory, TrendVerdict>> = {};
   for (const c of ["high_lactate", "race_economy", "modeling", "cv", "threshold", "neural"] as const) {
-    out[c] = executionTrend(executionSamples(sessions, results, c, today)).verdict;
+    out[c] = executionTrend(
+      executionSamples(sessions, results, c, today, undefined, undefined, true)
+    ).verdict;
   }
   return out;
 }
@@ -2431,6 +2483,12 @@ export function sessionPlanVariants(
       session
     )
   ).verdict;
+  const aerobicProfile = buildAerobicProfile(
+    repo.listMarkers(),
+    session.date,
+    cfe.estimated800mSec,
+    heatFlaggedDates(repo)
+  );
 
   const base = buildSessionSpec({
     category: session.category,
@@ -2438,6 +2496,11 @@ export function sessionPlanVariants(
     weekIndex: Math.max(0, Math.floor(diffDays(today, session.date) / 7)),
     cfeSec: cfe.estimated800mSec,
     trend,
+    aerobicProfile,
+    athleteType:
+      athlete.athleteTypeOverride ?? diagnose(athlete, goal?.targetTimeSec).athleteType,
+    templateHistory: completedTemplateHistory(repo),
+    onDate: session.date,
   });
   if (!base) return { session };
 

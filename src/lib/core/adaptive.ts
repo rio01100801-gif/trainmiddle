@@ -95,7 +95,12 @@ export function executionSamples(
   category: SessionCategory,
   before: string,
   limit: number = TREND_SAMPLE_COUNT,
-  referenceSession?: Session
+  referenceSession?: Session,
+  /**
+   * セッション形式を変更した後のカテゴリ全体の傾向を見る場合だけ true。
+   * 秒差ではなく target に対する ratio を主な補正根拠として扱う。
+   */
+  allowMixedDistances = false
 ): ExecutionSample[] {
   const byId = new Map(sessions.map((s) => [s.id, s]));
   const out: ExecutionSample[] = [];
@@ -110,8 +115,10 @@ export function executionSamples(
     const t = targetOf(s, r);
     const actual = meanRepSec(r);
     if (!t || actual === undefined || t.targetSec <= 0) continue;
-    if (selectedDistanceM === undefined) selectedDistanceM = t.distanceM;
-    if (t.distanceM !== selectedDistanceM) continue;
+    if (!allowMixedDistances) {
+      if (selectedDistanceM === undefined) selectedDistanceM = t.distanceM;
+      if (t.distanceM !== selectedDistanceM) continue;
+    }
     out.push({
       date: r.date,
       sessionId: r.sessionId,

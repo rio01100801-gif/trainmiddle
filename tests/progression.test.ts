@@ -11,10 +11,20 @@ import {
   LOAD_CYCLE_WEEKS,
   MIN_REST_SEC,
   sessionVariants,
+  sessionTemplateCandidates,
   weekStep,
 } from "@/lib/core/progression";
+import type { AerobicProfile } from "@/lib/core/pace";
 
 const CFE = 114.0;
+const AEROBIC: AerobicProfile = {
+  ltPaceSecPerKm: 220,
+  cvPaceSecPerKm: { fast: 205, slow: 210 },
+  jogPaceSecPerKm: { fast: 270, slow: 320 },
+  longRunPaceSecPerKm: { fast: 280, slow: 330 },
+  source: "fallback",
+  isEstimated: true,
+};
 
 function spec(weekIndex: number, extra: Record<string, unknown> = {}) {
   return buildSessionSpec({
@@ -41,14 +51,31 @@ describe("週ごとの漸進", () => {
     expect(new Set(texts).size).toBeGreaterThan(1);
   });
 
-  it("先に量、次に密度の順で上げる", () => {
+  it("高乳酸は週番号だけで本数を機械的に増やさない", () => {
     const base = spec(0);
     const volume = spec(1);
     const density = spec(2);
-    // 2週目は本数だけ増える。レストは変えない
+    expect(volume.blocks[0].reps).toBe(base.blocks[0].reps);
+    expect(volume.restSec).toBe(base.restSec);
+    expect(density.blocks[0].reps).toBe(volume.blocks[0].reps);
+    expect(density.restSec).toBeLessThan(base.restSec);
+    expect(volume.reasons.join()).toContain("機械的に増やさず");
+  });
+
+  it("有酸素高強度は先に量、次に密度の順で進める", () => {
+    const make = (weekIndex: number) =>
+      buildSessionSpec({
+        category: "threshold",
+        phase: "Base",
+        weekIndex,
+        cfeSec: CFE,
+        aerobicProfile: AEROBIC,
+      })!;
+    const base = make(0);
+    const volume = make(1);
+    const density = make(2);
     expect(volume.blocks[0].reps).toBe(base.blocks[0].reps + 1);
     expect(volume.restSec).toBe(base.restSec);
-    // 3週目は本数を保ったままレストを詰める
     expect(density.blocks[0].reps).toBe(volume.blocks[0].reps);
     expect(density.restSec).toBeLessThan(base.restSec);
   });
@@ -84,20 +111,107 @@ describe("S-7 直近の出来を内容に反映する", () => {
     expect(ease.reasons.join()).toContain("実行できる形に戻します");
   });
 
-  it("余裕があれば1本増やす", () => {
-    expect(spec(0, { trend: "tighten" }).blocks[0].reps).toBeGreaterThan(spec(0).blocks[0].reps);
+  it("高乳酸は余裕があっても本数を機械的に増やさない", () => {
+    expect(spec(0, { trend: "tighten" }).blocks[0].reps).toBe(spec(0).blocks[0].reps);
+    expect(spec(0, { trend: "tighten" }).reasons.join()).toContain("本数は据え置き");
   });
 
   it("負荷が高ければ増やさない", () => {
     const normal = spec(1);
     const heavy = spec(1, { loadHigh: true });
-    expect(heavy.blocks[0].reps).toBeLessThan(normal.blocks[0].reps);
+    const volume = (s: ReturnType<typeof spec>) =>
+      s.blocks.reduce((sum, block) => sum + block.distanceM * block.reps, 0);
+    expect(volume(heavy)).toBeLessThanOrEqual(volume(normal));
     expect(heavy.reasons.join()).toContain("ACWR");
   });
 
   it("本数が0本以下にならない", () => {
     const s = spec(3, { trend: "ease", loadHigh: true });
     expect(s.blocks[0].reps).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("複数テンプレート選択", () => {
+  it("主要カテゴリに複数候補がある", () => {
+    expect(sessionTemplateCandidates("threshold", "Base").length).toBeGreaterThan(1);
+    expect(sessionTemplateCandidates("cv", "Build").length).toBeGreaterThan(1);
+    expect(sessionTemplateCandidates("race_economy", "Specific").length).toBeGreaterThan(1);
+    expect(sessionTemplateCandidates("high_lactate", "Specific").length).toBeGreaterThan(1);
+    expect(sessionTemplateCandidates("modeling", "Modeling").length).toBeGreaterThan(1);
+  });
+
+  it("同じ入力からは同じ候補を選ぶ", () => {
+    const input = {
+      category: "race_economy" as const,
+      phase: "Specific" as const,
+      weekIndex: 0,
+      cfeSec: CFE,
+      athleteType: "balanced" as const,
+      onDate: "2026-07-28",
+    };
+    expect(buildSessionSpec(input)!.templateId).toBe(buildSessionSpec(input)!.templateId);
+  });
+
+  it("直近14日の同一テンプレートを理由なく連続選択しない", () => {
+    const first = buildSessionSpec({
+      category: "race_economy",
+      phase: "Specific",
+      weekIndex: 0,
+      cfeSec: CFE,
+      athleteType: "balanced",
+      onDate: "2026-07-14",
+    })!;
+    const next = buildSessionSpec({
+      category: "race_economy",
+      phase: "Specific",
+      weekIndex: 1,
+      cfeSec: CFE,
+      athleteType: "balanced",
+      onDate: "2026-07-21",
+      templateHistory: [
+        {
+          date: "2026-07-14",
+          category: "race_economy",
+          templateId: first.templateId,
+          variationGroup: first.variationGroup,
+          progressionStage: first.progressionStage,
+        },
+      ],
+    })!;
+    expect(next.templateId).not.toBe(first.templateId);
+    expect(next.selectionReasons.join()).toContain("同時に進めない");
+  });
+
+  it("同形式で未達・高負担が続けば別形式を選ぶ", () => {
+    const initial = buildSessionSpec({
+      category: "high_lactate",
+      phase: "Specific",
+      weekIndex: 0,
+      cfeSec: CFE,
+      athleteType: "balanced",
+      onDate: "2026-07-01",
+    })!;
+    const history = ["2026-07-08", "2026-07-15"].map((date) => ({
+      date,
+      category: "high_lactate" as const,
+      templateId: initial.templateId,
+      variationGroup: initial.variationGroup,
+      progressionStage: initial.progressionStage,
+      achievement: "partial" as const,
+      rpe: 9,
+      nextDayLegs: "heavy" as const,
+    }));
+    const next = buildSessionSpec({
+      category: "high_lactate",
+      phase: "Specific",
+      weekIndex: 0,
+      cfeSec: CFE,
+      athleteType: "balanced",
+      onDate: "2026-07-22",
+      templateHistory: history,
+    })!;
+    expect(next.templateId).not.toBe(initial.templateId);
+    expect(next.selectionReasons.join()).toContain("未達・高負担");
   });
 });
 

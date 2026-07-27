@@ -413,7 +413,8 @@ describe("3-2 プラン生成が自作メニューを使う", () => {
       customMenus: [menu({ id: "hl-1", category: "high_lactate" })],
     });
     const eco = plan.sessions.find((s) => s.category === "race_economy")!;
-    expect(eco.name).toBe("レースペース経済走");
+    expect(eco.name).toMatch(/^レースペース経済走/);
+    expect(eco.generation?.templateId).toBeTruthy();
   });
 
   it("自作メニューを使ってもERROR級のルール違反は出ない", () => {

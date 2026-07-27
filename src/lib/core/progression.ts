@@ -21,11 +21,24 @@
  *   3. レースに近づくほど特異的にする（距離を短く・設定をレースペースへ）
  *   4. 高乳酸は「深く入る」種目なので、土台期に量を積まない
  */
-import type { RestType, SessionCategory, TargetPace } from "./types";
+import type {
+  Achievement,
+  AthleteType,
+  NextDayLegs,
+  RestType,
+  SessionCategory,
+  TargetPace,
+} from "./types";
 import type { Phase } from "./types";
+import type { AerobicProfile } from "./pace";
 import { specificPace } from "./pace";
+import { diffDays } from "./dates";
 import type { Limiter } from "./limiter";
 import type { TrendVerdict } from "./adaptive";
+import {
+  TRAINING_LOAD_LABELS,
+  type TrainingLoadClass,
+} from "./trainingClassification";
 
 // ---------------------------------------------------------------------------
 // 素の組み立て（フェーズ × 週）
@@ -38,6 +51,14 @@ export interface RepBlock {
 
 export interface SessionSpec {
   category: SessionCategory;
+  name: string;
+  templateId: string;
+  variationGroup: string;
+  progressionStage: number;
+  selectionReasons: string[];
+  alternativeTemplateIds: string[];
+  confidence: "low" | "medium" | "high";
+  repeatedForComparison?: boolean;
   /** 区間。1種類なら1つ、複合（500+300）なら複数 */
   blocks: RepBlock[];
   restSec: number;
@@ -61,7 +82,21 @@ export interface SessionSpec {
  *   Specific … 300mのままレストを詰める。レース終盤の状況に近づける
  *   Modeling … 本数を落として複合にする。レースの形そのものを再現する
  */
-interface Recipe {
+export interface SessionTemplateCandidate {
+  id: string;
+  name: string;
+  variationGroup: string;
+  progressionStage: number;
+  primaryStimulus: TrainingLoadClass;
+  secondaryStimuli: TrainingLoadClass[];
+  athleteTypes?: AthleteType[];
+  difficulty: 1 | 2 | 3 | 4 | 5;
+  neuralLoad: 1 | 2 | 3 | 4 | 5;
+  glycolyticLoad: 1 | 2 | 3 | 4 | 5;
+  aerobicLoad: 1 | 2 | 3 | 4 | 5;
+  muscleDamageRisk: 1 | 2 | 3 | 4 | 5;
+  recoveryDays: number;
+  paceSource: "specific" | "lt" | "cv";
   blocks: RepBlock[];
   restSec: number;
   restType: RestType;
@@ -71,37 +106,459 @@ interface Recipe {
   distanceKm: number;
 }
 
+function raceEconomyCandidates(
+  phase: "Build" | "Specific" | "Modeling",
+  restSec: number,
+  longReps: number
+): SessionTemplateCandidate[] {
+  const stage = phase === "Build" ? 0 : phase === "Specific" ? 1 : 2;
+  return [
+    {
+      id: `race-economy-600-${phase.toLowerCase()}`,
+      name: "レースペース経済走（600m）",
+      variationGroup: "race-economy-long",
+      progressionStage: stage,
+      primaryStimulus: "middle_distance_specific",
+      secondaryStimuli: ["aerobic_high"],
+      athleteTypes: ["speed", "lactate_tolerant"],
+      difficulty: phase === "Modeling" ? 4 : 3,
+      neuralLoad: 3,
+      glycolyticLoad: 3,
+      aerobicLoad: 3,
+      muscleDamageRisk: 2,
+      recoveryDays: 3,
+      paceSource: "specific",
+      blocks: [{ distanceM: 600, reps: longReps }],
+      restSec,
+      restType: "full",
+      paceDistanceM: [600],
+      durationMin: phase === "Modeling" ? 50 : 60,
+      distanceKm: phase === "Modeling" ? 7 : 8,
+    },
+    {
+      id: `race-economy-500-${phase.toLowerCase()}`,
+      name: "レースペース経済走（500m）",
+      variationGroup: "race-economy-medium",
+      progressionStage: stage,
+      primaryStimulus: "middle_distance_specific",
+      secondaryStimuli: ["neuromuscular"],
+      athleteTypes: ["balanced"],
+      difficulty: 3,
+      neuralLoad: 3,
+      glycolyticLoad: 3,
+      aerobicLoad: 3,
+      muscleDamageRisk: 2,
+      recoveryDays: 3,
+      paceSource: "specific",
+      blocks: [{ distanceM: 500, reps: longReps + 1 }],
+      restSec: Math.max(300, restSec - 60),
+      restType: "full",
+      paceDistanceM: [500],
+      durationMin: phase === "Modeling" ? 50 : 60,
+      distanceKm: phase === "Modeling" ? 7 : 8,
+    },
+    {
+      id: `race-economy-400-${phase.toLowerCase()}`,
+      name: "レースペース経済走（400m）",
+      variationGroup: "race-economy-short",
+      progressionStage: stage,
+      primaryStimulus: "middle_distance_specific",
+      secondaryStimuli: ["neuromuscular"],
+      athleteTypes: ["endurance"],
+      difficulty: 3,
+      neuralLoad: 4,
+      glycolyticLoad: 2,
+      aerobicLoad: 2,
+      muscleDamageRisk: 2,
+      recoveryDays: 3,
+      paceSource: "specific",
+      blocks: [{ distanceM: 400, reps: longReps + 2 }],
+      restSec: Math.max(240, restSec - 120),
+      restType: "full",
+      paceDistanceM: [400],
+      durationMin: phase === "Modeling" ? 50 : 58,
+      distanceKm: phase === "Modeling" ? 7 : 8,
+    },
+  ];
+}
+
+function modelingCandidates(phase: "Specific" | "Modeling"): SessionTemplateCandidate[] {
+  const common = {
+    primaryStimulus: "middle_distance_specific" as const,
+    secondaryStimuli: ["glycolytic", "neuromuscular"] as TrainingLoadClass[],
+    difficulty: 5 as const,
+    neuralLoad: 4 as const,
+    glycolyticLoad: 5 as const,
+    aerobicLoad: 2 as const,
+    muscleDamageRisk: 4 as const,
+    recoveryDays: 5,
+    paceSource: "specific" as const,
+    restSec: 60,
+    restType: "walk" as const,
+    durationMin: 55,
+    distanceKm: 7,
+    progressionStage: phase === "Specific" ? 1 : 2,
+  };
+  return [
+    {
+      ...common,
+      id: `modeling-500-300-${phase.toLowerCase()}`,
+      name: "モデリング（500m＋300m）",
+      variationGroup: "modeling-split-800",
+      athleteTypes: ["speed", "lactate_tolerant"],
+      blocks: [
+        { distanceM: 500, reps: 1 },
+        { distanceM: 300, reps: 1 },
+      ],
+      paceDistanceM: [500, 300],
+    },
+    {
+      ...common,
+      id: `modeling-600-200-${phase.toLowerCase()}`,
+      name: "モデリング（600m＋200m）",
+      variationGroup: "modeling-split-800",
+      athleteTypes: ["balanced", "endurance"],
+      blocks: [
+        { distanceM: 600, reps: 1 },
+        { distanceM: 200, reps: 1 },
+      ],
+      paceDistanceM: [600, 200],
+    },
+  ];
+}
+
 /*
  * テーパー期（Taper）は載せない。
  * レース前の量はM-6とRULE-09が決めており、ここで別の根拠から本数を動かすと
  * 2つの仕組みが同じ週の量を取り合うことになる。漸進モデルが担当するのは積み上げの期間だけ。
  */
-const RECIPES: Partial<Record<SessionCategory, Partial<Record<Phase, Recipe>>>> = {
+const RECIPE_CATALOG: Partial<
+  Record<SessionCategory, Partial<Record<Phase, SessionTemplateCandidate[]>>>
+> = {
+  threshold: {
+    Base: [
+      {
+        id: "threshold-1000-cruise",
+        name: "サブ閾値インターバル",
+        variationGroup: "threshold-cruise",
+        progressionStage: 0,
+        primaryStimulus: "aerobic_high",
+        secondaryStimuli: ["aerobic_low"],
+        athleteTypes: ["balanced", "endurance"],
+        difficulty: 2,
+        neuralLoad: 1,
+        glycolyticLoad: 1,
+        aerobicLoad: 4,
+        muscleDamageRisk: 1,
+        recoveryDays: 2,
+        paceSource: "lt",
+        blocks: [{ distanceM: 1000, reps: 4 }],
+        restSec: 75,
+        restType: "jog",
+        paceDistanceM: [1000],
+        durationMin: 55,
+        distanceKm: 10,
+      },
+      {
+        id: "threshold-1200-cruise",
+        name: "サブ閾値ロングインターバル",
+        variationGroup: "threshold-cruise",
+        progressionStage: 1,
+        primaryStimulus: "aerobic_high",
+        secondaryStimuli: ["aerobic_low"],
+        athleteTypes: ["speed", "lactate_tolerant"],
+        difficulty: 3,
+        neuralLoad: 1,
+        glycolyticLoad: 1,
+        aerobicLoad: 4,
+        muscleDamageRisk: 1,
+        recoveryDays: 2,
+        paceSource: "lt",
+        blocks: [{ distanceM: 1200, reps: 3 }],
+        restSec: 75,
+        restType: "jog",
+        paceDistanceM: [1200],
+        durationMin: 55,
+        distanceKm: 10,
+      },
+      {
+        id: "threshold-800-cruise",
+        name: "短いクルーズインターバル",
+        variationGroup: "threshold-short-cruise",
+        progressionStage: 0,
+        primaryStimulus: "aerobic_high",
+        secondaryStimuli: ["aerobic_low"],
+        difficulty: 2,
+        neuralLoad: 1,
+        glycolyticLoad: 1,
+        aerobicLoad: 4,
+        muscleDamageRisk: 1,
+        recoveryDays: 2,
+        paceSource: "lt",
+        blocks: [{ distanceM: 800, reps: 5 }],
+        restSec: 60,
+        restType: "jog",
+        paceDistanceM: [800],
+        durationMin: 55,
+        distanceKm: 10,
+      },
+    ],
+  },
+  cv: {
+    Build: [
+      {
+        id: "cv-1000-standard",
+        name: "CVインターバル",
+        variationGroup: "cv-distance",
+        progressionStage: 0,
+        primaryStimulus: "aerobic_high",
+        secondaryStimuli: ["middle_distance_specific"],
+        difficulty: 3,
+        neuralLoad: 1,
+        glycolyticLoad: 2,
+        aerobicLoad: 5,
+        muscleDamageRisk: 1,
+        recoveryDays: 2,
+        paceSource: "cv",
+        blocks: [{ distanceM: 1000, reps: 4 }],
+        restSec: 120,
+        restType: "jog",
+        paceDistanceM: [1000],
+        durationMin: 55,
+        distanceKm: 10,
+      },
+      {
+        id: "cv-1200-long",
+        name: "CVロングインターバル",
+        variationGroup: "cv-distance",
+        progressionStage: 1,
+        primaryStimulus: "aerobic_high",
+        secondaryStimuli: ["middle_distance_specific"],
+        athleteTypes: ["speed", "lactate_tolerant"],
+        difficulty: 4,
+        neuralLoad: 1,
+        glycolyticLoad: 2,
+        aerobicLoad: 5,
+        muscleDamageRisk: 1,
+        recoveryDays: 2,
+        paceSource: "cv",
+        blocks: [{ distanceM: 1200, reps: 3 }],
+        restSec: 150,
+        restType: "jog",
+        paceDistanceM: [1200],
+        durationMin: 58,
+        distanceKm: 10,
+      },
+      {
+        id: "cv-800-short",
+        name: "CVショートインターバル",
+        variationGroup: "cv-short",
+        progressionStage: 0,
+        primaryStimulus: "aerobic_high",
+        secondaryStimuli: ["middle_distance_specific"],
+        athleteTypes: ["endurance"],
+        difficulty: 3,
+        neuralLoad: 2,
+        glycolyticLoad: 2,
+        aerobicLoad: 4,
+        muscleDamageRisk: 1,
+        recoveryDays: 2,
+        paceSource: "cv",
+        blocks: [{ distanceM: 800, reps: 5 }],
+        restSec: 90,
+        restType: "jog",
+        paceDistanceM: [800],
+        durationMin: 55,
+        distanceKm: 9,
+      },
+    ],
+  },
   high_lactate: {
     // 土台期は短く少なく。深く入らない
-    Base: { blocks: [{ distanceM: 200, reps: 5 }], restSec: 180, restType: "jog", paceDistanceM: [200], durationMin: 50, distanceKm: 7 },
-    Build: { blocks: [{ distanceM: 300, reps: 5 }], restSec: 300, restType: "jog", paceDistanceM: [300], durationMin: 60, distanceKm: 8 },
+    Base: [
+      {
+        id: "high-lactate-200-controlled",
+        name: "高乳酸導入（200m）",
+        variationGroup: "high-lactate-short",
+        progressionStage: 0,
+        primaryStimulus: "glycolytic",
+        secondaryStimuli: ["neuromuscular"],
+        difficulty: 2,
+        neuralLoad: 3,
+        glycolyticLoad: 2,
+        aerobicLoad: 2,
+        muscleDamageRisk: 2,
+        recoveryDays: 5,
+        paceSource: "specific",
+        blocks: [{ distanceM: 200, reps: 5 }],
+        restSec: 180,
+        restType: "jog",
+        paceDistanceM: [200],
+        durationMin: 50,
+        distanceKm: 7,
+      },
+      {
+        id: "high-lactate-150-intro",
+        name: "高乳酸導入（150m）",
+        variationGroup: "high-lactate-short",
+        progressionStage: 0,
+        primaryStimulus: "glycolytic",
+        secondaryStimuli: ["neuromuscular"],
+        difficulty: 2,
+        neuralLoad: 3,
+        glycolyticLoad: 2,
+        aerobicLoad: 1,
+        muscleDamageRisk: 2,
+        recoveryDays: 5,
+        paceSource: "specific",
+        blocks: [{ distanceM: 150, reps: 6 }],
+        restSec: 180,
+        restType: "full",
+        paceDistanceM: [150],
+        durationMin: 48,
+        distanceKm: 7,
+      },
+    ],
+    Build: [
+      {
+        id: "high-lactate-300-standard",
+        name: "高乳酸セッション（300m）",
+        variationGroup: "high-lactate-repetition",
+        progressionStage: 1,
+        primaryStimulus: "glycolytic",
+        secondaryStimuli: ["middle_distance_specific"],
+        difficulty: 4,
+        neuralLoad: 3,
+        glycolyticLoad: 5,
+        aerobicLoad: 2,
+        muscleDamageRisk: 3,
+        recoveryDays: 5,
+        paceSource: "specific",
+        blocks: [{ distanceM: 300, reps: 5 }],
+        restSec: 300,
+        restType: "jog",
+        paceDistanceM: [300],
+        durationMin: 60,
+        distanceKm: 8,
+      },
+      {
+        id: "high-lactate-400-low-volume",
+        name: "高乳酸セッション（400m低容量）",
+        variationGroup: "high-lactate-long",
+        progressionStage: 1,
+        primaryStimulus: "glycolytic",
+        secondaryStimuli: ["middle_distance_specific"],
+        athleteTypes: ["endurance", "balanced"],
+        difficulty: 4,
+        neuralLoad: 3,
+        glycolyticLoad: 5,
+        aerobicLoad: 2,
+        muscleDamageRisk: 3,
+        recoveryDays: 5,
+        paceSource: "specific",
+        blocks: [{ distanceM: 400, reps: 3 }],
+        restSec: 360,
+        restType: "full",
+        paceDistanceM: [400],
+        durationMin: 60,
+        distanceKm: 8,
+      },
+    ],
     // レストを詰める＝レース終盤の状況に近づける
-    Specific: { blocks: [{ distanceM: 300, reps: 5 }], restSec: 240, restType: "jog", paceDistanceM: [300], durationMin: 60, distanceKm: 8 },
-    Modeling: { blocks: [{ distanceM: 300, reps: 4 }], restSec: 180, restType: "jog", paceDistanceM: [300], durationMin: 55, distanceKm: 7 },
+    Specific: [
+      {
+        id: "high-lactate-300-dense",
+        name: "高乳酸セッション（300m密度）",
+        variationGroup: "high-lactate-repetition",
+        progressionStage: 2,
+        primaryStimulus: "glycolytic",
+        secondaryStimuli: ["middle_distance_specific"],
+        difficulty: 5,
+        neuralLoad: 3,
+        glycolyticLoad: 5,
+        aerobicLoad: 2,
+        muscleDamageRisk: 3,
+        recoveryDays: 5,
+        paceSource: "specific",
+        blocks: [{ distanceM: 300, reps: 5 }],
+        restSec: 240,
+        restType: "jog",
+        paceDistanceM: [300],
+        durationMin: 60,
+        distanceKm: 8,
+      },
+      {
+        id: "high-lactate-400-specific",
+        name: "高乳酸セッション（400m特異的）",
+        variationGroup: "high-lactate-long",
+        progressionStage: 2,
+        primaryStimulus: "glycolytic",
+        secondaryStimuli: ["middle_distance_specific"],
+        athleteTypes: ["endurance", "balanced"],
+        difficulty: 5,
+        neuralLoad: 3,
+        glycolyticLoad: 5,
+        aerobicLoad: 2,
+        muscleDamageRisk: 4,
+        recoveryDays: 5,
+        paceSource: "specific",
+        blocks: [{ distanceM: 400, reps: 3 }],
+        restSec: 300,
+        restType: "full",
+        paceDistanceM: [400],
+        durationMin: 60,
+        distanceKm: 8,
+      },
+    ],
+    Modeling: [
+      {
+        id: "high-lactate-300-tapered",
+        name: "高乳酸セッション（低容量）",
+        variationGroup: "high-lactate-repetition",
+        progressionStage: 3,
+        primaryStimulus: "glycolytic",
+        secondaryStimuli: ["middle_distance_specific"],
+        difficulty: 4,
+        neuralLoad: 3,
+        glycolyticLoad: 4,
+        aerobicLoad: 2,
+        muscleDamageRisk: 3,
+        recoveryDays: 5,
+        paceSource: "specific",
+        blocks: [{ distanceM: 300, reps: 4 }],
+        restSec: 180,
+        restType: "jog",
+        paceDistanceM: [300],
+        durationMin: 55,
+        distanceKm: 7,
+      },
+    ],
   },
   race_economy: {
-    Build: { blocks: [{ distanceM: 600, reps: 3 }], restSec: 420, restType: "full", paceDistanceM: [600], durationMin: 60, distanceKm: 8 },
-    Specific: { blocks: [{ distanceM: 600, reps: 3 }], restSec: 360, restType: "full", paceDistanceM: [600], durationMin: 60, distanceKm: 8 },
-    Modeling: { blocks: [{ distanceM: 600, reps: 2 }], restSec: 420, restType: "full", paceDistanceM: [600], durationMin: 50, distanceKm: 7 },
+    Build: raceEconomyCandidates("Build", 420, 3),
+    Specific: raceEconomyCandidates("Specific", 360, 3),
+    Modeling: raceEconomyCandidates("Modeling", 420, 2),
   },
   modeling: {
     // レースの形。前半を作って終盤に入る流れを再現する
-    Specific: { blocks: [{ distanceM: 500, reps: 1 }, { distanceM: 300, reps: 1 }], restSec: 60, restType: "walk", paceDistanceM: [500, 300], durationMin: 55, distanceKm: 7 },
-    Modeling: { blocks: [{ distanceM: 600, reps: 1 }, { distanceM: 200, reps: 1 }], restSec: 60, restType: "walk", paceDistanceM: [600, 200], durationMin: 55, distanceKm: 7 },
-  },
-  neural: {
-    Base: { blocks: [{ distanceM: 100, reps: 6 }], restSec: 180, restType: "full", paceDistanceM: [100], durationMin: 45, distanceKm: 7 },
-    Build: { blocks: [{ distanceM: 120, reps: 6 }], restSec: 180, restType: "full", paceDistanceM: [120], durationMin: 45, distanceKm: 7 },
-    Specific: { blocks: [{ distanceM: 150, reps: 5 }], restSec: 240, restType: "full", paceDistanceM: [150], durationMin: 45, distanceKm: 7 },
-    Modeling: { blocks: [{ distanceM: 150, reps: 4 }], restSec: 240, restType: "full", paceDistanceM: [150], durationMin: 40, distanceKm: 6 },
+    Specific: modelingCandidates("Specific"),
+    Modeling: modelingCandidates("Modeling"),
   },
 };
+
+/** Phase 1 の可視化・テスト用。呼び出し側が候補を変更できないよう複製して返す。 */
+export function sessionTemplateCandidates(
+  category: SessionCategory,
+  phase: Phase
+): SessionTemplateCandidate[] {
+  return (RECIPE_CATALOG[category]?.[phase] ?? []).map((candidate) => ({
+    ...candidate,
+    blocks: candidate.blocks.map((block) => ({ ...block })),
+    secondaryStimuli: [...candidate.secondaryStimuli],
+    athleteTypes: candidate.athleteTypes ? [...candidate.athleteTypes] : undefined,
+    paceDistanceM: [...candidate.paceDistanceM],
+  }));
+}
 
 /** 週内の漸進。3週上げて1週落とす（3:1） */
 export const LOAD_CYCLE_WEEKS = 4;
@@ -126,6 +583,18 @@ export const DENSITY_STEP = 0.2;
 /** レストの下限（秒）。これ以下は回復が成立せず、狙った設定で走れない */
 export const MIN_REST_SEC = 90;
 
+export interface TemplateHistoryEntry {
+  date: string;
+  category: SessionCategory;
+  templateId: string;
+  variationGroup: string;
+  progressionStage: number;
+  achievement?: Achievement;
+  rpe?: number;
+  nextDayLegs?: NextDayLegs;
+  aborted?: boolean;
+}
+
 export interface BuildSpecInput {
   category: SessionCategory;
   phase: Phase;
@@ -139,6 +608,168 @@ export interface BuildSpecInput {
   loadHigh?: boolean;
   /** 経済走の導入週（既存の漸進をそのまま使う） */
   economyWeek?: number;
+  /** threshold / CV の実測ベース設定 */
+  aerobicProfile?: AerobicProfile;
+  /** 選手タイプは候補の除外ではなく、同点時に近い形式を選ぶ小さな重みとして使う */
+  athleteType?: AthleteType;
+  /** 完了済み履歴と、今回の生成中にすでに選んだ候補 */
+  templateHistory?: TemplateHistoryEntry[];
+  /** 再使用間隔を日付で評価するための対象日 */
+  onDate?: string;
+}
+
+interface TemplateSelection {
+  candidate: SessionTemplateCandidate;
+  reasons: string[];
+  alternativeTemplateIds: string[];
+  confidence: "low" | "medium" | "high";
+  repeatedForComparison: boolean;
+}
+
+const ATHLETE_TYPE_LABELS: Record<AthleteType, string> = {
+  speed: "スピード型",
+  balanced: "バランス型",
+  lactate_tolerant: "高乳酸耐性型",
+  endurance: "持久型",
+};
+
+function successful(entry: TemplateHistoryEntry): boolean {
+  return (
+    entry.achievement === "achieved" &&
+    entry.aborted !== true &&
+    (entry.rpe === undefined || entry.rpe <= 8) &&
+    entry.nextDayLegs !== "heavy"
+  );
+}
+
+/**
+ * 候補選択は必ず決定的にする。同じ入力なら同じ templateId を返し、
+ * ランダムな「飽き防止」で練習意図を変えない。
+ */
+function selectTemplate(
+  candidates: SessionTemplateCandidate[],
+  input: BuildSpecInput
+): TemplateSelection {
+  const onDate = input.onDate;
+  const history = (input.templateHistory ?? [])
+    .filter(
+      (entry) =>
+        entry.category === input.category &&
+        (!onDate || (entry.date < onDate && diffDays(entry.date, onDate) <= 28))
+    )
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const completed = history.filter((entry) => entry.achievement !== undefined);
+  const lastCompleted = completed[0];
+  const stableCount = completed.slice(0, 2).filter(successful).length;
+  const strainedCount = completed
+    .slice(0, 2)
+    .filter(
+      (entry) =>
+        entry.achievement === "partial" ||
+        entry.achievement === "failed" ||
+        entry.aborted === true ||
+        (entry.rpe !== undefined && entry.rpe >= 9) ||
+        entry.nextDayLegs === "heavy"
+    ).length;
+
+  let desiredStage = Math.min(...candidates.map((candidate) => candidate.progressionStage));
+  if (lastCompleted) {
+    desiredStage = lastCompleted.progressionStage;
+    if (input.trend === "ease" || strainedCount >= 2) {
+      desiredStage = Math.max(0, desiredStage - 1);
+    }
+    else if (stableCount >= 2) desiredStage++;
+  }
+
+  const scored = candidates.map((candidate) => {
+    let score = -Math.abs(candidate.progressionStage - desiredStage) * 2;
+    const reasons: string[] = [
+      `${input.phase}期の${TRAINING_LOAD_LABELS[candidate.primaryStimulus]}候補`,
+    ];
+    if (candidate.athleteTypes?.includes(input.athleteType ?? "balanced")) {
+      score += 1;
+      reasons.push(
+        `${ATHLETE_TYPE_LABELS[input.athleteType ?? "balanced"]}に適した形式`
+      );
+    }
+    if (lastCompleted?.templateId === candidate.id && stableCount < 2 && input.trend !== "ease") {
+      score += 3;
+      reasons.push("前回と同じ形式で進行と比較を確認");
+    }
+    if (lastCompleted?.templateId === candidate.id && strainedCount >= 2) {
+      score -= 4;
+      reasons.push("同形式で負担が続いたため別形式を優先");
+    }
+    for (const entry of history) {
+      if (!onDate) continue;
+      const age = diffDays(entry.date, onDate);
+      if (entry.templateId === candidate.id && age <= 14) score -= 4;
+      else if (entry.variationGroup === candidate.variationGroup && age <= 14) score -= 1.5;
+    }
+    if (input.trend === "ease" && candidate.difficulty >= 4) score -= 2;
+    if (input.loadHigh && candidate.muscleDamageRisk >= 4) score -= 2;
+    return { candidate, score, reasons };
+  });
+  scored.sort(
+    (a, b) => b.score - a.score || a.candidate.id.localeCompare(b.candidate.id)
+  );
+  const selected = scored[0];
+  const repeatedForComparison =
+    lastCompleted?.templateId === selected.candidate.id && stableCount < 2;
+  if (history.some((entry) => entry.templateId === selected.candidate.id)) {
+    selected.reasons.push(
+      repeatedForComparison
+        ? "同一処方を比較目的で再使用"
+        : "代替候補よりフェーズ・進行段階への適合を優先"
+    );
+  } else {
+    selected.reasons.push("直近28日に同一テンプレートの実施なし");
+  }
+  if (input.trend === "ease" || strainedCount >= 2) {
+    selected.reasons.push("未達・高負担の傾向があるため進行段階を上げない");
+  }
+  else if (stableCount >= 2) selected.reasons.push("安定完遂が2回あり次段階を優先");
+  else if (completed.length === 0) selected.reasons.push("同形式の実績不足のため初期候補");
+
+  return {
+    candidate: selected.candidate,
+    reasons: selected.reasons,
+    alternativeTemplateIds: scored.slice(1, 4).map((item) => item.candidate.id),
+    confidence:
+      completed.length >= 3 ? "high" : completed.length >= 1 ? "medium" : "low",
+    repeatedForComparison,
+  };
+}
+
+function targetPacesFor(
+  recipe: SessionTemplateCandidate,
+  input: BuildSpecInput
+): TargetPace[] | undefined {
+  if (recipe.paceSource === "specific") {
+    return recipe.paceDistanceM.map((distanceM) =>
+      specificPace(
+        input.cfeSec,
+        input.category,
+        distanceM,
+        input.category === "race_economy" ? input.economyWeek : undefined
+      )
+    );
+  }
+  if (!input.aerobicProfile) return undefined;
+  if (recipe.paceSource === "lt") {
+    return recipe.paceDistanceM.map((distanceM) => ({
+      distanceM,
+      targetSecFast: input.aerobicProfile!.ltPaceSecPerKm * (distanceM / 1000),
+      targetSecSlow: (input.aerobicProfile!.ltPaceSecPerKm + 5) * (distanceM / 1000),
+      isEstimated: input.aerobicProfile!.isEstimated,
+    }));
+  }
+  return recipe.paceDistanceM.map((distanceM) => ({
+    distanceM,
+    targetSecFast: input.aerobicProfile!.cvPaceSecPerKm.fast * (distanceM / 1000),
+    targetSecSlow: input.aerobicProfile!.cvPaceSecPerKm.slow * (distanceM / 1000),
+    isEstimated: input.aerobicProfile!.isEstimated,
+  }));
 }
 
 /**
@@ -149,24 +780,50 @@ export interface BuildSpecInput {
  * 設定が守れていないときに量を増やしても、守れない練習が増えるだけ。
  */
 export function buildSessionSpec(input: BuildSpecInput): SessionSpec | undefined {
-  const recipe = RECIPES[input.category]?.[input.phase];
-  if (!recipe) return undefined;
+  const candidates = RECIPE_CATALOG[input.category]?.[input.phase];
+  if (!candidates || candidates.length === 0) return undefined;
+  const selection = selectTemplate(candidates, input);
+  const recipe = selection.candidate;
 
   let blocks = recipe.blocks.map((b) => ({ ...b }));
   let restSec = recipe.restSec;
-  const reasons: string[] = [];
+  const reasons: string[] = [...selection.reasons];
   const step = weekStep(input.weekIndex);
+  const previousTemplate = (input.templateHistory ?? [])
+    .filter(
+      (entry) =>
+        entry.category === input.category &&
+        (!input.onDate || entry.date < input.onDate)
+    )
+    .sort((a, b) => b.date.localeCompare(a.date))[0];
+  const formatChanged =
+    previousTemplate !== undefined && previousTemplate.templateId !== recipe.id;
+  // 完全回復を前提とする特異的練習と、短い回復で行う有酸素反復を同じ下限にしない。
+  const minimumRestSec = recipe.paceSource === "specific" ? MIN_REST_SEC : 45;
+  const protectSpecificVolume = ["high_lactate", "modeling", "race_economy"].includes(
+    input.category
+  );
 
   // --- 週による漸進 ---
   if (step === "volume") {
-    blocks = bumpReps(blocks, 1);
-    reasons.push(`${input.phase}期の2週目。まず量を増やします（本数 +1）`);
+    if (formatChanged) {
+      reasons.push("形式を変更した週なので、本数・速度・レストは同時に進めない");
+    } else if (!protectSpecificVolume) {
+      blocks = bumpReps(blocks, 1);
+      reasons.push(`${input.phase}期の2週目。まず量を増やします（本数 +1）`);
+    } else {
+      reasons.push("高乳酸・中距離特異的は本数を機械的に増やさず形式を維持");
+    }
   } else if (step === "density") {
-    blocks = bumpReps(blocks, 1);
-    restSec = Math.max(MIN_REST_SEC, Math.round(restSec * (1 - DENSITY_STEP)));
-    reasons.push(
-      `${input.phase}期の3週目。量は保ったままレストを${Math.round(DENSITY_STEP * 100)}%詰めます`
-    );
+    if (formatChanged) {
+      reasons.push("形式を変更した週なので、本数・速度・レストは同時に進めない");
+    } else {
+      if (!protectSpecificVolume) blocks = bumpReps(blocks, 1);
+      restSec = Math.max(minimumRestSec, Math.round(restSec * (1 - DENSITY_STEP)));
+      reasons.push(
+        `${input.phase}期の3週目。量は保ったままレストを${Math.round(DENSITY_STEP * 100)}%詰めます`
+      );
+    }
   } else if (step === "recovery") {
     blocks = bumpReps(blocks, -1);
     reasons.push("4週目は回復週。3週上げたぶんを落として、次の入り口に備えます");
@@ -182,9 +839,15 @@ export function buildSessionSpec(input: BuildSpecInput): SessionSpec | undefined
     reasons.push(
       "直近3回が設定より遅いので、量を増やさず実行できる形に戻します（本数 −1・レストを15%長く）"
     );
+  } else if (input.trend === "tighten" && !formatChanged) {
+    if (!protectSpecificVolume) {
+      blocks = bumpReps(blocks, 1);
+      reasons.push("直近3回とも設定より速く安定しているので、1本増やします");
+    } else {
+      reasons.push("直近実績は良好ですが、高乳酸・中距離特異的の本数は据え置きます");
+    }
   } else if (input.trend === "tighten") {
-    blocks = bumpReps(blocks, 1);
-    reasons.push("直近3回とも設定より速いので、1本増やします");
+    reasons.push("形式を変更したため、良好な実績があっても同時に本数を増やしません");
   }
 
   if (input.loadHigh) {
@@ -195,17 +858,19 @@ export function buildSessionSpec(input: BuildSpecInput): SessionSpec | undefined
   // 本数は最低1本。0本にすると練習が消える
   blocks = blocks.map((b) => ({ ...b, reps: Math.max(1, b.reps) }));
 
-  const targetPaces = recipe.paceDistanceM.map((d) =>
-    specificPace(
-      input.cfeSec,
-      input.category,
-      d,
-      input.category === "race_economy" ? input.economyWeek : undefined
-    )
-  );
+  const targetPaces = targetPacesFor(recipe, input);
+  if (!targetPaces) return undefined;
 
   return {
     category: input.category,
+    name: recipe.name,
+    templateId: recipe.id,
+    variationGroup: recipe.variationGroup,
+    progressionStage: recipe.progressionStage,
+    selectionReasons: reasons,
+    alternativeTemplateIds: selection.alternativeTemplateIds,
+    confidence: selection.confidence,
+    repeatedForComparison: selection.repeatedForComparison,
     blocks,
     restSec,
     restType: recipe.restType,
@@ -240,7 +905,8 @@ export function describeSpec(
     .map((p) => `${p.distanceM}m ${p.targetSecFast.toFixed(1)}〜${p.targetSecSlow.toFixed(1)}秒`)
     .join(" / ");
   const rest = restSec % 60 === 0 ? `${restSec / 60}分` : `${restSec}秒`;
-  return `${body} @${pace} r${rest}（${REST_JP[restType]}）`;
+  const estimateNote = paces.some((p) => p.isEstimated) ? " ※推定値" : "";
+  return `${body} @${pace} r${rest}（${REST_JP[restType]}）${estimateNote}`;
 }
 
 // ---------------------------------------------------------------------------
