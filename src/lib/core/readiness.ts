@@ -78,13 +78,17 @@ export function computeReadiness(input: ReadinessInput): Readiness {
   if (acwr === undefined) {
     b.push({ label: "ACWR", delta: 0, detail: "データ不足のため評価対象外" });
   } else if (acwr > 1.5) {
-    b.push({ label: "ACWR", delta: -20, detail: `${acwr.toFixed(2)}（急性負荷の増大）` });
+    b.push({
+      label: "ACWR",
+      delta: -10,
+      detail: `${acwr.toFixed(2)}（直近負荷が大きく増加。単独では可否を決めない）`,
+    });
   } else if (acwr > 1.3) {
-    b.push({ label: "ACWR", delta: -8, detail: `${acwr.toFixed(2)}（やや高い）` });
+    b.push({ label: "ACWR", delta: -4, detail: `${acwr.toFixed(2)}（増加側）` });
   } else if (acwr < 0.8) {
-    b.push({ label: "ACWR", delta: -3, detail: `${acwr.toFixed(2)}（負荷不足側）` });
+    b.push({ label: "ACWR", delta: 0, detail: `${acwr.toFixed(2)}（低め。回復週・欠測も確認）` });
   } else {
-    b.push({ label: "ACWR", delta: 0, detail: `${acwr.toFixed(2)}（適正）` });
+    b.push({ label: "ACWR", delta: 0, detail: `${acwr.toFixed(2)}（過去28日平均に近い）` });
   }
 
   // --- 3. 前回高負荷練習からの回復間隔（高負荷練習のときだけ効く） ---

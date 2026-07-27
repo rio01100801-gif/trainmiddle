@@ -111,6 +111,57 @@ describe("直近の実行状況", () => {
     expect(samples).toHaveLength(0);
     expect(executionTrend(samples).verdict).toBe("hold");
   });
+
+  it("同カテゴリでも反復距離が違う実績を個人補正へ混ぜない", () => {
+    const old300 = hl("2026-07-08");
+    const recent600 = makeSession("2026-07-15", "high_lactate", {
+      prescription: "600m × 2 @86秒 r8分",
+      targetPaces: [{ distanceM: 600, targetSecFast: 85, targetSecSlow: 87 }],
+    });
+    const next300 = hl("2026-07-22");
+    const r600: SessionResult = {
+      ...res(recent600, [85.5, 86]),
+      interval: {
+        reps: 2,
+        distanceM: 600,
+        targetSec: 86,
+        restType: "full",
+        restSec: 480,
+        results: [85.5, 86].map((actualSec, index) => ({
+          index: index + 1,
+          distanceM: 600,
+          targetSec: 86,
+          actualSec,
+        })),
+      },
+      lapDistancesM: [600, 600],
+    };
+    const samples = executionSamples(
+      [old300, recent600, next300],
+      [res(old300, [42, 42, 42, 42]), r600],
+      "high_lactate",
+      next300.date,
+      undefined,
+      next300
+    );
+    expect(samples).toHaveLength(1);
+    expect(samples[0].distanceM).toBe(300);
+  });
+
+  it("設定より速くても高RPE・重い脚が続く場合は設定を締めない", () => {
+    const sessions = [hl("2026-07-01"), hl("2026-07-08"), hl("2026-07-15")];
+    const results = sessions.map((session) =>
+      res(session, [40, 40.2, 40.1, 40], {
+        achievement: "achieved",
+        rpe: 9,
+        nextDayLegs: "heavy",
+      })
+    );
+    const trend = executionTrend(
+      executionSamples(sessions, results, "high_lactate", "2026-07-22")
+    );
+    expect(trend.verdict).toBe("hold");
+  });
 });
 
 describe("ジョグを状態の測定値として使う", () => {

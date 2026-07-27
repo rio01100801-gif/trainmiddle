@@ -75,6 +75,15 @@ describe("書き出し", () => {
 describe("復元", () => {
   it("上書きで丸ごと戻る", () => {
     const src = setup();
+    src.saveMarker({
+      id: "marker-threshold",
+      date: "2026-07-18",
+      type: "workout",
+      purpose: "threshold",
+      description: "閾値走",
+      resultLapsSec: [1800],
+      lapDistancesM: [8000],
+    });
     src.saveWeekTemplate({
       enabled: true,
       slots: { 1: "off", 3: "point" },
@@ -90,6 +99,12 @@ describe("復元", () => {
     expect(dst.listSessions().length).toBe(src.listSessions().length);
     expect(dst.getCfe()!.estimated800mSec).toBe(src.getCfe()!.estimated800mSec);
     expect(dst.getWeekTemplate()?.modes).toEqual({ 1: "preferred", 3: "fixed" });
+    expect(dst.listMarkers().find((marker) => marker.id === "marker-threshold")?.purpose).toBe(
+      "threshold"
+    );
+    expect(dst.listSessions().some((session) => session.aerobicPurpose === "recovery")).toBe(
+      true
+    );
   });
 
   it("統合しても重複しない", () => {

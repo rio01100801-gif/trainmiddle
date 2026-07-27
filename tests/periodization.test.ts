@@ -153,4 +153,12 @@ describe("4-6 プラン自動生成", () => {
       expect(threshold.prescription).toContain("推定");
     }
   });
+
+  it("回復ジョグと通常ジョグ・ロングランの目的を保存データで区別する", () => {
+    const recovery = plan.sessions.find((session) => session.name.includes("回復ジョグ"));
+    const long = plan.sessions.find((session) => session.name === "ロングラン");
+    expect(recovery?.aerobicPurpose).toBe("recovery");
+    expect(recovery?.prescription).toContain("RPE 2〜3");
+    expect(long?.aerobicPurpose).toBe("long_run");
+  });
 });

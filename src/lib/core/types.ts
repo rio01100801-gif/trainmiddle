@@ -96,6 +96,21 @@ export interface Goal {
 // ---------------------------------------------------------------------------
 
 export type FitnessMarkerType = "race" | "workout" | "test";
+/**
+ * 有酸素実測の目的。
+ *
+ * 旧データには無いため任意。用途が分からない自動取込を、距離だけでLT走と
+ * 決めつけないために使う。手入力の旧データは後方互換のため低信頼度で扱う。
+ */
+export type FitnessMarkerPurpose =
+  | "threshold"
+  | "tempo"
+  | "cv"
+  | "race"
+  | "long_run"
+  | "easy"
+  | "recovery"
+  | "unknown";
 
 export interface FitnessMarker {
   id: string;
@@ -110,6 +125,7 @@ export interface FitnessMarker {
   maxHr?: number;
   rpe?: number; // 1-10
   conditionNote?: string;
+  purpose?: FitnessMarkerPurpose;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +151,7 @@ export type SessionCategory =
 
 export type SessionStatus = "planned" | "completed" | "modified" | "skipped";
 export type SessionOrigin = "generated" | "manual" | "recovery";
+export type AerobicPurpose = "aerobic" | "recovery" | "long_run" | "easy";
 export type RiskLevel = "low" | "mid" | "high";
 export type TimeOfDay = "am" | "pm";
 export type Phase = "Base" | "Build" | "Specific" | "Modeling" | "Taper";
@@ -192,6 +209,11 @@ export interface Session {
   durationMin?: number;
   /** ジョグ等のペース（秒/km）。RULE-02 / RULE-13 の判定に使用 */
   paceSecPerKm?: number;
+  /**
+   * aerobicカテゴリ内の目的。旧データでは未設定なので、表示・集計側は
+   * name / durationMin による既存判定へフォールバックする。
+   */
+  aerobicPurpose?: AerobicPurpose;
   surface?: Surface;
   shoes?: string;
   /** ラウンド間の回復プロトコルとして生成されたセッション（RULE-20 の例外） */

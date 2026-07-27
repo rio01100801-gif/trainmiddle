@@ -282,13 +282,14 @@ describe("過去データ → セッション/結果/マーカー変換", () => 
     expect(session.distanceKm).toBeGreaterThan(0);
   });
 
-  it("持続走はLT推定用のマーカーになる", () => {
+  it("持続走は用途不明のマーカーになり、距離だけでLT走と断定しない", () => {
     const fm = toFitnessMarker(
       entry({ kind: "continuous", date: "2026-07-01", distanceKm: 8, durationMin: 30.5, avgHr: 172 })
     )!;
     expect(fm.resultLapsSec[0]).toBeCloseTo(1830, 0);
     expect(fm.lapDistancesM![0]).toBe(8000);
     expect(fm.avgHr).toBe(172);
+    expect(fm.purpose).toBe("unknown");
   });
 
   it("3km未満の持続走はLT推定に使わない", () => {

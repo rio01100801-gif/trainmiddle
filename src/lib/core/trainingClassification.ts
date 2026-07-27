@@ -159,6 +159,68 @@ export function isDemandingNeuromuscularSession(session: Session): boolean {
   return neuromuscularDose(session).demanding;
 }
 
+export interface GlycolyticDose {
+  fastVolumeM?: number;
+  repDistanceM?: number;
+  reps?: number;
+  restSec?: number;
+  fullRecovery: boolean;
+  lowVolumeReviewCandidate: boolean;
+  reason: string;
+}
+
+/**
+ * 高乳酸/モデリングの「4日間隔を個別検討できる低容量か」を構造化する。
+ *
+ * 900mは安全を保証する理想値ではない。現行の標準高乳酸（300m×5=1500m）の
+ * 60%以下を「低容量候補」として拾う運用境界で、実際の4日化には前回の完遂・
+ * RPE・翌日の脚・日次疲労をRULE-01側で追加確認する。
+ */
+export function glycolyticDose(session: Session): GlycolyticDose {
+  const text = `${session.name} ${session.prescription}`.replace(/\s+/g, " ");
+  const repeated = /(\d{2,4})\s*m\s*[×xX]\s*(\d{1,2})/i.exec(text);
+  const repDistanceM = repeated ? firstNumber(repeated[1]) : undefined;
+  const reps = repeated ? firstNumber(repeated[2]) : undefined;
+  let fastVolumeM =
+    repDistanceM !== undefined && reps !== undefined ? repDistanceM * reps : undefined;
+  if (fastVolumeM === undefined && /\+/.test(text)) {
+    const distances = [...text.matchAll(/(\d{2,4})\s*m/gi)]
+      .map((match) => firstNumber(match[1]))
+      .filter((value): value is number => value !== undefined);
+    if (distances.length >= 2) fastVolumeM = distances.reduce((sum, value) => sum + value, 0);
+  }
+  const restMinutes = /(?:r|rest|レスト)\s*(\d+(?:\.\d+)?)\s*分/i.exec(text);
+  const restSeconds = /(?:r|rest|レスト)\s*(\d+)\s*秒/i.exec(text);
+  const restSec = restMinutes
+    ? Number(restMinutes[1]) * 60
+    : restSeconds
+      ? Number(restSeconds[1])
+      : undefined;
+  const fullRecovery = /完全休息|完全回復/i.test(text) || (restSec !== undefined && restSec >= 300);
+  const lowVolumeReviewCandidate =
+    (session.category === "high_lactate" || session.category === "modeling") &&
+    fastVolumeM !== undefined &&
+    fastVolumeM <= 900 &&
+    fullRecovery &&
+    session.riskLevel !== "high";
+  return {
+    fastVolumeM,
+    repDistanceM,
+    reps,
+    restSec,
+    fullRecovery,
+    lowVolumeReviewCandidate,
+    reason:
+      fastVolumeM === undefined
+        ? "高速区間の総量を本文から確認できません"
+        : !fullRecovery
+          ? `高速区間${fastVolumeM}mですが完全回復を確認できません`
+          : lowVolumeReviewCandidate
+            ? `高速区間${fastVolumeM}m・完全回復の低容量候補`
+            : `高速区間${fastVolumeM}mで標準5日間隔を維持します`,
+  };
+}
+
 /**
  * 日程間隔を必ず確保する主負荷。
  * 短い neural は除外するが、明示的に長い反復・大容量なら名前だけで軽負荷にしない。
@@ -183,7 +245,8 @@ export function isRecoverySession(session: Session): boolean {
   return (
     session.category === "off" ||
     (session.category === "aerobic" &&
-      ((session.durationMin ?? 0) <= 35 || /回復|リカバリー/.test(session.name)))
+      (session.aerobicPurpose === "recovery" ||
+        ((session.durationMin ?? 0) <= 35 || /回復|リカバリー|調整/.test(session.name))))
   );
 }
 

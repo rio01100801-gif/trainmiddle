@@ -11,6 +11,7 @@ import type {
   Race,
   Session,
   SessionCategory,
+  AerobicPurpose,
   StrengthSession,
   TargetPace,
 } from "./types";
@@ -62,15 +63,26 @@ interface DayTemplate {
   transfer1500m: number;
   risk: "low" | "mid" | "high";
   timeOfDay?: "am" | "pm";
+  aerobicPurpose?: AerobicPurpose;
 }
 
 const jog = (min: number, name = "ジョグ"): DayTemplate => ({
   category: "aerobic",
   name,
+  aerobicPurpose: /回復|調整/.test(name) ? "recovery" : "aerobic",
   buildPrescription: (_g, a) => {
     const pace = (a.jogPaceSecPerKm.fast + a.jogPaceSecPerKm.slow) / 2;
+    const recovery = /回復|調整/.test(name);
     return {
-      prescription: `${min}分ジョグ @${fmtPacePerKm(a.jogPaceSecPerKm.fast)}〜${fmtPacePerKm(a.jogPaceSecPerKm.slow)}（最大心拍70%未満厳守）`,
+      prescription: recovery
+        ? `${min}分回復ジョグ（会話可能・RPE 2〜3を優先。${fmtPacePerKm(
+            a.jogPaceSecPerKm.slow
+          )}は速くしすぎない目安で、疲労・暑熱時は遅くてよい）`
+        : `${min}分有酸素ジョグ @${fmtPacePerKm(
+            a.jogPaceSecPerKm.fast
+          )}〜${fmtPacePerKm(
+            a.jogPaceSecPerKm.slow
+          )}（会話可能な呼吸・RPE 3〜4を優先。暑熱時はペースを強制しない）`,
       targetPaces: [],
       durationMin: min,
       distanceKm: Math.round(((min * 60) / pace) * 10) / 10,
@@ -85,6 +97,7 @@ const jog = (min: number, name = "ジョグ"): DayTemplate => ({
 const longRun = (min: number): DayTemplate => ({
   category: "aerobic",
   name: "ロングラン",
+  aerobicPurpose: "long_run",
   buildPrescription: (_g, a) => {
     const pace = (a.longRunPaceSecPerKm.fast + a.longRunPaceSecPerKm.slow) / 2;
     return {
@@ -789,6 +802,7 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
         distanceKm: built.distanceKm,
         durationMin: built.durationMin,
         paceSecPerKm: built.paceSecPerKm,
+        aerobicPurpose: tpl.aerobicPurpose,
         surface: "track",
       };
       sessions.push(session);

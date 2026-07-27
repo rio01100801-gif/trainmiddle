@@ -18,7 +18,8 @@ import { completeRunTriple, formatTimeInput } from "@/lib/core/inputFormat";
 import { parseRest } from "@/lib/core/bulkImport";
 import { avgPaceSecPerKm, buildRepResults, REST_LABELS } from "@/lib/core/workoutLog";
 import { evaluateEnvironment, environmentNote, WIND_LABELS } from "@/lib/core/environment";
-import type { RestType } from "@/lib/core/types";
+import type { FitnessMarkerPurpose, RestType } from "@/lib/core/types";
+import type { AerobicProfile } from "@/lib/core/pace";
 
 // ---------------------------------------------------------------------------
 
@@ -630,8 +631,9 @@ function AerobicMarkerForm({ defaultDate }: { defaultDate?: string }) {
     distanceKm: "",
     time: "",
     avgHr: "",
+    purpose: "threshold" as FitnessMarkerPurpose,
   });
-  const [profile, setProfile] = useState<any | null>(null);
+  const [profile, setProfile] = useState<AerobicProfile | null>(null);
   const [msg, setMsg] = useState("");
 
   const load = useCallback(() => {
@@ -662,6 +664,7 @@ function AerobicMarkerForm({ defaultDate }: { defaultDate?: string }) {
         resultLapsSec: [sec],
         lapDistancesM: [km * 1000],
         avgHr: form.avgHr ? Number(form.avgHr) : undefined,
+        purpose: form.type === "race" ? "race" : form.purpose,
       }),
     });
     const d = await res.json();
@@ -700,11 +703,39 @@ function AerobicMarkerForm({ defaultDate }: { defaultDate?: string }) {
           <select
             className="w-full"
             value={form.type}
-            onChange={(e) => setForm({ ...form, type: e.target.value })}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                type: e.target.value,
+                purpose: e.target.value === "race" ? "race" : form.purpose,
+              })
+            }
           >
             <option value="workout">練習（ペース走・閾値走）</option>
             <option value="test">テスト走</option>
             <option value="race">レース（3000m以上）</option>
+          </select>
+        </label>
+        <label className="text-[13px] col-span-2 sm:col-auto">
+          <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
+            この走行の目的
+          </span>
+          <select
+            className="w-full"
+            value={form.type === "race" ? "race" : form.purpose}
+            disabled={form.type === "race"}
+            onChange={(e) =>
+              setForm({ ...form, purpose: e.target.value as FitnessMarkerPurpose })
+            }
+          >
+            <option value="threshold">閾値走</option>
+            <option value="tempo">テンポ・ペース走</option>
+            <option value="cv">CV</option>
+            <option value="race">3000〜5000mレース</option>
+            <option value="long_run">ロングラン</option>
+            <option value="easy">イージー走</option>
+            <option value="recovery">回復ジョグ</option>
+            <option value="unknown">不明（LT推定に使わない）</option>
           </select>
         </label>
         <label className="text-[13px]">
@@ -761,13 +792,16 @@ function AerobicMarkerForm({ defaultDate }: { defaultDate?: string }) {
           {profile.isEstimated ? (
             <span style={{ color: "var(--amber)" }}>（⚠ 推定値。実測の入力を推奨）</span>
           ) : (
-            <span style={{ color: "var(--volt)" }}>（実測ベース）</span>
+            <span style={{ color: "var(--volt)" }}>
+              （実測ベース・信頼度{profile.confidence === "high" ? "高" : profile.confidence === "medium" ? "中" : "低"}）
+            </span>
           )}
           <ul className="text-[11px] mt-1.5 space-y-0.5 num" style={{ color: "var(--text-2)" }}>
             <li>閾値(LT): {fmtPace(profile.ltPaceSecPerKm)}</li>
             <li>
               CV: {fmtPace(profile.cvPaceSecPerKm?.fast)} 〜 {fmtPace(profile.cvPaceSecPerKm?.slow)}
             </li>
+            <li style={{ color: "var(--text-3)" }}>CV根拠: {profile.cvSourceDescription}</li>
             <li>
               ジョグ: {fmtPace(profile.jogPaceSecPerKm?.fast)} 〜{" "}
               {fmtPace(profile.jogPaceSecPerKm?.slow)}
@@ -779,13 +813,13 @@ function AerobicMarkerForm({ defaultDate }: { defaultDate?: string }) {
                 算出の内訳（採用{est.samples.length}本 / 除外{est.excluded.length}本）
               </summary>
               <div className="mt-1 space-y-0.5">
-                {est.samples.map((s: any, i: number) => (
+                {est.samples.map((s, i) => (
                   <div key={i} style={{ color: "var(--text-2)" }}>
                     ✓ {s.date} {s.description} → {fmtPace(s.ltPaceSecPerKm)}（重み{" "}
                     {s.weight.toFixed(2)}）
                   </div>
                 ))}
-                {est.excluded.map((s: any, i: number) => (
+                {est.excluded.map((s, i) => (
                   <div key={`e${i}`} style={{ color: "var(--text-3)" }}>
                     ✕ {s.date} {s.description} — {s.excluded}
                   </div>

@@ -539,7 +539,10 @@ await page.waitForTimeout(1500);
 const healthText = await page.textContent("body");
 if (!healthText.includes("取り込み完了")) fail("Apple Health取り込みが完了しない: " + healthText.slice(0, 200));
 if (!healthText.includes("最終同期")) fail("最終同期が表示されない");
-step("Apple Health取り込みOK（ワークアウト→LT / 睡眠・安静時HR→疲労シグナル）");
+if (!healthText.includes("LTへは自動反映していません")) {
+  fail("用途不明のApple Health走行がLTへ自動反映される表示になっている");
+}
+step("Apple Health取り込みOK（用途不明ランはLT除外 / 睡眠・安静時HR→疲労シグナル）");
 await shot("14_health_import");
 
 // ---- 8c. F-2: 実際の練習日誌をそのまま貼り付ける ----
@@ -992,7 +995,9 @@ if (adaptive.verdict !== "ease") {
   fail(`M-2: 設定より遅い実測が3回続いたのに緩めない（${adaptive.verdict}）`);
 }
 if (!(adaptive.offset > 0)) fail("M-2: 緩める量が出ていない");
-if (!adaptive.reasons.join().includes("平均乖離")) fail("M-2: 理由が出ていない");
+if (!/平均乖離|未達|高い負担/.test(adaptive.reasons.join())) {
+  fail("M-2: 実測の乖離・未達・負担反応の理由が出ていない");
+}
 if (!adaptive.criteria || !adaptive.criteria.includes("打ち切る")) {
   fail("M-3: 処方に中止基準が付いていない");
 }

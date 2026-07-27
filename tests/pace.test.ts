@@ -4,6 +4,7 @@ import {
   specificPace,
   buildAerobicProfile,
   estimateLtFromMarkers,
+  estimateCriticalVelocity,
   isGrayZonePace,
 } from "@/lib/core/pace";
 import type { FitnessMarker } from "@/lib/core/types";
@@ -81,6 +82,77 @@ describe("4-2 ペース自動計算", () => {
       lapDistancesM: Array(8).fill(1000),
     };
     expect(estimateLtFromMarkers([marker], "2026-04-01")).toBeUndefined();
+  });
+
+  it("回復ジョグと用途不明の自動取込をLT材料へ混ぜない", () => {
+    const threshold: FitnessMarker = {
+      id: "threshold",
+      date: "2026-03-28",
+      type: "workout",
+      purpose: "threshold",
+      description: "閾値走",
+      resultLapsSec: [8 * 230],
+      lapDistancesM: [8000],
+    };
+    const recovery: FitnessMarker = {
+      ...threshold,
+      id: "recovery",
+      purpose: "recovery",
+      description: "回復ジョグ",
+      resultLapsSec: [8 * 300],
+    };
+    const imported: FitnessMarker = {
+      ...threshold,
+      id: "ah-2026-03-29-800",
+      purpose: "unknown",
+      description: "Apple Health",
+      resultLapsSec: [8 * 280],
+    };
+    const estimate = estimateLtFromMarkers(
+      [threshold, recovery, imported],
+      "2026-04-01"
+    )!;
+    expect(estimate.ltPaceSecPerKm).toBeCloseTo(230, 0);
+    expect(estimate.excluded.map((sample) => sample.description)).toEqual(
+      expect.arrayContaining(["回復ジョグ", "Apple Health"])
+    );
+  });
+
+  it("異なる3000m・5000m実測が揃えばCVを距離-時間直線から算出する", () => {
+    const markers: FitnessMarker[] = [
+      {
+        id: "lt",
+        date: "2026-03-25",
+        type: "workout",
+        purpose: "threshold",
+        description: "閾値走",
+        resultLapsSec: [8 * 210],
+        lapDistancesM: [8000],
+      },
+      {
+        id: "3k",
+        date: "2026-03-26",
+        type: "race",
+        purpose: "race",
+        description: "3000m",
+        resultLapsSec: [540],
+        lapDistancesM: [3000],
+      },
+      {
+        id: "5k",
+        date: "2026-03-27",
+        type: "race",
+        purpose: "race",
+        description: "5000m",
+        resultLapsSec: [930],
+        lapDistancesM: [5000],
+      },
+    ];
+    const direct = estimateCriticalVelocity(markers, "2026-04-01", 205)!;
+    expect(direct.paceSecPerKm).toBeCloseTo(195, 1);
+    const profile = buildAerobicProfile(markers, "2026-04-01");
+    expect(profile.cvEstimate).toBeDefined();
+    expect(profile.cvSourceDescription).toContain("異なる2距離");
   });
 
   it("グレーゾーン判定: LT+30〜50秒/km", () => {

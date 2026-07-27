@@ -93,15 +93,32 @@ describe("4-9 累積負荷とACWR", () => {
     expect(r.rating).toBe("high_risk");
   });
 
-  it("日次負荷はskippedとoffを除外する", () => {
-    const s1 = makeSession("2026-04-01", "high_lactate", { durationMin: 60 });
+  it("日次負荷は実施済みだけを数え、未実施予定・skippedを除外する", () => {
+    const s1 = makeSession("2026-04-01", "high_lactate", {
+      durationMin: 60,
+      status: "completed",
+    });
     const s2 = makeSession("2026-04-01", "aerobic", { status: "skipped" });
+    const planned = makeSession("2026-04-02", "high_lactate", { durationMin: 60 });
     const loads = dailyLoads({
-      sessions: [s1, s2],
+      sessions: [s1, s2, planned],
       resultsBySessionId: new Map<string, SessionResult>(),
       strengthSessions: [],
     });
     expect(loads.get("2026-04-01")).toBe(8 * 60); // 期待RPE8 × 60分
+    expect(loads.has("2026-04-02")).toBe(false);
+  });
+
+  it("ACWRは記録日数と信頼度を返す", () => {
+    const loads = new Map<string, number>();
+    for (let i = 0; i < 21; i++) {
+      const d = new Date(Date.UTC(2026, 3, 8 + i));
+      loads.set(d.toISOString().slice(0, 10), 200);
+    }
+    const result = acwr(loads, "2026-04-28");
+    expect(result.recordedDays).toBe(21);
+    expect(result.confidence).toBe("high");
+    expect(result.coveragePct).toBeCloseTo(0.75, 2);
   });
 
   it("プライオ接地回数の週間増加率10%超でWARN", () => {

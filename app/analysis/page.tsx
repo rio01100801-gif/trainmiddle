@@ -202,12 +202,22 @@ export default function AnalysisPage() {
           empty="ACWRは直近28日のうち14日以上の記録が必要です。過去データの入力でも埋められます。"
         />
         {data.acwrNow ? (
-          <p className="text-sm mt-1">
-            現在のACWR: <b>{data.acwrNow.acwr?.toFixed(2) ?? "-"}</b>（{data.acwrNow.rating}） {data.acwrNow.note}
-          </p>
+          <div className="text-sm mt-1">
+            現在のACWR: <b>{data.acwrNow.acwr?.toFixed(2) ?? "-"}</b>
+            {" "}（{data.acwrNow.label}／信頼度
+            {data.acwrNow.confidence === "high"
+              ? "高"
+              : data.acwrNow.confidence === "medium"
+                ? "中"
+                : "低"}
+            ・28日中{data.acwrNow.recordedDays}日）
+            <p className="text-xs mt-1" style={{ color: "var(--text-2)" }}>
+              {data.acwrNow.note}
+            </p>
+          </div>
         ) : null}
         <p className="text-xs" style={{ color: "var(--text-2)" }}>
-          上: 日次負荷 ／ 下: ACWR。ACWRは単独で判断せず、信号機・CFE・主観と併せて確認してください。
+          上: 実施した日次負荷 ／ 下: ACWR。未実施予定は含めません。ACWRは単独で判断せず、睡眠・疲労・筋肉痛・完遂度と併せて確認してください。
         </p>
       </Card>
 

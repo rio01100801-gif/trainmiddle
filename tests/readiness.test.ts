@@ -19,9 +19,9 @@ describe("セッション準備度スコア", () => {
     expect(r.level).toBe("high");
   });
 
-  it("黄信号で-10、ACWR1.32で-8 → 82（モックアップの例と一致）", () => {
+  it("黄信号を主に評価し、ACWR増加側は補助的に-4", () => {
     const r = computeReadiness(base({ signal: "yellow", acwr: 1.32 }));
-    expect(r.score).toBe(82);
+    expect(r.score).toBe(86);
     expect(r.level).toBe("high");
   });
 
@@ -31,10 +31,10 @@ describe("セッション準備度スコア", () => {
     expect(r.headline).toContain("有酸素か休養");
   });
 
-  it("ACWR1.5超で大きく減点", () => {
+  it("ACWR1.5超でも単独では練習不可を決めない", () => {
     const r = computeReadiness(base({ acwr: 1.7 }));
-    expect(r.score).toBe(80);
-    expect(r.breakdown.find((c) => c.label === "ACWR")!.delta).toBe(-20);
+    expect(r.score).toBe(90);
+    expect(r.breakdown.find((c) => c.label === "ACWR")!.delta).toBe(-10);
   });
 
   it("回復間隔が中1日未満なら-15（質練習のみ）", () => {

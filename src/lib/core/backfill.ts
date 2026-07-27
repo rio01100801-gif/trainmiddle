@@ -717,6 +717,7 @@ export function toFitnessMarker(e: PastEntry): FitnessMarker | undefined {
     avgHr: e.avgHr,
     rpe: e.rpe,
     conditionNote: e.note,
+    purpose: "unknown",
   };
 }
 

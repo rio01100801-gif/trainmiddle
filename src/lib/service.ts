@@ -187,6 +187,35 @@ function dayTempsFromResults(repo: Store): Record<string, number> {
   return map;
 }
 
+/**
+ * ACWRの増加を計画へ反映する前に、本人の回復・実施記録で裏付ける。
+ * 比率単独では、回復週明けや記録漏れまで「危険」と誤判定するため。
+ */
+function hasRecentLoadConcern(repo: Store, onDate: string): boolean {
+  const checkStart = addDays(onDate, -6);
+  const checkConcern = repo.listDailyChecks().some(
+    (check) =>
+      check.date >= checkStart &&
+      check.date <= onDate &&
+      (check.signal === "yellow" ||
+        check.signal === "red" ||
+        (check.overallFatigue ?? 0) >= 4 ||
+        (check.legFatigue ?? 0) >= 4 ||
+        (check.sleepQuality ?? 5) <= 2)
+  );
+  const resultStart = addDays(onDate, -13);
+  const resultConcern = repo.listResults().some(
+    (result) =>
+      result.date >= resultStart &&
+      result.date <= onDate &&
+      (result.aborted === true ||
+        result.achievement === "partial" ||
+        result.achievement === "failed" ||
+        result.nextDayLegs === "heavy")
+  );
+  return checkConcern || resultConcern;
+}
+
 export function buildRuleContext(repo: Store, evaluationDate: string): RuleContext {
   const athlete = repo.getAthlete();
   if (!athlete) throw new Error("選手プロフィールが未登録です");
@@ -202,6 +231,7 @@ export function buildRuleContext(repo: Store, evaluationDate: string): RuleConte
     resultsBySessionId: resultsMap,
     strengthSessions: repo.listStrengths(),
   });
+  const currentLoad = acwr(loads, evaluationDate);
   const markers = repo.listMarkers();
   const aerobic = buildAerobicProfile(
     markers,
@@ -221,7 +251,8 @@ export function buildRuleContext(repo: Store, evaluationDate: string): RuleConte
     ltPaceSecPerKm: aerobic.isEstimated ? undefined : aerobic.ltPaceSecPerKm,
     dayTempsC: dayTempsFromResults(repo),
     evaluationDate,
-    currentAcwr: acwr(loads, evaluationDate).acwr,
+    currentAcwr: currentLoad.acwr,
+    currentAcwrConfidence: currentLoad.confidence,
   };
 }
 
@@ -383,7 +414,7 @@ export function regeneratePlan(repo: Store, startDate: string): {
       strengthSessions: repo.listStrengths(),
     }),
     startDate
-  ).acwr;
+  );
 
   const plan = generatePlan({
     athlete,
@@ -396,8 +427,11 @@ export function regeneratePlan(repo: Store, startDate: string): {
     customMenus,
     limiterWeights,
     recentTrend,
-    // 1.3を超えたら増やす方向の漸進を止める（RULE-16の警告域に入る前に手前で抑える）
-    loadHigh: acwrNow !== undefined && acwrNow > 1.3,
+    // ACWRは補助指標。増加側で、かつ疲労・未達の実測がある場合だけ漸進を止める。
+    loadHigh:
+      acwrNow.acwr !== undefined &&
+      acwrNow.acwr > 1.3 &&
+      hasRecentLoadConcern(repo, startDate),
   });
 
   // 3-2: 使われた自作メニューの使用実績を更新する
@@ -600,12 +634,35 @@ export function processResult(
     if (c.action === "replace_with_off" || c.action === "replace_with_aerobic") {
       const target = repo.getSession(c.sessionId);
       if (target && !target.isFixed) {
-        repo.saveSession({
-          ...target,
-          category: c.action === "replace_with_off" ? "off" : "aerobic",
-          name: c.action === "replace_with_off" ? "完全休養（自動置換）" : "回復ジョグ（自動置換）",
-          status: "modified",
-        });
+        const replaceWithOff = c.action === "replace_with_off";
+        repo.saveSession(
+          replaceWithOff
+            ? {
+                ...target,
+                category: "off",
+                name: "完全休養（自動置換）",
+                prescription: "完全休養",
+                targetPaces: [],
+                durationMin: undefined,
+                distanceKm: undefined,
+                paceSecPerKm: undefined,
+                aerobicPurpose: undefined,
+                status: "modified",
+              }
+            : {
+                ...target,
+                category: "aerobic",
+                name: "回復ジョグ（自動置換）",
+                prescription:
+                  "30分回復ジョグ（会話可能・RPE 2〜3を優先。疲労・暑熱時はペースを強制しない）",
+                targetPaces: [],
+                durationMin: 30,
+                distanceKm: undefined,
+                paceSecPerKm: undefined,
+                aerobicPurpose: "recovery",
+                status: "modified",
+              }
+        );
       }
     }
     repo.logChange(c);
@@ -867,7 +924,8 @@ export function importAppleHealth(
     dailyCount++;
   }
 
-  // --- ワークアウト → FitnessMarker（LT推定の材料） ---
+  // --- ワークアウト → FitnessMarker ---
+  // HealthKitだけでは走行目的が分からないため、unknownで保存しLTには自動採用しない。
   let workoutCount = 0;
   for (const w of parsed.workouts) {
     const fm = toFitnessMarker(w);
@@ -903,7 +961,7 @@ export function importAppleHealth(
     sync,
     signalChanges,
     hrvNote: hrv.note,
-    ltUpdated: workoutCount > 0,
+    ltUpdated: false,
   };
 }
 
@@ -1585,7 +1643,7 @@ export function adaptiveContext(
   const athlete = repo.getAthlete();
 
   const trend = executionTrend(
-    executionSamples(sessions, results, session.category, session.date)
+    executionSamples(sessions, results, session.category, session.date, undefined, session)
   );
   const jog = jogEfficiency(results, today);
   // Q-1: ポイント練習側の心拍。同じ設定・同じタイムでも心拍が上がっていれば疲労
@@ -1729,6 +1787,7 @@ export function applyAdaptiveProposal(
     targetPaces: proposal.afterPaces,
     prescription: proposal.afterPrescription,
     status: "modified",
+    userEdited: true,
   });
   for (const c of proposal.changes) repo.logChange(c, true);
   repo.deleteKv(proposalRejectKey(sessionId));
@@ -2363,7 +2422,14 @@ export function sessionPlanVariants(
   const race = repo.listRaces().find((r) => r.id === goal?.targetRaceId);
   const phase: Phase = race ? phaseForDate(session.date, race.dateStart) : "Base";
   const trend = executionTrend(
-    executionSamples(repo.listSessions(), repo.listResults(), session.category, session.date)
+    executionSamples(
+      repo.listSessions(),
+      repo.listResults(),
+      session.category,
+      session.date,
+      undefined,
+      session
+    )
   ).verdict;
 
   const base = buildSessionSpec({

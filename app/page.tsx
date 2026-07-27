@@ -982,11 +982,11 @@ function Recovery({ d }: { d: any }) {
 
       <div className="grid grid-cols-3 gap-3 mt-4 pt-3.5 border-t" style={{ borderColor: "var(--border)" }}>
         <MiniMetric
-          label="ACWR"
+          label="実施負荷比"
           value={acwr?.acwr !== undefined ? acwr.acwr.toFixed(2) : "-"}
           color={
             acwr?.rating === "high_risk"
-              ? "var(--red)"
+              ? "var(--amber)"
               : acwr?.rating === "caution"
               ? "var(--amber)"
               : undefined

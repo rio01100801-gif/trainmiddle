@@ -1,6 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { runRuleEngine, weeklySummary } from "@/lib/core/rules";
-import { ctx, makeSession, makeStrength, makeRace, violationsOf, testAthlete } from "./helpers";
+import {
+  ctx,
+  makeSession,
+  makeStrength,
+  makeRace,
+  makeResult,
+  violationsOf,
+  testAthlete,
+} from "./helpers";
 
 describe("RULE-01 高乳酸の頻度と間隔", () => {
   it("5日未満の間隔でERROR", () => {
@@ -36,7 +44,7 @@ describe("RULE-01 高乳酸の頻度と間隔", () => {
     expect(violationsOf(runRuleEngine(c), "RULE-01").length).toBe(0);
   });
 
-  it("モデリング期（レース14〜28日前）の3日間隔2連は1回だけ許可", () => {
+  it("モデリング期でも3日間隔をカテゴリ名だけで許可しない", () => {
     const race = makeRace("2026-05-10");
     const c = ctx({
       races: [race],
@@ -45,7 +53,49 @@ describe("RULE-01 高乳酸の頻度と間隔", () => {
         makeSession("2026-04-18", "high_lactate"), // レース22日前、3日間隔
       ],
     });
-    expect(violationsOf(runRuleEngine(c), "RULE-01").length).toBe(0);
+    const v = violationsOf(runRuleEngine(c), "RULE-01");
+    expect(v.length).toBeGreaterThan(0);
+    expect(v[0].level).toBe("ERROR");
+  });
+
+  it("4日間隔は両方が低容量・完全回復で前回の回復実績がある場合だけWARN", () => {
+    const first = makeSession("2026-04-06", "high_lactate", {
+      prescription: "300m × 3 r5分（完全休息）",
+      riskLevel: "low",
+    });
+    const second = makeSession("2026-04-10", "high_lactate", {
+      prescription: "300m × 3 r5分（完全休息）",
+      riskLevel: "low",
+    });
+    const result = makeResult(first, {
+      achievement: "achieved",
+      rpe: 7,
+      nextDayLegs: "normal",
+    });
+    const c = ctx({
+      sessions: [first, second],
+      resultsBySessionId: new Map([[first.id, result]]),
+    });
+    const v = violationsOf(runRuleEngine(c), "RULE-01");
+    expect(v).toHaveLength(1);
+    expect(v[0].level).toBe("WARN");
+    expect(v[0].message).toContain("個別検討候補");
+  });
+
+  it("低容量でも前回の完遂・回復記録が無ければ4日間隔はERROR", () => {
+    const c = ctx({
+      sessions: [
+        makeSession("2026-04-06", "high_lactate", {
+          prescription: "300m × 3 r5分（完全休息）",
+          riskLevel: "low",
+        }),
+        makeSession("2026-04-10", "high_lactate", {
+          prescription: "300m × 3 r5分（完全休息）",
+          riskLevel: "low",
+        }),
+      ],
+    });
+    expect(violationsOf(runRuleEngine(c), "RULE-01")[0].level).toBe("ERROR");
   });
 
   it("モデリング期の2連の直後7日間に高乳酸があるとERROR", () => {
@@ -455,15 +505,28 @@ describe("RULE-15 固定セッション", () => {
 
 describe("RULE-16 / RULE-17 負荷", () => {
   it("ACWR 1.5超でWARN", () => {
+    const session = makeSession("2026-04-01", "high_lactate");
+    const c = ctx({
+      sessions: [session],
+      currentAcwr: 1.6,
+      resultsBySessionId: new Map([
+        [session.id, makeResult(session, { achievement: "partial" })],
+      ]),
+    });
+    expect(violationsOf(runRuleEngine(c), "RULE-16")[0].level).toBe("WARN");
+  });
+
+  it("ACWR 1.5超でも疲労・未達の裏付けが無ければINFO", () => {
     const c = ctx({ currentAcwr: 1.6 });
-    expect(violationsOf(runRuleEngine(c), "RULE-16").length).toBe(1);
+    expect(violationsOf(runRuleEngine(c), "RULE-16")[0].level).toBe("INFO");
   });
 
   it("ACWR 0.8未満で負荷不足通知", () => {
     const c = ctx({ currentAcwr: 0.6 });
     const v = violationsOf(runRuleEngine(c), "RULE-16");
     expect(v.length).toBe(1);
-    expect(v[0].message).toContain("負荷不足");
+    expect(v[0].level).toBe("INFO");
+    expect(v[0].message).toContain("負荷不足とは断定しません");
   });
 
   it("週間走行距離の前週比15%超でWARN", () => {

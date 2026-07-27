@@ -117,8 +117,9 @@ describe("M-2 提案", () => {
     applyAdaptiveProposal(repo, out.session!.id, TODAY);
     const log = repo.listChangeLog().filter((c) => c.triggeredBy === "M-2");
     expect(log.length).toBeGreaterThan(0);
-    expect(log[0].reason).toContain("平均乖離");
+    expect(log[0].reason).toMatch(/平均乖離|未達/);
     expect(log[0].accepted).toBe(true);
+    expect(repo.getSession(out.session!.id)!.userEdited).toBe(true);
   });
 
   it("辞退したら記録され、設定は変わらない", () => {

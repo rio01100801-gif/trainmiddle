@@ -36,11 +36,25 @@ export function dailyLoads(input: DailyLoadInput): Map<string, number> {
   const map = new Map<string, number>();
   const add = (date: string, v: number) => map.set(date, (map.get(date) ?? 0) + v);
   for (const s of input.sessions) {
-    if (s.status === "skipped" || s.category === "off") continue;
-    add(s.date, sessionLoad(s, input.resultsBySessionId.get(s.id)));
+    const result = input.resultsBySessionId.get(s.id);
+    if (result) {
+      add(s.date, sessionLoad(s, result));
+      continue;
+    }
+    if (s.status === "skipped") continue;
+    if (s.category === "off") {
+      // 明示的に完了した休養日も「記録がある日」として0負荷で残す。
+      if (s.status === "completed") add(s.date, 0);
+      continue;
+    }
+    // ACWRは実施負荷の補助指標。未実施のplanned/modified予定を実績へ混ぜない。
+    // 結果詳細が無い旧データだけ、completedならカテゴリ既定値で後方互換する。
+    if (s.status === "completed") add(s.date, sessionLoad(s));
   }
   for (const st of input.strengthSessions) {
     if (st.status === "skipped") continue;
+    // 旧StrengthSessionにはstatusが無いので、undefinedは実施記録として扱う。
+    if (st.status === "planned" || st.status === "modified") continue;
     add(st.date, strengthLoad(st));
   }
   return map;
@@ -51,7 +65,11 @@ export interface AcwrResult {
   acuteLoad: number;
   chronicLoad: number;
   rating: "insufficient_data" | "low" | "optimal" | "caution" | "high_risk";
+  label: string;
   note: string;
+  recordedDays: number;
+  coveragePct: number;
+  confidence: "low" | "medium" | "high";
 }
 
 /**
@@ -75,26 +93,45 @@ export function acwr(loads: Map<string, number>, onDate: string): AcwrResult {
       acuteLoad: acute,
       chronicLoad: chronic / 4,
       rating: "insufficient_data",
-      note: "28日間のデータが不足しています。2週間以上の記録が貯まると有効になります。",
+      label: "参考値なし",
+      note: "28日中14日未満の実施・休養記録しかないため、負荷比は表示しません。",
+      recordedDays: daysWithData,
+      coveragePct: daysWithData / 28,
+      confidence: "low",
     };
   }
   const ratio = acute / (chronic / 4);
   let rating: AcwrResult["rating"];
+  let label: string;
   let note: string;
   if (ratio < 0.8) {
     rating = "low";
-    note = "負荷不足。刺激が足りていない可能性があります。";
+    label = "直近負荷は低め";
+    note = "直近7日の実施負荷が28日平均より低い状態です。回復週・欠測でも下がるため、負荷不足とは断定しません。";
   } else if (ratio <= 1.3) {
     rating = "optimal";
-    note = "適正範囲です。";
+    label = "過去平均に近い";
+    note = "直近7日の実施負荷が28日平均に近い状態です。安全性を保証する範囲ではありません。";
   } else if (ratio <= 1.5) {
     rating = "caution";
-    note = "やや高い。注意してください。";
+    label = "増加側";
+    note = "直近7日の実施負荷が28日平均より増えています。疲労・睡眠・未達と併せて確認してください。";
   } else {
     rating = "high_risk";
-    note = "急性負荷の増大。故障・オーバーリーチのリスクがあります。単独指標では判断せず、信号機・CFE推移・主観と併せて確認してください。";
+    label = "大きく増加";
+    note = "直近7日の実施負荷が28日平均より大きく増えています。この比率だけで故障危険度や練習可否は決めません。";
   }
-  return { acwr: ratio, acuteLoad: acute, chronicLoad: chronic / 4, rating, note };
+  return {
+    acwr: ratio,
+    acuteLoad: acute,
+    chronicLoad: chronic / 4,
+    rating,
+    label,
+    note,
+    recordedDays: daysWithData,
+    coveragePct: daysWithData / 28,
+    confidence: daysWithData >= 21 ? "high" : "medium",
+  };
 }
 
 /** 週間の high_lactate 回数の28日移動平均（4-9-3） */

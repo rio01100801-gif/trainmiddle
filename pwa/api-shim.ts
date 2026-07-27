@@ -289,6 +289,8 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
         avgHr: body.avgHr,
         maxHr: body.maxHr,
         rpe: body.rpe,
+        conditionNote: body.conditionNote,
+        purpose: body.purpose,
       };
       repo.saveMarker(marker);
       return {

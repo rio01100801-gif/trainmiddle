@@ -3,7 +3,12 @@
  * - 特異的セッション: 基準タイム（4-5-2）から逆算
  * - 有酸素系: 実測 FitnessMarker から算出。目標タイムから逆算してはならない
  */
-import type { FitnessMarker, SessionCategory, TargetPace } from "./types";
+import type {
+  FitnessMarker,
+  FitnessMarkerPurpose,
+  SessionCategory,
+  TargetPace,
+} from "./types";
 import { diffDays } from "./dates";
 
 /** GRP（目標レースペース）= T/800 秒/m */
@@ -71,6 +76,11 @@ export interface AerobicProfile {
   estimate?: LtEstimate;
   /** 2-5: 更新を促すメッセージ */
   refreshHint?: string;
+  /** 実測の本数・用途・新しさから見た推定の信頼度 */
+  confidence: "low" | "medium" | "high";
+  /** CVをLT固定差で出したか、複数距離の実測から出したか */
+  cvSourceDescription: string;
+  cvEstimate?: CriticalVelocityEstimate;
 }
 
 /**
@@ -90,10 +100,32 @@ function ltOffsetFor(m: FitnessMarker, totalM: number): number {
     // 3000〜5000mのレースはLTよりおよそ10〜15秒/km速い
     return totalM >= 8000 ? 6 : 12;
   }
-  // 練習（閾値走・ペース走・距離走）はほぼLT近傍とみなす。
-  // ただし12km以上の距離走はLTより遅いため速い側へ補正する。
+  if (m.purpose === "cv") {
+    // CV実測はLTより速い。現行のCV処方幅（LTより6〜8秒/km速い）の
+    // 中央値を逆算に使い、用途不明の走行には適用しない。
+    return 7;
+  }
+  if (m.purpose === "threshold" || m.purpose === "tempo") return 0;
+  // 旧データ互換: 用途未保存の長い練習だけ従来補正を残す。
   if (totalM >= 12000) return -8;
   return 0;
+}
+
+function effectivePurpose(m: FitnessMarker): FitnessMarkerPurpose {
+  if (m.purpose) return m.purpose;
+  if (m.type === "race") return "race";
+  return "unknown";
+}
+
+function purposeExclusion(m: FitnessMarker): string | undefined {
+  const purpose = effectivePurpose(m);
+  if (purpose === "easy") return "イージー走はLT実測ではありません";
+  if (purpose === "recovery") return "回復ジョグはLT実測ではありません";
+  if (purpose === "long_run") return "ロングランはLT実測ではありません";
+  if (purpose === "unknown" && (m.id.startsWith("past-fm-") || m.id.startsWith("ah-"))) {
+    return "用途不明の自動取込（距離だけではLT走と判定できません）";
+  }
+  return undefined;
 }
 
 export interface LtSample {
@@ -105,6 +137,7 @@ export interface LtSample {
   ageDays: number;
   weight: number;
   excluded?: string; // 除外理由
+  purpose: FitnessMarkerPurpose;
 }
 
 export interface LtEstimate {
@@ -115,6 +148,7 @@ export interface LtEstimate {
   source: string;
   /** 最終更新からの経過日数 */
   daysSinceLatest: number;
+  confidence: "low" | "medium" | "high";
 }
 
 /** 直近ほど重い指数減衰の重み。半減期14日 */
@@ -147,10 +181,15 @@ export function estimateLtFromMarkers(
       totalM,
       ageDays: age,
       weight: recencyWeight(age),
+      purpose: effectivePurpose(m),
     };
 
-    // ② 暑熱条件フラグ付きは除外
-    if (heatFlaggedDates?.has(m.date)) {
+    const excludedByPurpose = purposeExclusion(m);
+    if (excludedByPurpose) {
+      sample.excluded = excludedByPurpose;
+      sample.weight = 0;
+    } else if (heatFlaggedDates?.has(m.date)) {
+      // ② 暑熱条件フラグ付きは除外
       sample.excluded = "暑熱条件フラグ";
       sample.weight = 0;
     }
@@ -187,6 +226,13 @@ export function estimateLtFromMarkers(
   const lt = adopted.reduce((a, s) => a + s.ltPaceSecPerKm * s.weight, 0) / wsum;
 
   const latest = adopted.reduce((a, s) => (s.ageDays < a.ageDays ? s : a), adopted[0]);
+  const explicitPurposeCount = adopted.filter((s) => s.purpose !== "unknown").length;
+  const confidence: LtEstimate["confidence"] =
+    adopted.length >= 3 && explicitPurposeCount >= 2
+      ? "high"
+      : adopted.length >= 2 || explicitPurposeCount >= 1
+        ? "medium"
+        : "low";
 
   return {
     ltPaceSecPerKm: lt,
@@ -194,6 +240,77 @@ export function estimateLtFromMarkers(
     excluded: raw.filter((s) => s.excluded),
     source: `直近8週の実測${adopted.length}本の重み付け平均（最新: ${latest.date} ${latest.description}）`,
     daysSinceLatest: latest.ageDays,
+    confidence,
+  };
+}
+
+export interface CriticalVelocityEstimate {
+  paceSecPerKm: number;
+  samples: { date: string; description: string; distanceM: number; totalSec: number }[];
+  source: string;
+}
+
+/**
+ * 3000m〜5000mの異なる2距離のレース/テストから距離-時間直線の傾きを求める。
+ * 1距離だけでは「LTから固定秒差」と区別できないため使わない。
+ */
+export function estimateCriticalVelocity(
+  markers: FitnessMarker[],
+  today: string,
+  ltPaceSecPerKm: number,
+  heatFlaggedDates?: Set<string>
+): CriticalVelocityEstimate | undefined {
+  const candidates = markers
+    .map((marker) => {
+      const distances = marker.lapDistancesM ?? marker.resultLapsSec.map(() => 1000);
+      return {
+        marker,
+        ageDays: diffDays(marker.date, today),
+        distanceM: distances.reduce((sum, value) => sum + value, 0),
+        totalSec: marker.resultLapsSec.reduce((sum, value) => sum + value, 0),
+      };
+    })
+    .filter(
+      ({ marker, ageDays, distanceM, totalSec }) =>
+        ageDays >= 0 &&
+        ageDays <= 56 &&
+        distanceM >= 3000 &&
+        distanceM <= 5000 &&
+        totalSec > 0 &&
+        (marker.type === "race" || marker.type === "test") &&
+        !heatFlaggedDates?.has(marker.date)
+    )
+    .sort((a, b) => b.marker.date.localeCompare(a.marker.date));
+
+  const byDistance = new Map<number, (typeof candidates)[number]>();
+  for (const candidate of candidates) {
+    if (!byDistance.has(candidate.distanceM)) byDistance.set(candidate.distanceM, candidate);
+  }
+  const distinct = [...byDistance.values()].sort((a, b) => a.distanceM - b.distanceM);
+  if (distinct.length < 2) return undefined;
+  const slowDistance = distinct[0];
+  const longDistance = distinct[distinct.length - 1];
+  const deltaDistance = longDistance.distanceM - slowDistance.distanceM;
+  const deltaTime = longDistance.totalSec - slowDistance.totalSec;
+  if (deltaDistance <= 0 || deltaTime <= 0) return undefined;
+
+  const pace = (deltaTime / deltaDistance) * 1000;
+  // CVがLT以上に遅い、またはLTより20秒/km超速い結果は、距離/タイムの
+  // 入力違いか2本の条件差が大きい可能性がある。値を丸めず固定差へ戻す。
+  if (pace >= ltPaceSecPerKm || pace < ltPaceSecPerKm - 20) return undefined;
+
+  const samples = [slowDistance, longDistance].map(({ marker, distanceM, totalSec }) => ({
+    date: marker.date,
+    description: marker.description,
+    distanceM,
+    totalSec,
+  }));
+  return {
+    paceSecPerKm: pace,
+    samples,
+    source: `直近8週の異なる2距離（${samples
+      .map((sample) => `${sample.distanceM}m`)
+      .join("・")}）から距離-時間直線で算出`,
   };
 }
 
@@ -222,11 +339,13 @@ export function buildAerobicProfile(
   let lt: number;
   let isEstimated: boolean;
   let source: string;
+  let confidence: AerobicProfile["confidence"];
 
   if (est) {
     lt = est.ltPaceSecPerKm;
     isEstimated = false;
     source = est.source;
+    confidence = est.confidence;
   } else {
     // フォールバック: 800m能力からの粗い推定（精度が出ないことを明示する）
     // 中距離選手のLTはおおよそ 800mペースの 1.55〜1.65倍/km。中央値1.6を使用。
@@ -234,17 +353,26 @@ export function buildAerobicProfile(
     lt = (base / 0.8) * 1.6;
     isEstimated = true;
     source = "実測データ不足のためCFEからの推定値（精度低。閾値走の実測入力を推奨）";
+    confidence = "low";
   }
+  const cvEstimate = estimateCriticalVelocity(markers, today, lt, heatFlaggedDates);
+  const cv = cvEstimate
+    ? { fast: cvEstimate.paceSecPerKm - 1, slow: cvEstimate.paceSecPerKm + 1 }
+    : { fast: lt - 8, slow: lt - 6 };
 
   return {
     ltPaceSecPerKm: lt,
-    cvPaceSecPerKm: { fast: lt - 8, slow: lt - 6 },
+    cvPaceSecPerKm: cv,
     jogPaceSecPerKm: { fast: lt + 60, slow: lt + 80 },
     longRunPaceSecPerKm: { fast: lt + 60, slow: lt + 90 },
     isEstimated,
     sourceDescription: source,
     estimate: est,
     refreshHint: ltNeedsRefresh(est),
+    confidence,
+    cvSourceDescription:
+      cvEstimate?.source ?? "異なる距離のレース/テスト実測が不足しているためLTより6〜8秒/km速い範囲",
+    cvEstimate,
   };
 }
 

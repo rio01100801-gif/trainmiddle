@@ -37,6 +37,7 @@ import {
   isHighLoadSession,
   isMiddleDistanceSpecificSession,
   isSpecificCategory,
+  glycolyticDose,
   neuromuscularDose,
   trainingLoadClass,
 } from "./trainingClassification";
@@ -75,6 +76,7 @@ export interface RuleContext {
   evaluationDate: string;
   /** load.ts で計算した現在のACWR（RULE-16） */
   currentAcwr?: number;
+  currentAcwrConfidence?: "low" | "medium" | "high";
 }
 
 const active = (s: Session) => s.status !== "skipped" && s.category !== "off";
@@ -185,22 +187,13 @@ function isHotDay(ctx: RuleContext, date: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * RULE-01 [ERROR] high_lactate は同一週内に1回まで。最短間隔5日。
- * 例外: モデリング期（レース14〜28日前）に限り、3日間隔での2連を1回だけ許可。
- *       ただしその直後7日間は high_lactate 禁止。
+ * RULE-01 高乳酸相当は標準5日間隔。
+ * 4日は両方が低容量・完全回復で、前回を完遂し回復記録にも懸念が無い場合だけ
+ * 個別検討のWARNに下げる。3日以下をカテゴリ名だけで許可しない。
  */
 function rule01(ctx: RuleContext): RuleViolation[] {
   const out: RuleViolation[] = [];
   const hl = sorted(ctx.sessions.filter((s) => active(s) && isHlEquiv(s.category)));
-  const races = aRaces(ctx);
-
-  const inModelingWindow = (date: string) =>
-    races.some((r) => {
-      const d = diffDays(date, raceDateOf(r));
-      return d >= 14 && d <= 28;
-    });
-
-  let exceptionUsed = false;
   const exemptIds = new Set<string>();
 
   for (let i = 1; i < hl.length; i++) {
@@ -209,34 +202,46 @@ function rule01(ctx: RuleContext): RuleViolation[] {
     const gap = diffDays(prev.date, cur.date);
     if (gap >= 5) continue;
 
-    // 例外判定: モデリング期の3日間隔2連（1回だけ）
-    const eligible =
-      !exceptionUsed &&
-      gap === 3 &&
-      inModelingWindow(prev.date) &&
-      inModelingWindow(cur.date);
-    if (eligible) {
-      // 直後7日間の high_lactate 禁止をチェック
-      const following = hl.filter(
-        (s) => diffDays(cur.date, s.date) > 0 && diffDays(cur.date, s.date) <= 7
-      );
-      if (following.length === 0) {
-        exceptionUsed = true;
+    const prevDose = glycolyticDose(prev);
+    const curDose = glycolyticDose(cur);
+    const prevResult = ctx.resultsBySessionId?.get(prev.id);
+    const recoveredResult =
+      prevResult?.achievement === "achieved" &&
+      prevResult.aborted !== true &&
+      prevResult.rpe <= 8 &&
+      prevResult.nextDayLegs !== "heavy";
+    const recoveryConcern = ctx.dailyChecks.some(
+      (check) =>
+        check.date > prev.date &&
+        check.date < cur.date &&
+        (check.signal === "yellow" ||
+          check.signal === "red" ||
+          (check.overallFatigue ?? 0) >= 4 ||
+          (check.legFatigue ?? 0) >= 4 ||
+          (check.sleepQuality ?? 5) <= 2)
+    );
+    const fourDayReview =
+      gap === 4 &&
+      prevDose.lowVolumeReviewCandidate &&
+      curDose.lowVolumeReviewCandidate &&
+      recoveredResult &&
+      !recoveryConcern;
+
+    if (fourDayReview) {
         exemptIds.add(prev.id);
         exemptIds.add(cur.id);
-        continue;
-      }
       out.push(
         finalize(
           {
             rule: "RULE-01",
-            level: "ERROR",
-            message: `モデリング期の2連(${prev.date}, ${cur.date})の直後7日間に高乳酸(${following[0].date})が配置されています。2連の後7日間は high_lactate 禁止です。`,
-            dates: [prev.date, cur.date, following[0].date],
-            sessionIds: [prev.id, cur.id, following[0].id],
-            suggestion: `${following[0].date} の高乳酸を削除するか、${addDays(cur.date, 8)} 以降へ移動してください。`,
+            level: "WARN",
+            message: `高乳酸系が4日間隔です。標準は5日ですが、両方が低容量・完全回復（${prevDose.reason}／${curDose.reason}）で、前回は完遂・RPE${prevResult.rpe}、回復懸念なしのため個別検討候補です。`,
+            dates: [prev.date, cur.date],
+            sessionIds: [prev.id, cur.id],
+            suggestion:
+              "4日間隔を安全と断定しません。当日の睡眠・筋肉痛・アップ時の感覚を確認し、懸念があれば5日以上へ移動してください。",
           },
-          [prev, cur, following[0]]
+          [prev, cur]
         )
       );
       continue;
@@ -247,7 +252,13 @@ function rule01(ctx: RuleContext): RuleViolation[] {
         {
           rule: "RULE-01",
           level: "ERROR",
-          message: `高乳酸系セッションの間隔が${gap}日です（${prev.date} → ${cur.date}）。最短間隔は5日です。`,
+          message: `高乳酸系セッションの間隔が${gap}日です（${prev.date} → ${cur.date}）。標準間隔は5日です。${
+            gap === 4
+              ? ` 4日で個別検討する条件が不足しています（前: ${prevDose.reason}／次: ${curDose.reason}／前回結果: ${
+                  prevResult ? `${prevResult.achievement}, RPE${prevResult.rpe}` : "未記録"
+                }）。`
+              : ""
+          }`,
           dates: [prev.date, cur.date],
           sessionIds: [prev.id, cur.id],
           suggestion: `どちらかを移動して5日以上空けてください。例: ${cur.date} のセッションを ${addDays(prev.date, 5)} 以降へ。`,
@@ -833,27 +844,68 @@ function rule14(ctx: RuleContext): RuleViolation[] {
   return out;
 }
 
-/** RULE-16 [WARN] ACWR > 1.5 で急性負荷増大警告、< 0.8 で負荷不足通知 */
+function acwrCorroboration(ctx: RuleContext): string[] {
+  const notes: string[] = [];
+  const checkStart = addDays(ctx.evaluationDate, -6);
+  const fatigued = ctx.dailyChecks.filter(
+    (check) =>
+      check.date >= checkStart &&
+      check.date <= ctx.evaluationDate &&
+      (check.signal === "yellow" ||
+        check.signal === "red" ||
+        (check.overallFatigue ?? 0) >= 4 ||
+        (check.legFatigue ?? 0) >= 4 ||
+        (check.sleepQuality ?? 5) <= 2)
+  );
+  if (fatigued.length > 0) notes.push(`疲労・睡眠シグナル${fatigued.length}日`);
+
+  const resultStart = addDays(ctx.evaluationDate, -13);
+  const concernedResults = [...(ctx.resultsBySessionId?.values() ?? [])].filter(
+    (result) =>
+      result.date >= resultStart &&
+      result.date <= ctx.evaluationDate &&
+      (result.aborted === true ||
+        result.achievement === "partial" ||
+        result.achievement === "failed" ||
+        result.nextDayLegs === "heavy")
+  );
+  if (concernedResults.length > 0) notes.push(`未達・中止・重い脚${concernedResults.length}件`);
+  return notes;
+}
+
+/** RULE-16 ACWRは補助指標。疲労・未達の裏付けがあるときだけWARNに上げる。 */
 function rule16(ctx: RuleContext): RuleViolation[] {
   const out: RuleViolation[] = [];
   if (ctx.currentAcwr === undefined) return out;
+  const corroboration = acwrCorroboration(ctx);
   if (ctx.currentAcwr > 1.5) {
     out.push({
       rule: "RULE-16",
-      level: "WARN",
-      message: `ACWR = ${ctx.currentAcwr.toFixed(2)}。急性負荷が慢性負荷に対して過大です。故障・オーバーリーチのリスクがあります。`,
+      level: corroboration.length > 0 ? "WARN" : "INFO",
+      message: `ACWR = ${ctx.currentAcwr.toFixed(
+        2
+      )}。直近7日の実施負荷が28日平均より大きく増加しています。${
+        corroboration.length > 0
+          ? `併せて ${corroboration.join("、")} が記録されています。`
+          : "疲労・未達の裏付けは記録されていないため、この比率だけで危険度は断定しません。"
+      }`,
       dates: [ctx.evaluationDate],
       sessionIds: [],
-      suggestion: "今週の量を減らし、ACWRを0.8〜1.3の帯に戻してください。単独指標では判断せず、信号機・主観と併せて確認してください。",
+      suggestion:
+        corroboration.length > 0
+          ? "次の高負荷日の量を据え置くか減らし、睡眠・主観疲労・筋肉痛・完遂度を再確認してください。"
+          : "睡眠・主観疲労・筋肉痛・直近セッションの完遂度を入力してから判断してください。",
     });
   } else if (ctx.currentAcwr < 0.8) {
     out.push({
       rule: "RULE-16",
-      level: "WARN",
-      message: `ACWR = ${ctx.currentAcwr.toFixed(2)}。負荷不足の可能性があります（刺激が足りていない）。`,
+      level: "INFO",
+      message: `ACWR = ${ctx.currentAcwr.toFixed(
+        2
+      )}。直近7日の実施負荷は28日平均より低めです。回復週・テーパー・欠測でも下がるため、負荷不足とは断定しません。`,
       dates: [ctx.evaluationDate],
       sessionIds: [],
-      suggestion: "コンディションに問題がなければ、計画通りの負荷を確保してください。",
+      suggestion: "計画段階と体調を確認し、回復目的ならそのまま、意図しない未実施が続く場合だけ計画を見直してください。",
     });
   }
   return out;

@@ -156,6 +156,11 @@ function HealthImportCard() {
             <p className="text-[11px] mt-1" style={{ color: "var(--text-2)" }}>
               ランニング記録がLT推定に反映されました。「目標・レース」で再生成すると設定ペースに反映されます。
             </p>
+          ) : result.sync.workouts > 0 ? (
+            <p className="text-[11px] mt-1" style={{ color: "var(--text-2)" }}>
+              ランニング記録は用途不明として保存しました。回復ジョグをLT走と誤認しないため、
+              LTへは自動反映していません。
+            </p>
           ) : null}
           {result.signalChanges?.length > 0 ? (
             <p className="text-[11px] mt-1" style={{ color: "var(--text-2)" }}>

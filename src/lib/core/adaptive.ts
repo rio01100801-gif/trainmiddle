@@ -63,6 +63,10 @@ export interface ExecutionSample {
   ratio: number;
   aborted: boolean;
   heatFlagged: boolean;
+  achievement: SessionResult["achievement"];
+  rpe: number;
+  nextDayLegs?: SessionResult["nextDayLegs"];
+  restSec?: number;
 }
 
 /** 実施タイムの平均。1本も無ければ undefined */
@@ -90,10 +94,13 @@ export function executionSamples(
   results: SessionResult[],
   category: SessionCategory,
   before: string,
-  limit: number = TREND_SAMPLE_COUNT
+  limit: number = TREND_SAMPLE_COUNT,
+  referenceSession?: Session
 ): ExecutionSample[] {
   const byId = new Map(sessions.map((s) => [s.id, s]));
   const out: ExecutionSample[] = [];
+  const referenceDistanceM = referenceSession?.targetPaces[0]?.distanceM;
+  let selectedDistanceM = referenceDistanceM;
   const sorted = [...results].sort((a, b) => b.date.localeCompare(a.date));
   for (const r of sorted) {
     if (r.date >= before) continue;
@@ -103,6 +110,8 @@ export function executionSamples(
     const t = targetOf(s, r);
     const actual = meanRepSec(r);
     if (!t || actual === undefined || t.targetSec <= 0) continue;
+    if (selectedDistanceM === undefined) selectedDistanceM = t.distanceM;
+    if (t.distanceM !== selectedDistanceM) continue;
     out.push({
       date: r.date,
       sessionId: r.sessionId,
@@ -113,10 +122,15 @@ export function executionSamples(
       deviationSec: actual - t.targetSec,
       ratio: actual / t.targetSec,
       aborted:
-        r.completedReps !== undefined &&
-        r.prescribedReps !== undefined &&
-        r.completedReps < r.prescribedReps,
+        r.aborted === true ||
+        (r.completedReps !== undefined &&
+          r.prescribedReps !== undefined &&
+          r.completedReps < r.prescribedReps),
       heatFlagged: !!r.heatFlagged,
+      achievement: r.achievement,
+      rpe: r.rpe,
+      nextDayLegs: r.nextDayLegs,
+      restSec: r.interval?.restSec,
     });
     if (out.length >= limit) break;
   }
@@ -130,6 +144,8 @@ export interface ExecutionTrend {
   meanDeviationSec: number;
   meanRatio: number;
   abortCount: number;
+  underachievedCount: number;
+  highStrainCount: number;
   verdict: TrendVerdict;
   /** 設定に掛ける倍率。1.02 = 2%緩める */
   factor: number;
@@ -143,6 +159,8 @@ export function executionTrend(samples: ExecutionSample[]): ExecutionTrend {
       meanDeviationSec: 0,
       meanRatio: 1,
       abortCount: 0,
+      underachievedCount: 0,
+      highStrainCount: 0,
       verdict: "hold",
       factor: 1,
       reason: "同じカテゴリの実測がまだありません",
@@ -152,6 +170,12 @@ export function executionTrend(samples: ExecutionSample[]): ExecutionTrend {
     samples.reduce((a, s) => a + s.deviationSec, 0) / samples.length;
   const meanRatio = samples.reduce((a, s) => a + s.ratio, 0) / samples.length;
   const abortCount = samples.filter((s) => s.aborted).length;
+  const underachievedCount = samples.filter(
+    (sample) => sample.achievement === "partial" || sample.achievement === "failed"
+  ).length;
+  const highStrainCount = samples.filter(
+    (sample) => sample.rpe >= 9 || sample.nextDayLegs === "heavy"
+  ).length;
 
   // 打ち切りが2回続いたら、設定が高すぎると判断する（M-3 と対）
   if (abortCount >= 2) {
@@ -161,9 +185,26 @@ export function executionTrend(samples: ExecutionSample[]): ExecutionTrend {
       meanDeviationSec,
       meanRatio,
       abortCount,
+      underachievedCount,
+      highStrainCount,
       verdict: "ease",
       factor,
       reason: `直近${samples.length}回のうち${abortCount}回で打ち切りになっています。設定が高すぎます`,
+    };
+  }
+
+  if (underachievedCount >= 2 || (underachievedCount >= 1 && highStrainCount >= 2)) {
+    const factor = 1 + Math.min(MAX_EASE_PCT, Math.max(0.01, meanRatio - 1));
+    return {
+      samples,
+      meanDeviationSec,
+      meanRatio,
+      abortCount,
+      underachievedCount,
+      highStrainCount,
+      verdict: "ease",
+      factor,
+      reason: `同じ距離の直近${samples.length}回で未達${underachievedCount}回・高い負担反応${highStrainCount}回です`,
     };
   }
 
@@ -174,19 +215,32 @@ export function executionTrend(samples: ExecutionSample[]): ExecutionTrend {
       meanDeviationSec,
       meanRatio,
       abortCount,
+      underachievedCount,
+      highStrainCount,
       verdict: "ease",
       factor,
       reason: `直近${samples.length}回の平均乖離が +${meanDeviationSec.toFixed(1)}秒/本（許容 ${EASE_DEVIATION_SEC.toFixed(1)}秒）`,
     };
   }
 
-  if (samples.length >= TREND_SAMPLE_COUNT && samples.every((s) => s.ratio < 1)) {
+  if (
+    samples.length >= TREND_SAMPLE_COUNT &&
+    samples.every(
+      (sample) =>
+        sample.ratio < 1 &&
+        sample.achievement === "achieved" &&
+        sample.rpe <= 8 &&
+        sample.nextDayLegs !== "heavy"
+    )
+  ) {
     const factor = 1 - Math.min(MAX_TIGHTEN_PCT, 1 - meanRatio);
     return {
       samples,
       meanDeviationSec,
       meanRatio,
       abortCount,
+      underachievedCount,
+      highStrainCount,
       verdict: "tighten",
       factor,
       reason: `直近${samples.length}回とも設定より速い（平均 ${meanDeviationSec.toFixed(1)}秒/本）`,
@@ -198,6 +252,8 @@ export function executionTrend(samples: ExecutionSample[]): ExecutionTrend {
     meanDeviationSec,
     meanRatio,
     abortCount,
+    underachievedCount,
+    highStrainCount,
     verdict: "hold",
     factor: 1,
     reason:

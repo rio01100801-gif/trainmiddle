@@ -91,13 +91,14 @@ describe("Apple Health → 分析エンジンへの変換", () => {
     expect(toFitnessMarker(short)).toBeUndefined();
   });
 
-  it("11.2km/50分のランニングはFitnessMarkerになる", () => {
+  it("11.2km/50分のランニングは用途不明のFitnessMarkerとして保存する", () => {
     const run = r.workouts.find((w) => w.date === "2026-07-24")!;
     const fm = toFitnessMarker(run)!;
     expect(fm.lapDistancesM![0]).toBeCloseTo(11200, 0);
     expect(fm.resultLapsSec[0]).toBe(3000);
     expect(fm.avgHr).toBe(145);
     expect(fm.type).toBe("workout");
+    expect(fm.purpose).toBe("unknown");
   });
 
   it("睡眠時間を5段階スコアに変換する", () => {

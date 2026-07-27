@@ -302,6 +302,9 @@ export function toFitnessMarker(w: HealthWorkout): FitnessMarker | undefined {
     lapDistancesM: [w.distanceKm * 1000],
     avgHr: w.avgHr ? Math.round(w.avgHr) : undefined,
     maxHr: w.maxHr ? Math.round(w.maxHr) : undefined,
+    // HealthKitのワークアウト種別だけでは、閾値走か回復ジョグかを判別できない。
+    // 距離だけでLT材料にせず、本人が用途を確認できるまでunknownとして保存する。
+    purpose: "unknown",
   };
 }
 

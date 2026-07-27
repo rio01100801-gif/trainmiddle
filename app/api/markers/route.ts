@@ -3,6 +3,7 @@ import { openRepo } from "@/lib/db/node";
 import { buildAerobicProfile } from "@/lib/core/pace";
 import type { FitnessMarker } from "@/lib/core/types";
 import { localToday } from "@/lib/core/dates";
+import { heatFlaggedDates } from "@/lib/service";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,8 @@ export async function GET(req: NextRequest) {
     aerobicProfile: buildAerobicProfile(
       markers,
       today,
-      repo.getCfe()?.estimated800mSec
+      repo.getCfe()?.estimated800mSec,
+      heatFlaggedDates(repo)
     ),
   });
 }
@@ -40,6 +42,7 @@ export async function POST(req: NextRequest) {
     maxHr: body.maxHr,
     rpe: body.rpe,
     conditionNote: body.conditionNote,
+    purpose: body.purpose,
   };
   repo.saveMarker(marker);
   const markers = repo.listMarkers();
@@ -48,7 +51,8 @@ export async function POST(req: NextRequest) {
     aerobicProfile: buildAerobicProfile(
       markers,
       marker.date,
-      repo.getCfe()?.estimated800mSec
+      repo.getCfe()?.estimated800mSec,
+      heatFlaggedDates(repo)
     ),
   });
 }
