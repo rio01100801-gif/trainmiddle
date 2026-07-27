@@ -3,6 +3,7 @@ import { useEffect, type ReactNode } from "react";
 import { BottomTabs, MobileHeader, Sidebar } from "./nav";
 import { RecordFab } from "./fab";
 import { captureAuthRedirect, isHashNavigationRuntime } from "./supabase";
+import { LaunchSplash } from "./launch-splash";
 
 /**
  * 画面の外枠。
@@ -46,10 +47,11 @@ export function AppShell({ children, footer }: { children: ReactNode; footer?: b
 
   return (
     <div className="flex min-h-screen">
+      <LaunchSplash />
       <Sidebar />
       <div className="flex-1 min-w-0 flex flex-col">
         <MobileHeader />
-        <main className="flex-1 p-3.5 md:p-5 pb-[var(--main-bottom-pad)] md:pb-6 max-w-[1200px] w-full">
+        <main className="app-main flex-1 p-3.5 md:p-5 pb-[var(--main-bottom-pad)] md:pb-6 max-w-[1200px] w-full">
           {children}
         </main>
         {footer ? (

@@ -5,6 +5,13 @@ import { AppShell } from "./components/app-shell";
 export const metadata = {
   title: "FORGE — 800m Performance System",
   description: "FORGE — 800m Performance System",
+  icons: {
+    icon: [
+      { url: "/icon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
+    apple: [{ url: "/icon-180.png", sizes: "180x180", type: "image/png" }],
+  },
 };
 
 export const viewport = {

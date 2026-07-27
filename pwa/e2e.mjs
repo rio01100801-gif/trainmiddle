@@ -2013,6 +2013,18 @@ if (splashSaved) {
     fail("R-2: スプラッシュの数字が画面幅からはみ出している");
   }
   await sp.screenshot({ path: path.join(SHOT_DIR, "33_splash.png") });
+  // 初期化失敗時は永久待機にせず、状態と再読み込み操作を出す
+  await sp.evaluate(() => {
+    window.dispatchEvent(
+      new CustomEvent("forge:app-error", { detail: { message: "E2E startup failure" } })
+    );
+  });
+  if (!(await sp.locator("#splash").textContent()).includes("起動できませんでした")) {
+    fail("R-2: 初期化失敗時の説明が出ない");
+  }
+  if (!(await sp.locator("#splash-retry").isVisible())) {
+    fail("R-2: 初期化失敗時に再読み込み操作が出ない");
+  }
 
   /*
    * S-1: マウント即座には消さないこと。
@@ -2050,6 +2062,24 @@ if (splashSaved) {
   if (firstErrors.length) fail(`R-2: 初回起動でスクリプトが落ちている（${firstErrors[0]}）`);
   await fp.screenshot({ path: path.join(SHOT_DIR, "33_splash_first.png") });
   await firstCtx.close();
+
+  // 動きを減らす設定では静止表示へ切り替わり、通常の2.8秒を待たずに進める
+  const reducedCtx = await b.newContext({
+    viewport: { width: 390, height: 844 },
+    reducedMotion: "reduce",
+  });
+  const reducedPage = await reducedCtx.newPage();
+  await reducedPage.addInitScript((v) => {
+    localStorage.setItem("forge:splash", v);
+  }, JSON.stringify(splashSaved));
+  const reducedOpenedAt = Date.now();
+  await reducedPage.goto("http://localhost:8791/");
+  await reducedPage.waitForFunction(() => !document.getElementById("splash"), { timeout: 5000 });
+  const reducedShownMs = Date.now() - reducedOpenedAt;
+  if (reducedShownMs > 2500) {
+    fail(`R-2: reduced motionでも起動画面が長い（${reducedShownMs}ms）`);
+  }
+  await reducedCtx.close();
   await splashCtx.close();
 }
 // 通常起動ではスプラッシュが消えること
@@ -2068,14 +2098,24 @@ else if (markBox.width < 20 || markBox.height < 10) {
   fail(`R-3: ヘッダーのマークが小さすぎる（${Math.round(markBox.width)}×${Math.round(markBox.height)}）`);
 }
 // アイコンが配信物に入っていること
-for (const f of ["icon-180.png", "icon-192.png", "icon-512.png", "icon-maskable-512.png"]) {
+for (const f of ["icon-32.png", "icon-180.png", "icon-192.png", "icon-512.png", "icon-maskable-512.png"]) {
   const ok = await page.evaluate(
     async (name) => (await fetch("./" + name)).ok,
     f
   );
   if (!ok) fail(`R-3: ${f} が配信物に無い`);
 }
-step(`R-3 マークOK（ヘッダー ${Math.round(markBox?.width ?? 0)}×${Math.round(markBox?.height ?? 0)} / アイコン4種）`);
+const manifestIcons = await page.evaluate(async () => {
+  const manifest = await fetch("./manifest.webmanifest").then((response) => response.json());
+  return manifest.icons?.map((icon) => icon.src) ?? [];
+});
+if (!manifestIcons.some((src) => src.includes("icon-32.png"))) {
+  fail("R-3: manifestに32px faviconが無い");
+}
+if (!manifestIcons.some((src) => src.includes("icon-maskable-512.png"))) {
+  fail("R-3: manifestにmaskable iconが無い");
+}
+step(`R-3 マークOK（ヘッダー ${Math.round(markBox?.width ?? 0)}×${Math.round(markBox?.height ?? 0)} / アイコン5種）`);
 await shot("34_mark_header");
 
 // ---- 16e. S-11: 同期は未設定でも成立すること ----

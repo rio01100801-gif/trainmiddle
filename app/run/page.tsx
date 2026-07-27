@@ -132,8 +132,8 @@ export default function RunPage() {
   const color = stop ? "var(--red)" : done ? "var(--forge)" : "var(--text)";
 
   return (
-    <div className="flex flex-col gap-3">
-      <Card title={session?.name ?? "セッション"}>
+    <div className="run-screen flex flex-col gap-3">
+      <Card title={session?.name ?? "セッション"} variant="hero" className="run-session-head">
         <div className="text-[11.5px] num mb-2" style={{ color: "var(--text-2)" }}>
           {progress.distanceM}m × {progress.plannedReps} ／ 設定 {fmt(progress.targetSec)}
         </div>
@@ -146,9 +146,9 @@ export default function RunPage() {
       </Card>
 
       {/* 出すのは3つだけ */}
-      <Card>
+      <Card className="run-live-card">
         <div className="metric-label">直近の1本</div>
-        <div className="metric" style={{ color }}>
+        <div className="run-time num" style={{ color }}>
           {evaluation.lastSec !== undefined ? fmt(evaluation.lastSec) : "—"}
         </div>
         <div className="text-[13px] mt-1 num" style={{ color: "var(--text-2)" }}>
@@ -172,11 +172,26 @@ export default function RunPage() {
       </Card>
 
       <Card title={`${reps.length} / ${progress.plannedReps} 本`}>
+        <div
+          className="run-progress"
+          role="progressbar"
+          aria-label="完了した本数"
+          aria-valuemin={0}
+          aria-valuemax={progress.plannedReps}
+          aria-valuenow={reps.length}
+        >
+          <i
+            style={{
+              width: `${Math.min(100, (reps.length / Math.max(1, progress.plannedReps)) * 100)}%`,
+            }}
+          />
+        </div>
         <div className="flex gap-2 items-stretch">
           <input
-            className="flex-1 min-w-0"
+            className="run-rep-input flex-1 min-w-0"
             inputMode="decimal"
             placeholder="41.6"
+            aria-label="この本の実測タイム"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -184,14 +199,14 @@ export default function RunPage() {
             }}
           />
           <button
-            className="btn-volt flex-shrink-0 whitespace-nowrap"
+            className="btn-volt run-add-button flex-shrink-0 whitespace-nowrap"
             onClick={push}
             disabled={busy || !input.trim()}
           >
             入れる
           </button>
           {reps.length > 0 ? (
-            <button className="btn-ghost flex-shrink-0 whitespace-nowrap" onClick={undo}>
+            <button className="btn-ghost run-undo-button flex-shrink-0 whitespace-nowrap" onClick={undo}>
               1本戻す
             </button>
           ) : null}

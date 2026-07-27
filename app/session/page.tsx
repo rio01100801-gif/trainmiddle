@@ -48,8 +48,8 @@ export default function SessionPage() {
   const r = session.rationale;
 
   return (
-    <div className="flex flex-col gap-3">
-      <Card>
+    <div className="session-screen flex flex-col gap-3">
+      <Card variant="hero" className="session-hero">
         <div className="metric-label mb-2">{session.date}</div>
         <h2 className="text-[19px] font-extrabold leading-tight mb-1.5">{session.name}</h2>
         <p className="text-[13px] leading-relaxed" style={{ color: "var(--text-2)" }}>
@@ -71,9 +71,17 @@ export default function SessionPage() {
         ) : null}
 
         <div className="flex gap-2 mt-3.5 flex-col sm:flex-row">
+          {session.targetPaces?.length > 0 ? (
+            <Link
+              href={withQuery("/run", { sessionId: session.id })}
+              className="btn-volt justify-center flex-1"
+            >
+              セッションを開始<span aria-hidden>→</span>
+            </Link>
+          ) : null}
           <Link
             href={withQuery("/results", { date: session.date, sessionId: session.id })}
-            className="btn-volt justify-center flex-1"
+            className="btn-ghost justify-center flex-1"
           >
             この練習を記録する<span aria-hidden>→</span>
           </Link>

@@ -195,7 +195,7 @@ export default function GoalPage() {
   };
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="plan-screen flex flex-col gap-3">
       <Card title="目標">
         <label className="block text-sm mb-2 max-w-xs">
           <span className="block text-xs mb-0.5">目標タイム（800m）</span>
@@ -358,7 +358,7 @@ export default function GoalPage() {
         </p>
       </Card>
 
-      <Card title="プラン生成">
+      <Card title="プラン生成" variant="hero" className="plan-generate-card">
         <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
           <button onClick={save} className="btn-volt justify-center">
             目標・レースを保存

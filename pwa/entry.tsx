@@ -324,6 +324,34 @@ async function boot() {
   }
 
   createRoot(document.getElementById("root")!).render(<App />);
+  // ReactのcommitとAppShellの認証リダイレクト処理が走った次の描画で起動完了を通知する。
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      window.dispatchEvent(new CustomEvent("forge:app-ready"));
+    });
+  });
 }
 
-boot();
+function BootFailure({ message }: { message: string }) {
+  return (
+    <main className="min-h-screen grid place-items-center p-6">
+      <section className="card max-w-[440px] w-full">
+        <p className="card-t">STARTUP ERROR</p>
+        <h1 className="text-lg font-extrabold mb-2">FORGEを起動できませんでした</h1>
+        <p className="text-sm leading-relaxed mb-4" style={{ color: "var(--text-2)" }}>
+          {message}
+        </p>
+        <button className="btn-volt w-full justify-center" onClick={() => location.reload()}>
+          再読み込み
+        </button>
+      </section>
+    </main>
+  );
+}
+
+boot().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : "初期データの読み込みに失敗しました";
+  const root = document.getElementById("root");
+  if (root) createRoot(root).render(<BootFailure message={message} />);
+  window.dispatchEvent(new CustomEvent("forge:app-error", { detail: { message } }));
+});

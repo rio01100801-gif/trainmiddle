@@ -326,6 +326,7 @@ export function MobileHeader() {
         <Link
           href="/settings"
           aria-label="設定"
+          aria-current={path === "/settings" ? "page" : undefined}
           className="-m-3 p-3 min-w-[44px] min-h-[44px] flex items-center justify-center"
         >
           <span
@@ -345,6 +346,7 @@ export function BottomTabs() {
   const path = usePathname();
   return (
     <nav
+      aria-label="主要ナビゲーション"
       className="md:hidden fixed bottom-0 left-0 right-0 z-30 flex border-t pt-2"
       style={{
         background: "#070707",
@@ -358,6 +360,8 @@ export function BottomTabs() {
           <Link
             key={n.href}
             href={n.href}
+            aria-current={on ? "page" : undefined}
+            data-on={on ? "1" : "0"}
             className="flex-1 text-center text-[9.5px] font-semibold min-h-[44px] flex flex-col justify-center"
             style={{ color: on ? "var(--forge)" : "var(--text-3)" }}
           >

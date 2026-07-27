@@ -100,7 +100,8 @@ export default function Home() {
   if (!d) return <p className="text-[13px]">読み込み中…</p>;
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="home-screen flex flex-col gap-3">
+      <HomePriority d={d} />
       <Today d={d} today={today} onChanged={load} />
       {/*
         ポイント練習の日だけ、その日の枠に固定する。
@@ -134,6 +135,42 @@ export default function Home() {
       <WeekStrip d={d} today={today} />
       <AnalysisSwipe d={d} today={today} />
     </div>
+  );
+}
+
+function HomePriority({ d }: { d: any }) {
+  const violations = (d.todayViolations ?? []) as unknown[];
+  const readiness = d.readiness?.score;
+  const days = d.daysToRace;
+
+  return (
+    <section className="home-priority" aria-label="今日の重要指標">
+      <Link href="/results" className="home-priority-cell">
+        <span>READINESS</span>
+        <b style={{ color: readiness !== undefined && readiness < 60 ? "var(--amber)" : "var(--forge)" }}>
+          {readiness ?? "—"}
+          {readiness !== undefined ? <small>/100</small> : null}
+        </b>
+      </Link>
+      <Link href="/goal" className="home-priority-cell">
+        <span>NEXT RACE</span>
+        <b>
+          {days !== undefined && days >= 0 ? days : "—"}
+          {days !== undefined && days >= 0 ? <small>日</small> : null}
+        </b>
+      </Link>
+      <Link href="/goal" className="home-priority-cell">
+        <span>TARGET</span>
+        <b>{d.goal ? fmtSec(d.goal.targetTimeSec) : "未設定"}</b>
+      </Link>
+      <Link href="/warnings" className="home-priority-cell">
+        <span>ALERT</span>
+        <b style={{ color: violations.length > 0 ? "var(--amber)" : "var(--text)" }}>
+          {violations.length}
+          <small>件</small>
+        </b>
+      </Link>
+    </section>
   );
 }
 
@@ -490,7 +527,11 @@ function Today({ d, today, onChanged }: { d: any; today: string; onChanged: () =
 
   // 主アクションは「状態が変わっても位置が変わらない」ことが条件（A-3）。
   // 押す場所を毎日探し直さずに済むよう、必ずカード末尾の同じ位置に出す。
-  let action: { label: string; href?: string; kind: "primary" | "done" | "rest" };
+  let action: {
+    label: string;
+    href?: string;
+    kind: "primary" | "secondary" | "done" | "rest";
+  };
   if (!s && d.todayIsOff) {
     action = { label: "休養日", kind: "rest" };
   } else if (!s) {
@@ -504,7 +545,7 @@ function Today({ d, today, onChanged }: { d: any; today: string; onChanged: () =
         : "未達";
     action = { label: `記録済み ／ ${ach}`, href: "/results", kind: "done" };
   } else {
-    action = { label: "記録する", href: "/results", kind: "primary" };
+    action = { label: "記録する", href: "/results", kind: "secondary" };
   }
 
   if (s && editing) {
@@ -524,7 +565,7 @@ function Today({ d, today, onChanged }: { d: any; today: string; onChanged: () =
   }
 
   return (
-    <Card>
+    <Card variant="hero" className="today-card">
       <div className="flex items-center justify-between gap-2 mb-2.5">
         <span className="metric-label">TODAY</span>
         <span className="text-[11px] num" style={{ color: "var(--text-3)" }}>
@@ -611,8 +652,8 @@ function Today({ d, today, onChanged }: { d: any; today: string; onChanged: () =
             <ActionButton action={action} />
             {/* M-4: 1本ごとに入れながら、続けるかどうかをその場で見る */}
             {!result && s.targetPaces?.length > 0 ? (
-              <Link href={withQuery("/run", { sessionId: s.id })} className="btn-ghost text-center">
-                走りながら入力する
+              <Link href={withQuery("/run", { sessionId: s.id })} className="btn-volt justify-center">
+                セッションを開始
               </Link>
             ) : null}
             {/* P-1: 固定枠（チーム練習等）は動かせないので出さない */}
@@ -648,7 +689,11 @@ function Today({ d, today, onChanged }: { d: any; today: string; onChanged: () =
 function ActionButton({
   action,
 }: {
-  action: { label: string; href?: string; kind: "primary" | "done" | "rest" };
+  action: {
+    label: string;
+    href?: string;
+    kind: "primary" | "secondary" | "done" | "rest";
+  };
 }) {
   if (action.kind === "rest") {
     return (
@@ -667,6 +712,13 @@ function ActionButton({
         className="btn-ghost text-center flex-1"
         style={{ color: "var(--forge)", borderColor: "rgba(182,255,0,0.35)" }}
       >
+        {action.label}
+      </Link>
+    );
+  }
+  if (action.kind === "secondary") {
+    return (
+      <Link href={action.href!} className="btn-ghost text-center flex-1">
         {action.label}
       </Link>
     );

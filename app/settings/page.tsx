@@ -51,7 +51,7 @@ const ELSEWHERE: { label: string; where: string; href: string }[] = [
 
 export default function SettingsPage() {
   return (
-    <div className="flex flex-col gap-3">
+    <div className="settings-screen flex flex-col gap-3">
       {SETTINGS_GROUPS.map((g) => (
         <Card key={g.title} title={g.title}>
           <div className="flex flex-col">

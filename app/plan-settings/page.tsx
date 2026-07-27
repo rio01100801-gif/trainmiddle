@@ -40,7 +40,7 @@ const SLOT_OPTIONS: WeekdaySlot[] = [
 
 export default function PlanSettingsPage() {
   return (
-    <div className="flex flex-col gap-3">
+    <div className="plan-settings-screen flex flex-col gap-3">
       <WeekTemplateCard />
       <CustomMenuCard />
     </div>

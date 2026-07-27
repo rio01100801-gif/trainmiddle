@@ -20,6 +20,12 @@ export interface SplashSummary {
   fallbackText?: string;
 }
 
+export interface SplashDashboardData {
+  targetRace?: { dateStart?: string } | null;
+  goal?: { targetTimeSec?: number } | null;
+  cfe?: { estimated800mSec?: number } | null;
+}
+
 function fmtTime(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = sec - m * 60;
@@ -37,11 +43,7 @@ function fmtTime(sec: number): string {
  *   2. CFEだけある → 現在地
  *   3. どちらも無い（初回起動）→ 何も出さない。ロゴだけで成立させる
  */
-export function buildSplashSummary(d: {
-  targetRace?: { dateStart?: string } | null;
-  goal?: { targetTimeSec?: number } | null;
-  cfe?: { estimated800mSec?: number } | null;
-}): SplashSummary {
+export function buildSplashSummary(d: SplashDashboardData): SplashSummary {
   const raceDate = d?.targetRace?.dateStart;
   const target = d?.goal?.targetTimeSec;
   const cfe = d?.cfe?.estimated800mSec;
@@ -63,11 +65,15 @@ export function buildSplashSummary(d: {
 
 /** 保存する。localStorage が使えない環境でも落とさない */
 export function saveSplashSummary(d: unknown): void {
+  const summary = buildSplashSummary(d as SplashDashboardData);
   try {
-    if (typeof localStorage === "undefined") return;
-    const s = buildSplashSummary(d as never);
-    localStorage.setItem(SPLASH_KEY, JSON.stringify(s));
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(SPLASH_KEY, JSON.stringify(summary));
+    }
   } catch {
     /* プライベートモード等で書けなくても、スプラッシュが素になるだけ */
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent<SplashSummary>("forge:splash-summary", { detail: summary }));
   }
 }

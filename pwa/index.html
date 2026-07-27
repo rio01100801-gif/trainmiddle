@@ -5,141 +5,235 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>FORGE</title>
 <meta name="description" content="FORGE — 800m Performance System">
-<meta name="theme-color" content="#0a0a0a">
+<meta name="theme-color" content="#030303">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="FORGE">
 <link rel="manifest" href="./manifest.webmanifest">
-<link rel="apple-touch-icon" href="./icon-180.png">
+<link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png">
+<link rel="icon" type="image/png" sizes="32x32" href="./icon-32.png">
 <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
 <link rel="stylesheet" href="./styles.css">
 <style>
-  /*
-   * 起動時スプラッシュ（bundle読込までの間）。
-   * 読み込みの1〜2秒に、読める情報を1つだけ出す（R-2）。
-   * アニメーションも光彩も入れない。緑は数字1つにだけ使う。
-   */
+  :root { --forge: #b6ff00; --muted: #6b7280; --muted-2: #9ca3af; }
+  html, body { margin: 0; min-height: 100%; background: #030303; color: #fff; }
   #splash {
-    position: fixed; inset: 0; display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-    background: #0a0a0a; z-index: 99; padding: 24px;
+    position: fixed; inset: 0; z-index: 99; display: grid; place-items: center;
+    overflow: hidden; box-sizing: border-box;
+    padding: calc(env(safe-area-inset-top, 0px) + 22px) 22px
+      calc(env(safe-area-inset-bottom, 0px) + 22px);
+    background: radial-gradient(circle at 78% 38%, rgba(182,255,0,.055), transparent 24%), #030303;
+    font-family: "Helvetica Neue", -apple-system, BlinkMacSystemFont, "Hiragino Sans",
+      "Noto Sans JP", "Yu Gothic UI", sans-serif;
+    transition: opacity 280ms ease;
   }
-  #splash .mark { width: 74px; height: 40px; margin-bottom: 18px; }
-  /* アイコンのワードマークと同じ傾き（R-3） */
-  #splash b {
-    font-size: 30px; font-weight: 900; color: #fff; letter-spacing: -0.02em; line-height: 1;
-    transform: skewX(-8deg); display: inline-block;
+  #splash[data-leaving="1"] { opacity: 0; pointer-events: none; }
+  #splash .inner {
+    width: min(100%, 620px); display: flex; flex-direction: column;
+    align-items: center; text-align: center;
   }
-  #splash .tag { font-size: 8px; letter-spacing: 0.28em; color: #6b7280; font-weight: 700; margin-top: 7px; }
-  /* 数字を主役にする。ラベルは小さく、値は大きく */
-  #splash .info { margin-top: 30px; text-align: center; display: none; }
-  #splash .info .label { font-size: 9px; letter-spacing: 0.16em; color: #6b7280; font-weight: 700; }
-  #splash .info .value {
-    font-size: 30px; font-weight: 800; color: #fff; line-height: 1.1; margin-top: 5px;
-    font-variant-numeric: tabular-nums; letter-spacing: -0.03em;
+  #splash .mark { width: min(94vw, 620px); height: auto; overflow: visible; }
+  #splash .lane { fill: none; stroke-linecap: round; }
+  #splash .lane-muted { stroke: rgba(182,255,0,.14); stroke-width: 3; }
+  #splash .lane-live {
+    stroke: var(--forge); stroke-width: 5; stroke-dasharray: 1520; stroke-dashoffset: 1520;
+    filter: url("#splash-glow");
+    animation: splash-draw 1.45s cubic-bezier(.5,.05,.2,1) .18s forwards;
   }
-  #splash .info .sub {
-    font-size: 12px; font-weight: 700; color: #b6ff00; margin-top: 7px;
-    font-variant-numeric: tabular-nums;
+  #splash .lane-delay { animation-delay: .52s; }
+  #splash .finish {
+    fill: #fff; opacity: 0; filter: url("#splash-glow");
+    animation: splash-finish 420ms ease-out 1.68s forwards;
+  }
+  #splash .brand {
+    margin-top: -30px; display: flex; flex-direction: column; align-items: center;
+    opacity: 0; transform: translateY(12px);
+    animation: splash-rise 460ms ease-out 1.78s forwards;
+  }
+  #splash .brand b {
+    display: inline-block; color: #fff; font-size: clamp(34px,10vw,58px);
+    line-height: .9; letter-spacing: -.035em; font-weight: 950; transform: skewX(-9deg);
+  }
+  #splash .tag {
+    margin-top: 12px; color: var(--muted-2); font-size: clamp(8px,2.5vw,11px);
+    font-weight: 700; letter-spacing: .34em;
+  }
+  #splash .info {
+    min-height: 96px; margin-top: 32px; display: flex; flex-direction: column;
+    align-items: center; opacity: 0; animation: splash-rise 420ms ease-out 2.18s forwards;
+  }
+  #splash .label {
+    color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .18em;
+  }
+  #splash .value {
+    max-width: min(88vw,560px); margin-top: 5px; color: #fff;
+    font-size: clamp(28px,10vw,48px); line-height: 1.08; letter-spacing: -.045em;
+    font-weight: 850; font-variant-numeric: tabular-nums;
+  }
+  #splash .sub {
+    margin-top: 8px; color: var(--forge); font-size: clamp(11px,3.4vw,14px);
+    font-weight: 750; font-variant-numeric: tabular-nums;
+  }
+  #splash .wait {
+    min-height: 16px; margin-top: 18px; color: var(--muted); font-size: 10px;
+    letter-spacing: .08em; animation: splash-pulse 1.4s ease-in-out infinite;
+  }
+  #splash .retry {
+    display: none; min-width: 150px; min-height: 44px; margin-top: 14px;
+    border: 1px solid rgba(182,255,0,.45); border-radius: 10px;
+    background: transparent; color: var(--forge); font: inherit; font-size: 12px; font-weight: 800;
+  }
+  #splash[data-stalled="1"] .retry, #splash[data-error="1"] .retry { display: block; }
+  @keyframes splash-draw { to { stroke-dashoffset: 0; } }
+  @keyframes splash-finish {
+    0% { opacity: 0; transform: scale(.35); transform-origin: 648px 172px; }
+    45% { opacity: 1; transform: scale(2.8); transform-origin: 648px 172px; }
+    100% { opacity: .92; transform: scale(1); transform-origin: 648px 172px; }
+  }
+  @keyframes splash-rise { to { opacity: 1; transform: translateY(0); } }
+  @keyframes splash-pulse { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    #splash { transition-duration: 120ms; }
+    #splash .lane-live, #splash .finish, #splash .brand, #splash .info, #splash .wait {
+      animation: none !important;
+    }
+    #splash .lane-live { stroke-dashoffset: 0; }
+    #splash .finish, #splash .brand, #splash .info { opacity: 1; transform: none; }
   }
 </style>
 </head>
 <body>
-<div id="splash">
-  <!-- 400mトラック。アイコン（pwa/icon.svg）と同じ形 -->
-  <svg class="mark" viewBox="0 0 148 80" fill="none" stroke="#b6ff00" stroke-width="12" aria-hidden="true">
-    <path d="M68 6 H40 A34 34 0 0 0 40 74 H68"/>
-    <path d="M80 6 H108 A34 34 0 0 1 108 74 H80"/>
-    <path d="M68 22 H52 A18 18 0 0 0 52 58 H68"/>
-    <path d="M80 22 H96 A18 18 0 0 1 96 58 H80"/>
-  </svg>
-  <b>FORGE</b>
-  <span class="tag">800M PERFORMANCE</span>
-  <div class="info" id="splash-info">
-    <div class="label" id="splash-label"></div>
-    <div class="value" id="splash-value"></div>
-    <div class="sub" id="splash-sub"></div>
+<div id="splash" role="status" aria-live="polite" aria-busy="true" aria-label="FORGEを起動しています">
+  <div class="inner">
+    <svg class="mark" viewBox="0 0 720 300" aria-hidden="true">
+      <defs>
+        <filter id="splash-glow" x="-30%" y="-50%" width="160%" height="200%">
+          <feGaussianBlur stdDeviation="8" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+      <path class="lane lane-muted" d="M72 172C72 72 648 72 648 172S72 272 72 172Z"/>
+      <path class="lane lane-muted" d="M110 172C110 102 610 102 610 172S110 242 110 172Z"/>
+      <path class="lane lane-live" d="M72 172C72 72 648 72 648 172S72 272 72 172Z"/>
+      <path class="lane lane-live lane-delay" d="M110 172C110 102 610 102 610 172S110 242 110 172Z"/>
+      <circle class="finish" cx="648" cy="172" r="8"/>
+    </svg>
+    <div class="brand">
+      <b>FORGE</b>
+      <span class="tag">800M PERFORMANCE</span>
+    </div>
+    <div class="info" id="splash-info">
+      <span class="label" id="splash-label">INITIALIZING</span>
+      <strong class="value" id="splash-value">データ読込中</strong>
+      <span class="sub" id="splash-sub">端末内の情報を確認しています</span>
+    </div>
+    <span class="wait" id="splash-wait">アプリを準備しています</span>
+    <button class="retry" id="splash-retry" type="button">再読み込み</button>
   </div>
 </div>
 <script>
-  // R-2: 前回起動時に書いておいた値を出す（bundle読込前なのでDBは読めない）。
-  //
-  // ここも必ず即時関数で包むこと。上のコメントと同じ理由で、
-  // トップレベルの const は bundle.js と同じスコープを共有する。
-  // 変数名も1文字を避ける（minifier が付ける名前と衝突する）。
-  //
-  // 組み立てはTS側（app/components/splash-cache.ts）でやってある。
-  // ここでやるのは「保存したレース日から今日までの日数を引く」だけ。
-  // 何日も開かなかったときに、古い日数をそのまま出さないため。
   (function () {
-    try {
-      var splashRaw = localStorage.getItem("forge:splash");
-      if (!splashRaw) return;
-      var splashData = JSON.parse(splashRaw);
-      var splashLabel = "";
-      var splashValue = "";
-      var splashSub = splashData.gapText || splashData.fallbackText || "";
+    var bornAt = Date.now();
+    var reduced = window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var minimumMs = reduced ? 650 : 2800;
+    var splash = document.getElementById("splash");
+    var label = document.getElementById("splash-label");
+    var value = document.getElementById("splash-value");
+    var sub = document.getElementById("splash-sub");
+    var wait = document.getElementById("splash-wait");
+    var retry = document.getElementById("splash-retry");
+    var ready = false;
 
-      if (splashData.raceDate) {
-        var nowMs = new Date();
-        var todayMs = Date.UTC(nowMs.getFullYear(), nowMs.getMonth(), nowMs.getDate());
-        var raceMs = Date.parse(splashData.raceDate + "T00:00:00Z");
-        var restDays = Math.round((raceMs - todayMs) / 86400000);
-        if (isFinite(restDays) && restDays >= 0) {
-          splashLabel = "レースまで";
-          splashValue = restDays + "日";
-        }
-      }
-      // レースが無い／過ぎている場合は、代わりの1行を主役に上げる
-      if (!splashValue && splashSub) {
-        splashLabel = "";
-        splashValue = splashSub;
-        splashSub = "";
-      }
-      if (!splashValue) return;
-
-      document.getElementById("splash-label").textContent = splashLabel;
-      document.getElementById("splash-value").textContent = splashValue;
-      document.getElementById("splash-sub").textContent = splashSub;
-      document.getElementById("splash-info").style.display = "block";
-    } catch (splashErr) {
-      /* 出せなくてもロゴだけで成立する */
+    function daysUntil(date) {
+      if (!date) return null;
+      var now = new Date();
+      var today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+      var race = Date.parse(date + "T00:00:00Z");
+      if (!isFinite(race)) return null;
+      var days = Math.round((race - today) / 86400000);
+      return days >= 0 ? days : null;
     }
+
+    function renderSummary(data, loaded) {
+      var days = daysUntil(data && data.raceDate);
+      if (days !== null) {
+        label.textContent = "レースまで";
+        value.textContent = days + "日";
+        sub.textContent = data.gapText || data.fallbackText || "目標を設定";
+      } else if (data && data.fallbackText) {
+        label.textContent = "CURRENT";
+        value.textContent = data.fallbackText;
+        sub.textContent = "目標レースを設定";
+      } else if (loaded) {
+        label.textContent = "NEXT RACE";
+        value.textContent = "レース未設定";
+        sub.textContent = "目標を設定";
+      }
+    }
+
+    function hideWhenAllowed() {
+      if (!ready || !splash) return;
+      var rest = Math.max(0, minimumMs - (Date.now() - bornAt));
+      window.setTimeout(function () {
+        if (!splash) return;
+        splash.setAttribute("data-leaving", "1");
+        splash.setAttribute("aria-busy", "false");
+        window.setTimeout(function () {
+          if (splash && splash.parentNode) splash.parentNode.removeChild(splash);
+          splash = null;
+        }, reduced ? 140 : 300);
+      }, rest);
+    }
+
+    try {
+      var raw = localStorage.getItem("forge:splash");
+      if (raw) renderSummary(JSON.parse(raw), true);
+    } catch (storageError) {
+      wait.textContent = "保存情報を読み込めません。ローカル起動を続けます";
+    }
+
+    window.addEventListener("forge:splash-summary", function (event) {
+      renderSummary(event.detail, true);
+    });
+    window.addEventListener("forge:app-ready", function () {
+      ready = true;
+      wait.textContent = navigator.onLine ? "準備完了" : "オフラインで起動";
+      hideWhenAllowed();
+    });
+    window.addEventListener("forge:app-error", function (event) {
+      splash.setAttribute("data-error", "1");
+      splash.setAttribute("aria-busy", "false");
+      label.textContent = "STARTUP ERROR";
+      value.textContent = "起動できませんでした";
+      sub.textContent = event.detail && event.detail.message
+        ? event.detail.message
+        : "再読み込みしてください";
+      wait.textContent = navigator.onLine ? "接続と保存領域を確認してください" : "現在オフラインです";
+    });
+    window.addEventListener("offline", function () {
+      if (!ready) wait.textContent = "オフラインデータを確認しています";
+    });
+    window.addEventListener("online", function () {
+      if (!ready) wait.textContent = "接続が戻りました。初期化を続けています";
+    });
+    retry.addEventListener("click", function () { location.reload(); });
+
+    window.setTimeout(function () {
+      if (ready || !splash) return;
+      wait.textContent = navigator.onLine
+        ? "認証・保存データの読み込みを続けています"
+        : "オフラインデータの読み込みを続けています";
+    }, 4500);
+    window.setTimeout(function () {
+      if (ready || !splash) return;
+      splash.setAttribute("data-stalled", "1");
+      splash.setAttribute("aria-busy", "false");
+      wait.textContent = "読み込みに時間がかかっています";
+    }, 9000);
   })();
 </script>
 <div id="root"></div>
 <script src="./bundle.js"></script>
-<script>
-  // Reactがマウントしたらスプラッシュを外す。
-  //
-  // 必ず即時関数で包むこと。bundle.js もこのスクリプトも「クラシックスクリプト」で、
-  // トップレベルの let/const は同じレキシカルスコープを共有する。
-  // 素で const t と書くと、minifierが bundle 側に付けた1文字変数と衝突して
-  // "Identifier 't' has already been declared" でこのスクリプト全体が落ち、
-  // スプラッシュが永久に消えなくなる（アプリ自体は動いているのに真っ暗に見える）。
-  //
-  // S-1: マウント即座には消さない。
-  // Service Worker のキャッシュが効くと 0.2〜0.4秒でマウントが終わるので、
-  // せっかく出した数字が読めないまま消える。最低表示時間を設ける。
-  //   値あり 1300ms … 数字を1つ読むのに必要な時間（ラベル→数値→補足で約1.2秒）
-  //   値なし  500ms … 出すものがロゴだけなら、待たせるのは純粋な足止めになる
-  // 長すぎると毎回の起動が重くなるので、これ以上は伸ばさない。
-  (function () {
-    var bornAt = Date.now();
-    var hasInfo = false;
-    var infoEl = document.getElementById("splash-info");
-    if (infoEl && infoEl.style.display === "block") hasInfo = true;
-    var minMs = hasInfo ? 1300 : 500;
-
-    var timer = setInterval(function () {
-      var root = document.getElementById("root");
-      var splash = document.getElementById("splash");
-      if (!root || root.children.length === 0) return;
-      if (Date.now() - bornAt < minMs) return;
-      if (splash) splash.remove();
-      clearInterval(timer);
-    }, 60);
-  })();
-</script>
 </body>
 </html>

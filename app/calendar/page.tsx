@@ -205,8 +205,8 @@ export default function CalendarPage() {
     setAnchor((a) => (mode === "week" ? addDays(a, dir * 7) : addDays(monthStart(a), dir * 30)));
 
   return (
-    <div className="flex flex-col gap-3">
-      <Card>
+    <div className="calendar-screen flex flex-col gap-3">
+      <Card className="calendar-controls">
         <div className="flex gap-2 items-center flex-wrap">
           <button className="btn-ghost !py-1.5 !px-2.5 !text-[12px]" onClick={() => shift(-1)}>
             ←
@@ -219,11 +219,19 @@ export default function CalendarPage() {
           </button>
         </div>
         <div className="flex gap-2 items-center flex-wrap mt-2">
-          <div className="seg flex-1">
-            <button data-on={mode === "week" ? "1" : "0"} onClick={() => setMode("week")}>
+          <div className="seg flex-1" role="group" aria-label="カレンダー表示期間">
+            <button
+              aria-pressed={mode === "week"}
+              data-on={mode === "week" ? "1" : "0"}
+              onClick={() => setMode("week")}
+            >
               週
             </button>
-            <button data-on={mode === "month" ? "1" : "0"} onClick={() => setMode("month")}>
+            <button
+              aria-pressed={mode === "month"}
+              data-on={mode === "month" ? "1" : "0"}
+              onClick={() => setMode("month")}
+            >
               月
             </button>
           </div>
@@ -346,7 +354,11 @@ export default function CalendarPage() {
         </Card>
       ) : null}
 
-      <div onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} className="flex flex-col gap-1.5">
+      <div
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+        className="calendar-day-list flex flex-col gap-1.5"
+      >
         {days.map((date) => (
           <DayRow
             key={date}

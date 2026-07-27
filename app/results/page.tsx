@@ -92,8 +92,8 @@ export default function ResultsPage() {
   const cur = seg ?? "condition";
 
   return (
-    <div className="flex flex-col gap-3">
-      <Card>
+    <div className="results-screen flex flex-col gap-3">
+      <Card className="screen-controls" variant="quiet">
         <div className="flex items-center gap-2 mb-2.5">
           <label className="text-[11.5px] flex-shrink-0" style={{ color: "var(--text-3)" }}>
             日付
@@ -109,13 +109,14 @@ export default function ResultsPage() {
             }}
           />
         </div>
-        <div className="seg">
+        <div className="seg" role="group" aria-label="記録する内容">
           {SEGMENTS.map((x) => {
             const done =
               x.key === "condition" ? hasCheck : x.key === "result" ? hasResult : false;
             return (
               <button
                 key={x.key}
+                aria-pressed={cur === x.key}
                 data-on={cur === x.key ? "1" : "0"}
                 onClick={() => setSeg(x.key)}
               >

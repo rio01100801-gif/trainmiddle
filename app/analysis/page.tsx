@@ -124,15 +124,20 @@ export default function AnalysisPage() {
   const lastWeek = data.weeks?.[data.weeks.length - 1];
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="analysis-screen flex flex-col gap-3">
       {/*
         B-2: レース分析を分析タブのセグメントとして統合する。
         あわせて既存の6カードもセグメントに振り分け、1画面に縦積みするのをやめた
         （現行は目的のグラフまでスクロールが要った）。
       */}
-      <div className="seg">
+      <div className="seg" role="group" aria-label="分析カテゴリ">
         {ANALYSIS_SEGMENTS.map((x) => (
-          <button key={x.key} data-on={seg === x.key ? "1" : "0"} onClick={() => setSeg(x.key)}>
+          <button
+            key={x.key}
+            aria-pressed={seg === x.key}
+            data-on={seg === x.key ? "1" : "0"}
+            onClick={() => setSeg(x.key)}
+          >
             {x.label}
           </button>
         ))}

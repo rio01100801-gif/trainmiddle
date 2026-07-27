@@ -20,6 +20,7 @@ const FILES = [
   "sw.js",
   "index.html",
   "manifest.webmanifest",
+  "icon-32.png",
   "icon-180.png",
   "icon-192.png",
   "icon-512.png",

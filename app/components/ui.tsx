@@ -107,18 +107,24 @@ export function Card({
   children,
   className = "",
   pad,
+  variant = "default",
 }: {
   title?: string;
   right?: ReactNode;
   children: ReactNode;
   className?: string;
   pad?: number;
+  variant?: "default" | "hero" | "quiet";
 }) {
   return (
-    <section className={`card ${className}`} style={pad ? { padding: pad } : undefined}>
+    <section
+      className={`card ${className}`}
+      data-variant={variant}
+      style={pad ? { padding: pad } : undefined}
+    >
       {title ? (
         <div className="card-t justify-between">
-          <span>{title}</span>
+          <h2>{title}</h2>
           {right}
         </div>
       ) : null}
