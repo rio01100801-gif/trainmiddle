@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   clearSyncConfig,
+  fetchSnapshot,
   getLastSynced,
   getSession,
   getSyncConfig,
   parseAuthRedirectHash,
+  putSnapshot,
   saveLastSynced,
   saveSession,
   saveSyncConfig,
@@ -215,5 +217,79 @@ describe("OAuth callbackの解析", () => {
       expect(parsed.message).toContain("bad_oauth_callback");
       expect(parsed.message).toContain("Denied");
     }
+  });
+});
+
+describe("Supabase Storage同期", () => {
+  const config = { url: "https://storage.supabase.co", anonKey: KEY };
+  const session = { accessToken: "user-access-token" };
+
+  it("404だけを未作成スナップショットとして扱う", async () => {
+    const fetchImpl: typeof fetch = async () =>
+      new Response(JSON.stringify({ message: "Object not found" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+
+    await expect(fetchSnapshot(config, session, { fetchImpl })).resolves.toBeUndefined();
+  });
+
+  it("読み取りの400を空扱いせずバケット・RLS診断として返す", async () => {
+    const fetchImpl: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          statusCode: "400",
+          error: "Bad Request",
+          message: "new row violates row-level security policy",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } }
+      );
+
+    await expect(fetchSnapshot(config, session, { fetchImpl })).rejects.toThrow(
+      "SELECT・INSERT・UPDATEポリシー"
+    );
+  });
+
+  it("書き込みの403へSupabase本文とRLSの直し方を付ける", async () => {
+    const fetchImpl: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          statusCode: "403",
+          error: "Unauthorized",
+          message: "new row violates row-level security policy",
+        }),
+        { status: 403, headers: { "content-type": "application/json" } }
+      );
+
+    await expect(putSnapshot(config, session, { exportedAt: "2026-07-27" }, { fetchImpl }))
+      .rejects.toThrow("StorageのRLSで拒否されています");
+  });
+
+  it("書き込みの401を期限切れサインインとして案内する", async () => {
+    const fetchImpl: typeof fetch = async () =>
+      new Response(JSON.stringify({ message: "Invalid JWT" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      });
+
+    await expect(putSnapshot(config, session, {}, { fetchImpl })).rejects.toThrow(
+      "Googleで再サインイン"
+    );
+  });
+
+  it("成功時は同じオブジェクトをupsertし、認証値を本文やエラーへ混ぜない", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      expect(String(input)).toBe(
+        "https://storage.supabase.co/storage/v1/object/forge/snapshot.json"
+      );
+      expect(init?.method).toBe("POST");
+      expect(new Headers(init?.headers).get("x-upsert")).toBe("true");
+      expect(init?.body).toBe(JSON.stringify({ exportedAt: "2026-07-27" }));
+      return new Response(null, { status: 200 });
+    };
+
+    await expect(
+      putSnapshot(config, session, { exportedAt: "2026-07-27" }, { fetchImpl })
+    ).resolves.toBeUndefined();
   });
 });

@@ -2081,13 +2081,15 @@ await shot("34_mark_header");
  */
 const syncKey = "sb_publishable_1234567890123456789012_12345678";
 const rejectedSyncKey = "sb_publishable_0000000000000000000000_00000000";
+let syncStorageMode = "rls";
+let syncStorageWriteSeen = false;
 await page.route(/^https:\/\/[^/]+\.supabase\.co\//, async (route) => {
   const request = route.request();
   const target = new URL(request.url());
   const corsHeaders = {
     "access-control-allow-origin": "*",
-    "access-control-allow-headers": "apikey, content-type",
-    "access-control-allow-methods": "GET, OPTIONS",
+    "access-control-allow-headers": "apikey, authorization, content-type, x-upsert",
+    "access-control-allow-methods": "GET, POST, OPTIONS",
   };
   if (request.method() === "OPTIONS") {
     await route.fulfill({ status: 204, headers: corsHeaders });
@@ -2114,6 +2116,40 @@ await page.route(/^https:\/\/[^/]+\.supabase\.co\//, async (route) => {
       body: "<!doctype html><title>OAuth intercepted</title>",
     });
     return;
+  }
+  if (target.pathname === "/storage/v1/object/forge/snapshot.json") {
+    if (syncStorageMode === "rls") {
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({
+          statusCode: "403",
+          error: "Unauthorized",
+          message: "new row violates row-level security policy",
+        }),
+        headers: corsHeaders,
+      });
+      return;
+    }
+    if (request.method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: "{}",
+        headers: corsHeaders,
+      });
+      return;
+    }
+    if (request.method() === "POST") {
+      syncStorageWriteSeen = (await request.headerValue("x-upsert")) === "true";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: "{}",
+        headers: corsHeaders,
+      });
+      return;
+    }
   }
   await route.abort("failed");
 });
@@ -2257,6 +2293,29 @@ if (page.url().includes("access_token") || page.url().includes("refresh_token"))
   fail("S-11: OAuth tokenがcallback後もURLに残る");
 }
 
+// StorageのRLS不備を汎用エラーにせず、直すべきポリシーまで表示する
+const errorsBeforeStorageRls = errors.length;
+await page.getByRole("button", { name: "いま同期する" }).click();
+await page.waitForTimeout(300);
+syncBody = await page.textContent("body");
+if (!syncBody.includes("HTTP 403") || !syncBody.includes("StorageのRLSで拒否されています")) {
+  fail("S-11: StorageのRLS不備をHTTP statusと対処方法つきで表示できない");
+}
+const storageRlsConsole = errors.splice(errorsBeforeStorageRls);
+errors.push(...storageRlsConsole.filter((e) => !e.includes("status of 403")));
+
+// ポリシー修正後は同じ画面から再試行でき、x-upsertでクラウドへ保存される
+syncStorageMode = "ready";
+await page.getByRole("button", { name: "いま同期する" }).click();
+await page.waitForTimeout(300);
+syncBody = await page.textContent("body");
+if (!syncBody.includes("クラウドへ送りました")) {
+  fail("S-11: Storageのポリシー修正後にクラウドへ書き込めない");
+}
+if (!syncStorageWriteSeen) {
+  fail("S-11: Storageへの書き込みがx-upsertになっていない");
+}
+
 // Supabase接続設定だけを削除し、練習データ用IndexedDBには触れない
 await page.getByRole("button", { name: "接続設定を消す" }).click();
 await page.waitForTimeout(100);
@@ -2280,7 +2339,7 @@ await page.waitForTimeout(600);
 if (!(await page.textContent("body")).includes("他の端末と記録を引き継ぎます")) {
   fail("S-11: 設定画面から同期に辿れない");
 }
-step("S-11 同期設定・再保存・接続診断・OAuth復帰・設定のみ削除OK");
+step("S-11 同期設定・接続診断・OAuth復帰・Storage RLS診断・クラウド保存・設定のみ削除OK");
 await shot("37_sync");
 
 // ---- 17. Q-3: 取り込み済みの過去データを作り直せること ----

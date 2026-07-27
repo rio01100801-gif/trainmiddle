@@ -492,7 +492,13 @@ SDKを入れず REST を直接叩いています。使うのは「サインイ�
 2. **Storage** → New bucket → 名前を `forge`（Private のまま）
 3. bucket のポリシーを追加（自分のファイルだけ読み書きできるようにする）
    - Storage → forge → Policies → New policy → *For full customization*
-   - `SELECT` / `INSERT` / `UPDATE` を対象に、条件は `auth.role() = 'authenticated'`
+   - 対象roleは `authenticated`
+   - `SELECT`: `using (bucket_id = 'forge')`
+   - `INSERT`: `with check (bucket_id = 'forge')`
+   - `UPDATE`: `using (bucket_id = 'forge')` と `with check (bucket_id = 'forge')`
+   - 初回アップロードにも、Storage APIが保存した行を返すための`SELECT`が必要。
+     `INSERT`だけでは「new row violates row-level security policy」で失敗する。
+   - 上書き保存（`x-upsert: true`）には`SELECT`・`INSERT`・`UPDATE`の3つが必要。
 4. **Authentication → Providers → Google** を有効化
    - Google Cloud Console で OAuth クライアントID（ウェブ）を作る
    - 承認済みリダイレクトURIに、Supabaseが表示する

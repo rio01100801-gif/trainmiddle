@@ -537,6 +537,10 @@ export function consumeAuthMessage(): string | undefined {
 const BUCKET = "forge";
 const OBJECT = "snapshot.json";
 
+export interface StorageRequestOptions {
+  fetchImpl?: typeof fetch;
+}
+
 function headers(cfg: SyncConfig, session: SyncSession): Record<string, string> {
   const runtime = createRuntime(cfg);
   return {
@@ -545,17 +549,78 @@ function headers(cfg: SyncConfig, session: SyncSession): Record<string, string> 
   };
 }
 
+function storageErrorFields(value: unknown): string[] {
+  if (!value || typeof value !== "object") return [];
+  const payload = value as Record<string, unknown>;
+  const fields = ["code", "error", "message"]
+    .map((key) => payload[key])
+    .filter((field): field is string => typeof field === "string")
+    .map((field) => field.replace(/\s+/g, " ").trim().slice(0, 180))
+    .filter(Boolean);
+  return [...new Set(fields)];
+}
+
+/**
+ * Supabase Storage のエラー本文から、利用者が直せる範囲だけを表示する。
+ * レスポンス本文に鍵やJWTは含まれないが、既知フィールドだけを取り出し長さも制限する。
+ */
+async function storageFailure(
+  response: Response,
+  action: "読み取り" | "書き込み"
+): Promise<Error> {
+  let fields: string[] = [];
+  try {
+    fields = storageErrorFields(await response.json());
+  } catch {
+    // Storage がJSON以外を返した場合も、HTTP status と対処方法は必ず返す。
+  }
+
+  const detail = fields.join(" / ");
+  const normalized = detail.toLowerCase();
+  let hint: string;
+  if (response.status === 401) {
+    hint = "サインインの有効期限が切れている可能性があります。サインアウト後、Googleで再サインインしてください。";
+  } else if (normalized.includes("bucket") && normalized.includes("not found")) {
+    hint = "Supabase StorageにPrivateバケット「forge」を作成してください。";
+  } else if (
+    response.status === 403 ||
+    normalized.includes("row-level security") ||
+    normalized.includes("policy") ||
+    normalized.includes("unauthorized")
+  ) {
+    hint =
+      "StorageのRLSで拒否されています。「forge」バケットにauthenticated向けのSELECT・INSERT・UPDATEポリシーを設定してください。";
+  } else if (response.status === 413) {
+    hint = "書き出しデータがStorageの上限を超えています。端末の書き出しファイルサイズを確認してください。";
+  } else if (response.status === 400) {
+    hint =
+      "「forge」バケットの存在と、authenticated向けSELECT・INSERT・UPDATEポリシーを確認してください。";
+  } else {
+    hint = "Supabase Storageの「forge」バケットとポリシー、サインイン状態を確認してください。";
+  }
+
+  return new Error(
+    `クラウドの${action}に失敗しました（HTTP ${response.status}）。` +
+      (detail ? ` Supabase: ${detail}。` : "") +
+      ` ${hint}`
+  );
+}
+
 /** クラウドのスナップショットを取る。無ければ undefined */
 export async function fetchSnapshot(
   cfg: SyncConfig,
-  session: SyncSession
+  session: SyncSession,
+  options: StorageRequestOptions = {}
 ): Promise<unknown | undefined> {
   const runtime = createRuntime(cfg);
-  const r = await fetch(`${runtime.url}/storage/v1/object/${BUCKET}/${OBJECT}`, {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const r = await fetchImpl(`${runtime.url}/storage/v1/object/${BUCKET}/${OBJECT}`, {
     headers: headers(runtime, session),
   });
-  if (r.status === 404 || r.status === 400) return undefined;
-  if (!r.ok) throw new Error(`クラウドの読み取りに失敗しました（${r.status}）`);
+  // 400はバケット未作成・RLS不備でも返る。空扱いにすると原因を隠したまま
+  // first_pushへ進み、書き込み時にだけ失敗するため、404だけを未作成とみなす。
+  if (r.status === 404) return undefined;
+  if (!r.ok) throw await storageFailure(r, "読み取り");
   return r.json();
 }
 
@@ -563,10 +628,12 @@ export async function fetchSnapshot(
 export async function putSnapshot(
   cfg: SyncConfig,
   session: SyncSession,
-  file: unknown
+  file: unknown,
+  options: StorageRequestOptions = {}
 ): Promise<void> {
   const runtime = createRuntime(cfg);
-  const r = await fetch(`${runtime.url}/storage/v1/object/${BUCKET}/${OBJECT}`, {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const r = await fetchImpl(`${runtime.url}/storage/v1/object/${BUCKET}/${OBJECT}`, {
     method: "POST",
     headers: {
       ...headers(runtime, session),
@@ -575,5 +642,5 @@ export async function putSnapshot(
     },
     body: JSON.stringify(file),
   });
-  if (!r.ok) throw new Error(`クラウドへの書き込みに失敗しました（${r.status}）`);
+  if (!r.ok) throw await storageFailure(r, "書き込み");
 }
