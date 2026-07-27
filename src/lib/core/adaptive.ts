@@ -434,7 +434,7 @@ export function dailyAdjustment(
       repDelta: 0,
       repFactor: 0,
       blocked: true,
-      reasons: ["赤信号。この日に質練習は入れません"],
+      reasons: ["赤信号。この日に高負荷練習は入れません"],
     };
   }
   if (signal === "yellow") {

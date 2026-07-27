@@ -5,6 +5,8 @@ import { describe, it, expect } from "vitest";
 import {
   emptyWeekTemplate,
   isPointSlot,
+  modeOf,
+  normalizeWeekTemplate,
   pickCustomMenu,
   slotOf,
   validateWeekTemplate,
@@ -40,6 +42,17 @@ describe("3-1 固定曜日設定の基本", () => {
     expect(slotOf(t, 4)).toBe("off");
     expect(slotOf(t, 0)).toBe("aerobic");
     expect(slotOf(t, 1)).toBe("auto"); // 未設定
+  });
+
+  it("旧データの指定枠は固定として読み、新形式では優先と区別する", () => {
+    const legacy = T({ 2: "point" });
+    expect(modeOf(legacy, 2)).toBe("fixed");
+    const preferred = normalizeWeekTemplate({
+      ...T({ 2: "point" }),
+      modes: { 2: "preferred" },
+    });
+    expect(modeOf(preferred, 2)).toBe("preferred");
+    expect(modeOf(preferred, 1)).toBe("none");
   });
 
   it("ポイント練習の枠を判定できる", () => {
@@ -145,6 +158,7 @@ describe("3-1 プラン生成が固定曜日を尊重する", () => {
     );
     expect(thursdays.length).toBeGreaterThan(5);
     expect(thursdays.every((s) => s.category === "off")).toBe(true);
+    expect(thursdays.every((s) => s.isFixed && s.fixedSource?.includes("木曜"))).toBe(true);
   });
 
   it("レース直前は固定曜日よりテーパー設計が優先される（安全側が勝つ）", () => {
@@ -154,6 +168,7 @@ describe("3-1 プラン生成が固定曜日を尊重する", () => {
     expect(dayBefore).toBeDefined();
     expect(dayBefore!.category).not.toBe("off");
     expect(dayBefore!.category).toBe("neural");
+    expect(dayBefore!.isFixed).toBe(false);
   });
 
   it("日曜をジョグ枠＋ロングラン指定にするとロングランになる", () => {
@@ -173,6 +188,41 @@ describe("3-1 プラン生成が固定曜日を尊重する", () => {
     );
     // テーパー期は質を置けないので除外して判定する
     expect(tuesdays.filter((s) => quality.includes(s.category)).length).toBeGreaterThan(3);
+  });
+
+  it("優先曜日へ週の回数を増やさずポイント練習を移す", () => {
+    const plain = gen();
+    const preferred = gen(
+      T({ 3: "point" }, { modes: { 3: "preferred" } })
+    );
+    const quality = ["high_lactate", "race_economy", "modeling", "cv", "threshold"];
+    const count = (sessions: typeof plain.sessions) =>
+      sessions.filter((session) => session.phase === "Specific" && quality.includes(session.category)).length;
+    const preferredWednesdays = preferred.sessions.filter(
+      (session) =>
+        session.phase === "Specific" &&
+        new Date(session.date + "T00:00:00Z").getUTCDay() === 3 &&
+        quality.includes(session.category)
+    );
+    expect(preferredWednesdays.length).toBeGreaterThan(0);
+    expect(preferredWednesdays.every((session) => !session.isFixed)).toBe(true);
+    expect(count(preferred.sessions)).toBe(count(plain.sessions));
+  });
+
+  it("優先設定で高負荷が連日になる場合は自動配置を残す", () => {
+    const plan = gen(
+      T({ 4: "point" }, { modes: { 4: "preferred" } })
+    );
+    const violations = runRuleEngine(
+      ctx({
+        sessions: plan.sessions,
+        strengthSessions: plan.strengthSessions,
+        races: [race],
+        goal,
+        evaluationDate: "2026-06-08",
+      })
+    );
+    expect(violations.filter((violation) => violation.rule === "RULE-03")).toEqual([]);
   });
 
   it("固定曜日を使ってもERROR級のルール違反は出ない", () => {

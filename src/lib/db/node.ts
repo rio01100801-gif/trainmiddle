@@ -15,8 +15,29 @@ import type { DbDriver } from "./driver";
 import { Repo } from "./repo";
 import path from "path";
 import fs from "fs";
+import * as nodeModule from "module";
 
 let repoSingleton: Repo | undefined;
+
+interface BetterSqliteDatabase extends DbDriver {
+  pragma(sql: string): unknown;
+}
+
+type BetterSqliteConstructor = new (file: string) => BetterSqliteDatabase;
+
+/**
+ * 古いNode向けのoptional dependencyを実行時にだけ解決する。
+ *
+ * 文字列リテラルをrequireすると、実際にはnode:sqliteを使うNode 22.5以降でも
+ * Next.jsがビルド時の必須依存として扱い、optional installが失敗した環境で
+ * "Can't resolve better-sqlite3" になるため、Nodeの実行時requireを明示する。
+ */
+function loadBetterSqlite(): BetterSqliteConstructor {
+  const createRuntimeRequire = Reflect.get(nodeModule, "createRequire") as typeof nodeModule.createRequire;
+  const runtimeRequire = createRuntimeRequire(path.join(process.cwd(), "package.json"));
+  const moduleName = ["better", "sqlite3"].join("-");
+  return runtimeRequire(moduleName) as BetterSqliteConstructor;
+}
 
 /** 環境に応じてSQLiteの実体を選ぶ */
 function openDriver(file: string): DbDriver {
@@ -41,8 +62,7 @@ function openDriver(file: string): DbDriver {
   } catch {
     // node:sqlite が無い古いNodeのときだけ better-sqlite3 に落とす
   }
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const Database = require("better-sqlite3");
+  const Database = loadBetterSqlite();
   const db = new Database(file);
   db.pragma("journal_mode = WAL");
   return {

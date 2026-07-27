@@ -26,6 +26,12 @@ import type {
 } from "./types";
 import { addDays, diffDays, isMidsummer, isSummer, weekStart } from "./dates";
 import { isGrayZonePace } from "./pace";
+import {
+  isAerobicHighSession,
+  isGlycolyticSession,
+  isHighLoadSession,
+  isMiddleDistanceSpecificSession,
+} from "./trainingClassification";
 
 export const QUALITY_CATEGORIES: SessionCategory[] = [
   "high_lactate",
@@ -42,6 +48,7 @@ export const SPECIFIC_CATEGORIES: SessionCategory[] = [
 export const AEROBIC_QUALITY_CATEGORIES: SessionCategory[] = ["cv", "threshold"];
 export const HL_EQUIV_CATEGORIES: SessionCategory[] = ["high_lactate", "modeling"];
 
+/** @deprecated 互換用。新しい判定では Session を受け取る isHighLoadSession を使う。 */
 export const isQuality = (c: SessionCategory) => QUALITY_CATEGORIES.includes(c);
 export const isSpecific = (c: SessionCategory) => SPECIFIC_CATEGORIES.includes(c);
 export const isHlEquiv = (c: SessionCategory) => HL_EQUIV_CATEGORIES.includes(c);
@@ -273,12 +280,12 @@ function rule02(ctx: RuleContext): RuleViolation[] {
 }
 
 /**
- * RULE-03 [ERROR] 質練習の間隔は最低中1日。
+ * RULE-03 [ERROR] 高負荷練習の間隔は最低中1日。
  * 中1日の場合、間の日は aerobic または off のみ（neural は可）。
  */
 function rule03(ctx: RuleContext): RuleViolation[] {
   const out: RuleViolation[] = [];
-  const q = sorted(ctx.sessions.filter((s) => active(s) && isQuality(s.category)));
+  const q = sorted(ctx.sessions.filter((s) => active(s) && isHighLoadSession(s)));
   for (let i = 1; i < q.length; i++) {
     const prev = q[i - 1];
     const cur = q[i];
@@ -291,8 +298,8 @@ function rule03(ctx: RuleContext): RuleViolation[] {
             level: "ERROR",
             message:
               gap === 0
-                ? `同日(${cur.date})に質練習が2つ配置されています。`
-                : `質練習が連日(${prev.date} → ${cur.date})で配置されています。最低中1日空けてください。`,
+                ? `同日(${cur.date})に高負荷練習「${prev.name}」「${cur.name}」が配置されています。`
+                : `${prev.name}と${cur.name}が連日(${prev.date} → ${cur.date})です。高負荷の種類が違っても回復日は必要です。`,
             dates: [prev.date, cur.date],
             sessionIds: [prev.id, cur.id],
             suggestion: `${cur.name} を ${addDays(prev.date, 2)} 以降へ移動してください。`,
@@ -305,29 +312,48 @@ function rule03(ctx: RuleContext): RuleViolation[] {
   return out;
 }
 
-/** RULE-04 [ERROR] 同一週内の質練習は最大2回（モデリング期の例外を除く） */
+/** RULE-04 高負荷の種類と組み合わせを評価する。 */
 function rule04(ctx: RuleContext): RuleViolation[] {
   const out: RuleViolation[] = [];
-  const q = ctx.sessions.filter((s) => active(s) && isQuality(s.category));
-  const races = aRaces(ctx);
+  const q = ctx.sessions.filter((s) => active(s) && isHighLoadSession(s));
   for (const [w, list] of groupByWeek(q)) {
-    const max = races.some((r) => {
-      const d = diffDays(w, raceDateOf(r));
-      return d >= 7 && d <= 28; // モデリング期の週は例外的に3回まで
-    })
-      ? 3
-      : 2;
-    if (list.length > max) {
+    const glycolytic = list.filter(isGlycolyticSession);
+    const specific = list.filter(isMiddleDistanceSpecificSession);
+    const aerobicHigh = list.filter(isAerobicHighSession);
+    const demanding = [...glycolytic, ...specific];
+    const tooManySpecific = demanding.length > 2;
+    const tooManyOverall = list.length > 3;
+    if (tooManySpecific || tooManyOverall) {
       out.push(
         finalize(
           {
             rule: "RULE-04",
             level: "ERROR",
-            message: `週(${w}〜)の質練習が${list.length}回です。最大${max}回までです。`,
+            message:
+              `週(${w}〜)に高負荷が${list.length}回あります。` +
+              `内訳は高乳酸・解糖系${glycolytic.length}回、中距離特異的${specific.length}回、` +
+              `有酸素高強度${aerobicHigh.length}回です。特異的な疲労が同じ週に集中しています。`,
             dates: list.map((s) => s.date),
             sessionIds: list.map((s) => s.id),
             suggestion:
-              "優先度の低い質練習（cv / threshold）を aerobic に置き換えるか翌週へ移動してください。",
+              "高乳酸・中距離特異的の1回を有酸素系または回復メニューへ変更する案があります。",
+          },
+          list
+        )
+      );
+    } else if (list.length === 3) {
+      out.push(
+        finalize(
+          {
+            rule: "RULE-04",
+            level: "WARN",
+            message:
+              `週(${w}〜)は高負荷が3回です（高乳酸・解糖系${glycolytic.length}、` +
+              `中距離特異的${specific.length}、有酸素高強度${aerobicHigh.length}）。` +
+              "一律に禁止はしませんが、実施結果と回復日の確保を確認してください。",
+            dates: list.map((s) => s.date),
+            sessionIds: list.map((s) => s.id),
+            suggestion: "疲労・RPEが高い場合は、有酸素高強度の1回を低強度有酸素へ変更してください。",
           },
           list
         )
@@ -451,7 +477,7 @@ function rule08(ctx: RuleContext): RuleViolation[] {
   for (const race of aRaces(ctx)) {
     const rd = raceDateOf(race);
     const bad = ctx.sessions.filter((s) => {
-      if (!active(s) || !isQuality(s.category)) return false;
+      if (!active(s) || !isHighLoadSession(s)) return false;
       const d = diffDays(s.date, rd);
       return d > 0 && d < 7;
     });
@@ -615,7 +641,7 @@ function rule12(ctx: RuleContext): RuleViolation[] {
     ctx.sessions.filter(
       (s) =>
         s.status === "planned" &&
-        isQuality(s.category) &&
+        isHighLoadSession(s) &&
         s.date > lastRed &&
         s.date >= ctx.evaluationDate
     )
@@ -773,7 +799,7 @@ function rule18(ctx: RuleContext): RuleViolation[] {
   );
   for (const st of heavies) {
     const nextDayQuality = ctx.sessions.filter(
-      (s) => active(s) && s.date === addDays(st.date, 1) && isQuality(s.category)
+      (s) => active(s) && s.date === addDays(st.date, 1) && isHighLoadSession(s)
     );
     if (nextDayQuality.length > 0) {
       out.push({

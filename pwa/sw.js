@@ -11,7 +11,7 @@
  *
  * リリースのたびに VERSION を必ず上げること（上げないと install が走らない）。
  */
-const VERSION = "forge-v23";
+const VERSION = "forge-v25";
 const ASSETS = [
   "./",
   "./index.html",
@@ -66,7 +66,14 @@ self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
   const sameOrigin = new URL(e.request.url).origin === location.origin;
 
-  if (sameOrigin && isAppShell(e.request.url)) {
+  /*
+   * Supabaseなど外部originの通信はService Workerで横取りしない。
+   * アプリ本体のオフラインキャッシュと無関係なうえ、iOSではCORS失敗が
+   * Service Workerのfetch失敗に見えて原因を追えなくなるため。
+   */
+  if (!sameOrigin) return;
+
+  if (isAppShell(e.request.url)) {
     // ネットワーク優先 + 成功したらキャッシュ更新 / 失敗したらキャッシュ
     e.respondWith(
       fetch(e.request)
@@ -93,7 +100,7 @@ self.addEventListener("fetch", (e) => {
         hit ||
         fetch(e.request).then((res) => {
           const copy = res.clone();
-          if (res.ok && sameOrigin) {
+          if (res.ok) {
             caches.open(VERSION).then((c) => c.put(e.request, copy));
           }
           return res;

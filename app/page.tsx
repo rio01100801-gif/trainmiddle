@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { localToday } from "@/lib/core/dates";
 import { Card, Sparkline, fmtSec } from "./components/ui";
-import { withQuery } from "./components/route";
+import { withQuery } from "./components/route-query";
 import { SessionEditSheet } from "./components/session-edit-sheet";
 import { saveSplashSummary } from "./components/splash-cache";
 
@@ -197,7 +197,7 @@ function SessionVariants({
         body: JSON.stringify({ sessionId: target, variantKey: key, today }),
       });
       const out = await r.json();
-      setMsg(out.error ?? "この進め方にしました。");
+      setMsg(out.error ?? out.message ?? "この進め方をカレンダーへ保存しました。");
       if (!out.error) onApplied();
     } finally {
       setBusy(false);
@@ -332,7 +332,7 @@ function TodayAdjust({ sessionId, today }: { sessionId?: string; today: string }
 
       {blocked ? (
         <p className="text-[13px] leading-relaxed mb-2" style={{ color: "var(--red)" }}>
-          赤信号です。この日に質練習は入れません。有酸素か休養に置き換えてください。
+          赤信号です。この日に高負荷練習は入れません。低強度有酸素か休養へ置き換えてください。
         </p>
       ) : null}
 

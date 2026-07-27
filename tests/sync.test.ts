@@ -5,7 +5,14 @@
  * 両方が動いていたら必ず本人に選ばせる。
  */
 import { describe, expect, it } from "vitest";
-import { decideSync, metaOf, validateSyncConfig } from "@/lib/core/sync";
+import {
+  decideSync,
+  googleAuthorizeUrl,
+  metaOf,
+  normalizeSyncConfig,
+  oauthRedirectTo,
+  validateSyncConfig,
+} from "@/lib/core/sync";
 
 const A = { exportedAt: "2026-07-27T09:00:00Z", totalCount: 100 };
 const B = { exportedAt: "2026-07-28T09:00:00Z", totalCount: 110 };
@@ -67,9 +74,11 @@ describe("メタの取り出し", () => {
 });
 
 describe("設定の検証", () => {
+  const publishable = "sb_publishable_1234567890123456789012_12345678";
+
   it("正しい設定は通る", () => {
     expect(
-      validateSyncConfig({ url: "https://abcd.supabase.co", anonKey: "ey..." })
+      validateSyncConfig({ url: "https://abcd.supabase.co", anonKey: publishable })
     ).toBeUndefined();
   });
 
@@ -78,11 +87,71 @@ describe("設定の検証", () => {
   });
 
   it("片方だけ入っている状態で通信を始めない", () => {
-    expect(validateSyncConfig({ url: "https://abcd.supabase.co" })).toContain("anon key");
-    expect(validateSyncConfig({ anonKey: "ey..." })).toContain("Project URL");
+    expect(validateSyncConfig({ url: "https://abcd.supabase.co" })).toContain("Publishable Key");
+    expect(validateSyncConfig({ anonKey: publishable })).toContain("Project URL");
   });
 
   it("URLの形が違えば教える", () => {
-    expect(validateSyncConfig({ url: "http://example.com", anonKey: "ey" })).toContain("形");
+    expect(validateSyncConfig({ url: "http://example.com", anonKey: publishable })).toContain("形");
+  });
+
+  it("前後の空白・改行・末尾スラッシュと全角記号を正規化する", () => {
+    expect(
+      normalizeSyncConfig({
+        url: " \nｈｔｔｐｓ：／／ＡＢＣＤ．ｓｕｐａｂａｓｅ．ｃｏ／ \r",
+        anonKey: ` \n${publishable}\r `,
+      })
+    ).toEqual({
+      url: "https://abcd.supabase.co",
+      anonKey: publishable,
+    });
+  });
+
+  it("Secret Keyはクライアントへ保存させない", () => {
+    expect(
+      validateSyncConfig({
+        url: "https://abcd.supabase.co",
+        anonKey: ["sb", "secret", "test-only-value"].join("_"),
+      })
+    ).toContain("Secret Key");
+  });
+});
+
+describe("OAuthの戻り先", () => {
+  it("PC版はNext.jsの同期画面へ直接戻る", () => {
+    expect(
+      oauthRedirectTo(
+        { origin: "http://localhost:3000", pathname: "/sync" },
+        false
+      )
+    ).toBe("http://localhost:3000/sync");
+  });
+
+  it("PWA版はハッシュと競合しないクエリで同期画面への復帰意図を残す", () => {
+    expect(
+      oauthRedirectTo(
+        {
+          origin: "https://rio01100801-gif.github.io",
+          pathname: "/trainmiddle/index.html",
+        },
+        true
+      )
+    ).toBe("https://rio01100801-gif.github.io/trainmiddle/index.html?sync=1");
+  });
+
+  it("authorize URLにGoogleと完全なredirect_toを設定する", () => {
+    const authorize = new URL(
+      googleAuthorizeUrl(
+        {
+          url: "https://abcd.supabase.co/",
+          anonKey: "sb_publishable_1234567890123456789012_12345678",
+        },
+        "https://example.com/sync"
+      )
+    );
+    expect(authorize.origin).toBe("https://abcd.supabase.co");
+    expect(authorize.pathname).toBe("/auth/v1/authorize");
+    expect(authorize.searchParams.get("provider")).toBe("google");
+    expect(authorize.searchParams.get("redirect_to")).toBe("https://example.com/sync");
   });
 });

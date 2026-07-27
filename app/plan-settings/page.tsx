@@ -13,10 +13,13 @@ import {
   SLOT_LABELS,
   SOURCE_LABELS,
   emptyWeekTemplate,
+  modeOf,
+  normalizeWeekTemplate,
   validateWeekTemplate,
   type CustomMenu,
   type CustomMenuSource,
   type Dow,
+  type WeekdayPreferenceMode,
   type WeekdaySlot,
   type WeekTemplate,
 } from "@/lib/core/weekTemplate";
@@ -55,7 +58,7 @@ function WeekTemplateCard() {
   useEffect(() => {
     fetch("/api/plan-settings")
       .then((r) => r.json())
-      .then((d) => d.weekTemplate && setT(d.weekTemplate));
+      .then((d) => d.weekTemplate && setT(normalizeWeekTemplate(d.weekTemplate)));
   }, []);
 
   const violations = validateWeekTemplate(t);
@@ -65,7 +68,7 @@ function WeekTemplateCard() {
     await fetch("/api/plan-settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ weekTemplate: t }),
+      body: JSON.stringify({ weekTemplate: normalizeWeekTemplate(t) }),
     });
     setMsg(
       "保存しました。「目標・レース」画面で『プランを自動生成』を押すとカレンダーに反映されます。"
@@ -73,10 +76,27 @@ function WeekTemplateCard() {
   };
 
   const setSlot = (dow: Dow, slot: WeekdaySlot) =>
-    setT((prev) => ({ ...prev, slots: { ...prev.slots, [dow]: slot } }));
+    setT((prev) => ({
+      ...prev,
+      slots: { ...prev.slots, [dow]: slot },
+      modes: {
+        ...prev.modes,
+        [dow]: slot === "auto" ? "none" : modeOf(prev, dow) === "none" ? "preferred" : modeOf(prev, dow),
+      },
+    }));
+
+  const setMode = (dow: Dow, mode: WeekdayPreferenceMode) =>
+    setT((prev) => ({
+      ...prev,
+      modes: { ...prev.modes, [dow]: mode },
+      slots: {
+        ...prev.slots,
+        [dow]: mode === "none" ? "auto" : prev.slots[dow] === "auto" || !prev.slots[dow] ? "point" : prev.slots[dow],
+      },
+    }));
 
   return (
-    <Card title="固定曜日設定">
+    <Card title="曜日の優先設定">
       <label className="flex items-center gap-2 text-[13px] mb-3 min-h-[44px]">
         <input
           type="checkbox"
@@ -84,23 +104,28 @@ function WeekTemplateCard() {
           checked={t.enabled}
           onChange={(e) => setT({ ...t, enabled: e.target.checked })}
         />
-        曜日ごとの枠を固定する
+        曜日ごとの希望を使う
       </label>
 
       <p className="text-[11px] mb-3 leading-relaxed" style={{ color: "var(--text-2)" }}>
-        生活リズムやチームの活動日に合わせて枠を先に決めます。内容（どのカテゴリの練習にするか）は
-        フェーズに応じて自動で決まります。「ポイント練習」を指定した曜日<b style={{ color: "var(--text)" }}>以外</b>
-        には質練習が入らなくなります。
+        「優先」は週の回数を増やさず、可能なら既存メニューをその曜日へ移します。
+        連続高負荷、回復週、レース・テーパーでは自動配置を優先します。
+        「固定」はユーザーが動かしたくない曜日だけに使い、安全上の問題は警告します。
       </p>
 
       <div className="flex flex-col gap-1.5">
         {DOWS.map((dow) => {
           const slot = t.slots[dow] ?? "auto";
+          const mode = modeOf(t, dow);
           const cat = SLOT_OPTIONS.includes(slot) && slot !== "auto" && slot !== "point"
             ? (slot as SessionCategory)
             : undefined;
           return (
-            <div key={dow} className="flex items-center gap-2">
+            <div
+              key={dow}
+              className="grid grid-cols-[2rem_1fr] gap-x-2 gap-y-1.5 rounded-lg p-2"
+              style={{ background: "var(--surface-2)" }}
+            >
               <span
                 className="w-8 text-[13px] font-bold text-center rounded"
                 style={{
@@ -109,35 +134,60 @@ function WeekTemplateCard() {
               >
                 {DOW_LABELS[dow]}
               </span>
-              <span
-                className="w-1.5 h-6 rounded-sm flex-shrink-0"
-                style={{
-                  background: cat ? CATEGORY_COLORS[cat] : slot === "point" ? "var(--volt)" : "transparent",
-                }}
-              />
-              <select
-                className="flex-1 min-h-[44px]"
-                disabled={!t.enabled}
-                value={slot}
-                onChange={(e) => setSlot(dow, e.target.value as WeekdaySlot)}
-              >
-                {SLOT_OPTIONS.map((o) => (
-                  <option key={o} value={o}>
-                    {SLOT_LABELS[o]}
-                  </option>
-                ))}
-              </select>
-              <label className="text-[10.5px] flex items-center gap-1" style={{ color: "var(--text-3)" }}>
-                <input
-                  type="radio"
-                  name="longrun"
-                  className="w-4 h-4"
-                  disabled={!t.enabled || slot !== "aerobic"}
-                  checked={t.longRunDow === dow}
-                  onChange={() => setT({ ...t, longRunDow: dow })}
-                />
-                長走
-              </label>
+              <div className="min-w-0">
+                <div
+                  className="grid grid-cols-3 gap-1 mb-1.5"
+                  role="group"
+                  aria-label={`${DOW_LABELS[dow]}曜の指定強度`}
+                >
+                  {(["none", "preferred", "fixed"] as WeekdayPreferenceMode[]).map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      className={mode === option ? "btn-volt !py-1.5 !px-1" : "btn-ghost !py-1.5 !px-1"}
+                      disabled={!t.enabled}
+                      aria-pressed={mode === option}
+                      aria-label={`${DOW_LABELS[dow]}曜 ${option === "none" ? "指定なし" : option === "preferred" ? "優先" : "固定"}`}
+                      onClick={() => setMode(dow, option)}
+                    >
+                      {option === "none" ? "指定なし" : option === "preferred" ? "優先" : "固定"}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span
+                    aria-hidden="true"
+                    className="w-1.5 h-6 rounded-sm flex-shrink-0"
+                    style={{
+                      background: cat ? CATEGORY_COLORS[cat] : slot === "point" ? "var(--volt)" : "transparent",
+                    }}
+                  />
+                  <select
+                    className="flex-1 min-h-[44px]"
+                    aria-label={`${DOW_LABELS[dow]}曜のメニュー`}
+                    disabled={!t.enabled}
+                    value={slot}
+                    onChange={(e) => setSlot(dow, e.target.value as WeekdaySlot)}
+                  >
+                    {SLOT_OPTIONS.map((o) => (
+                      <option key={o} value={o}>
+                        {SLOT_LABELS[o]}
+                      </option>
+                    ))}
+                  </select>
+                  <label className="text-[10.5px] flex items-center gap-1 min-h-[44px]" style={{ color: "var(--text-3)" }}>
+                    <input
+                      type="radio"
+                      name="longrun"
+                      className="w-4 h-4"
+                      disabled={!t.enabled || slot !== "aerobic" || mode === "none"}
+                      checked={t.longRunDow === dow}
+                      onChange={() => setT({ ...t, longRunDow: dow })}
+                    />
+                    長走
+                  </label>
+                </div>
+              </div>
             </div>
           );
         })}
@@ -152,10 +202,10 @@ function WeekTemplateCard() {
       <div className="flex gap-2 mt-3 flex-wrap">
         <ConfirmButton
           label="設定を保存"
-          title="固定曜日の設定を保存しますか？"
+          title="曜日の優先設定を保存しますか？"
           message={
             errors.length > 0
-              ? "ERROR級の問題が残っています。このまま保存すると、生成時にルール違反が出る可能性があります。"
+              ? "固定設定に安全上の問題が残っています。保存はできますが、生成後に変更案と警告を確認してください。"
               : "保存後、プランを再生成すると反映されます。"
           }
           danger={errors.length > 0}
@@ -164,7 +214,7 @@ function WeekTemplateCard() {
         />
         <ConfirmButton
           label="設定をリセット"
-          title="固定曜日の設定をリセットしますか？"
+          title="曜日の優先設定をリセットしますか？"
           className="btn-ghost min-h-[44px]"
           onConfirm={() => {
             setT(emptyWeekTemplate());
@@ -175,8 +225,8 @@ function WeekTemplateCard() {
       {msg ? <p className="text-[12px] mt-2">{msg}</p> : null}
 
       <p className="text-[10.5px] mt-3 leading-relaxed" style={{ color: "var(--text-3)" }}>
-        レース前2週間のテーパー期は、安全のため固定曜日より調整設計が優先されます
-        （休養に固定した曜日でも、レース前日は刺激入れが入ります）。
+        優先順位は、レース・安全性・テーパー/回復・高負荷間隔・週負荷・固定・優先・自動生成です。
+        固定でも安全性を明らかに損なう場合は警告と変更案を表示します。
       </p>
     </Card>
   );

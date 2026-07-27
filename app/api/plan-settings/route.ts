@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openRepo } from "@/lib/db/node";
-import { validateWeekTemplate, type CustomMenu } from "@/lib/core/weekTemplate";
+import {
+  normalizeWeekTemplate,
+  validateWeekTemplate,
+  type CustomMenu,
+} from "@/lib/core/weekTemplate";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +22,7 @@ export async function POST(req: NextRequest) {
   const repo = openRepo();
   const body = await req.json();
   if (body.weekTemplate) {
-    repo.saveWeekTemplate(body.weekTemplate);
+    repo.saveWeekTemplate(normalizeWeekTemplate(body.weekTemplate));
   }
   if (body.customMenu) {
     const m: CustomMenu = {
@@ -39,7 +43,9 @@ export async function POST(req: NextRequest) {
   }
   return NextResponse.json({
     ok: true,
-    templateViolations: body.weekTemplate ? validateWeekTemplate(body.weekTemplate) : [],
+    templateViolations: body.weekTemplate
+      ? validateWeekTemplate(normalizeWeekTemplate(body.weekTemplate))
+      : [],
   });
 }
 

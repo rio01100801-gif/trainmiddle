@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useEffect, useState } from "react";
 import { Card, ConfirmButton } from "./ui";
-import { withQuery } from "./route";
+import { withQuery } from "./route-query";
 import { PrescriptionFields, prescriptionPayload, usePrescriptionFields } from "./prescription-fields";
 
 /**

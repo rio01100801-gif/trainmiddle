@@ -1,7 +1,8 @@
 "use client";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { BottomTabs, MobileHeader, Sidebar } from "./nav";
 import { RecordFab } from "./fab";
+import { captureAuthRedirect, isHashNavigationRuntime } from "./supabase";
 
 /**
  * 画面の外枠。
@@ -16,6 +17,33 @@ import { RecordFab } from "./fab";
  * PC（md以上）はタブバーもFABも出ないので通常の余白に戻す。
  */
 export function AppShell({ children, footer }: { children: ReactNode; footer?: boolean }) {
+  /*
+   * サインインから戻ってきたトークンを、どの画面に着いても拾う。
+   *
+   * Supabase は戻り先に `#access_token=...` を付けて返すが、
+   * この枠はハッシュルーティングなので、戻り先のハッシュは指定できない
+   * （付け足されて消える）。結果、以前はルート＝ホーム画面に戻り、
+   * トークンを誰も読まないまま捨てていた（サインインが黙って失敗する）。
+   *
+   * 受け取りを同期画面ではなくここに置いて、着地点に関係なく拾う。
+   * 拾ったら ?sync=1 を見て同期画面へ戻す。
+   */
+  useEffect(() => {
+    const captured = captureAuthRedirect();
+    if (!captured) return;
+    const wantsSync = new URLSearchParams(location.search).get("sync") === "1";
+    if (!wantsSync) return;
+
+    // クエリを消してから同期画面へ。トークンはcaptureAuthRedirectが除去済み。
+    history.replaceState(null, "", location.pathname);
+    if (isHashNavigationRuntime()) {
+      location.hash = "#/sync";
+    } else if (!location.pathname.endsWith("/sync")) {
+      // 旧版がPCでも ?sync=1 を戻り先にしていた場合の互換経路。
+      location.replace(new URL("/sync", location.origin).toString());
+    }
+  }, []);
+
   return (
     <div className="flex min-h-screen">
       <Sidebar />

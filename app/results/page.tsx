@@ -13,7 +13,7 @@ import {
   fmtSec,
 } from "../components/ui";
 import { localToday } from "@/lib/core/dates";
-import { useQueryParam } from "../components/route";
+import { useQueryParam } from "../components/route-query";
 import { completeRunTriple, formatTimeInput } from "@/lib/core/inputFormat";
 import { parseRest } from "@/lib/core/bulkImport";
 import { avgPaceSecPerKm, buildRepResults, REST_LABELS } from "@/lib/core/workoutLog";
@@ -317,7 +317,7 @@ function DailyCheckCard({ date }: { date: string }) {
         <ConfirmButton
           label={saved ? "上書きして保存する" : "記録する"}
           title="今日のコンディションを記録しますか？"
-          message="記録すると、赤信号の場合は直後3日間の質練習が自動で有酸素に置き換わります。"
+          message="記録すると、赤信号の場合は直後3日間の高負荷練習が自動で低強度有酸素に置き換わります。"
           className="btn-volt justify-center flex-1 sm:flex-none min-h-[44px]"
           onConfirm={submit}
         />
@@ -338,7 +338,7 @@ function DailyCheckCard({ date }: { date: string }) {
           ))}
           {out.changes?.length > 0 ? (
             <p className="text-[11px] mt-1" style={{ color: "var(--amber)" }}>
-              質練習{out.changes.length}件を有酸素に自動置換しました。
+              高負荷練習{out.changes.length}件を低強度有酸素に自動置換しました。
             </p>
           ) : null}
         </div>

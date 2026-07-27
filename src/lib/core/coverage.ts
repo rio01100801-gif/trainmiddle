@@ -16,11 +16,12 @@
  *   ・固定曜日設定の書き換え。本人が決めたものを黙って変えない
  *   ・自動適用。M-2 / M-6 と同じで、出すのは提案まで
  */
-import type { Session, SessionCategory } from "./types";
+import type { Session, SessionCategory, SessionResult, StrengthSession } from "./types";
 import type { Phase } from "./types";
 import { addDays, diffDays } from "./dates";
 import { categoryCountsPerFourWeeks } from "./periodization";
 import { categoryWeights, type Limiter, LIMITER_LABELS } from "./limiter";
+import { buildFourWeekBalance, type FourWeekBalance } from "./trainingBalance";
 
 /** 見る期間（週）。4週より短いと隔週要素が入らず、長いと今の状態から離れる */
 export const COVERAGE_WEEKS = 4;
@@ -90,6 +91,7 @@ export interface CoverageReview {
   targets: CoverageTarget[];
   proposals: CoverageProposal[];
   narrative: string;
+  balance: FourWeekBalance;
 }
 
 export interface CoverageInput {
@@ -99,11 +101,14 @@ export interface CoverageInput {
    * 実際にやった練習の配分を見たいので、入力経路で数が変わってはいけない。
    */
   sessions: Session[];
+  results?: SessionResult[];
+  strengthSessions?: StrengthSession[];
   today: string;
   phase: Phase;
   limiter: Limiter;
   /** レースまでの残り週数。表示に使う */
   weeksToRace?: number;
+  raceDate?: string;
 }
 
 /** 直近4週に実施した（予定ではなく行った）カテゴリを数える */
@@ -113,8 +118,7 @@ function actualCounts(sessions: Session[], today: string): Record<string, number
   for (const s of sessions) {
     if (s.date < from || s.date > today) continue;
     // 予定のまま実施されていないものは数えない（あるつもりで足りない、を防ぐ）
-    if (s.status === "skipped") continue;
-    if (s.date < today && s.status !== "completed") continue;
+    if (s.status !== "completed") continue;
     out[s.category] = (out[s.category] ?? 0) + 1;
   }
   return out;
@@ -237,7 +241,22 @@ export function reviewCoverage(input: CoverageInput): CoverageReview {
           .join("、")}足りていません。固定曜日の設定はそのままにしてあるので、` +
         `入れ替えるかどうかは選んでください。`;
 
-  return { weeks: COVERAGE_WEEKS, phase, limiter, targets, proposals, narrative };
+  return {
+    weeks: COVERAGE_WEEKS,
+    phase,
+    limiter,
+    targets,
+    proposals,
+    narrative,
+    balance: buildFourWeekBalance({
+      sessions,
+      results: input.results ?? [],
+      strengths: input.strengthSessions,
+      today,
+      raceDate: input.raceDate,
+      phase,
+    }),
+  };
 }
 
 /** 週数（表示用）。レース当日を含む週まで数える */

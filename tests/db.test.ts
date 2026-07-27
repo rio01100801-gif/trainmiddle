@@ -9,6 +9,19 @@ import { initCfe } from "@/lib/core/cfe";
 
 
 describe("DB リポジトリ層", () => {
+  it("曜日の優先/固定モードを既存JSON列で往復できる", () => {
+    const repo = memRepo();
+    repo.saveWeekTemplate({
+      enabled: true,
+      slots: { 1: "off", 3: "point" },
+      modes: { 1: "preferred", 3: "fixed" },
+    });
+    expect(repo.getWeekTemplate()).toMatchObject({
+      slots: { 1: "off", 3: "point" },
+      modes: { 1: "preferred", 3: "fixed" },
+    });
+  });
+
   it("Athlete の保存・取得・上書き", () => {
     const repo = memRepo();
     const a = testAthlete();

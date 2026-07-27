@@ -102,14 +102,17 @@ step("目標・レース保存OK");
 await page.goto("http://localhost:8791/#/plan-settings");
 await page.waitForTimeout(600);
 // 固定曜日を有効化して 火=ポイント / 木=休養 / 土=ポイント / 日=ジョグ
-await page.getByText("曜日ごとの枠を固定する").click();
+await page.getByText("曜日ごとの希望を使う").click();
 await page.waitForTimeout(200);
 const dowSelect = (label) =>
-  page.locator(`xpath=//span[text()="${label}"]/following-sibling::select[1]`);
+  page.getByLabel(`${label}曜のメニュー`);
 await dowSelect("火").selectOption("point");
 await dowSelect("木").selectOption("off");
 await dowSelect("土").selectOption("point");
 await dowSelect("日").selectOption("aerobic");
+for (const label of ["火", "木", "土", "日"]) {
+  await page.getByRole("button", { name: `${label}曜 固定`, exact: true }).click();
+}
 await page.waitForTimeout(200);
 await page.getByRole("button", { name: "設定を保存" }).click();
 await page.waitForTimeout(200);
@@ -120,11 +123,12 @@ step("固定曜日設定OK（火・土ポイント / 木休養 / 日ジョグ）
 
 // 連日ポイントにするとERRORが出ることを確認
 await dowSelect("水").selectOption("point");
+await page.getByRole("button", { name: "水曜 固定", exact: true }).click();
 await page.waitForTimeout(400);
 const tplText = await page.textContent("body");
 if (!tplText.includes("連日")) fail("連日ポイントのERROR警告が出ない（3-1検証）");
 step("テンプレート検証OK（連日ポイントでERROR）");
-await dowSelect("水").selectOption("auto");
+await page.getByRole("button", { name: "水曜 指定なし", exact: true }).click();
 await page.waitForTimeout(200);
 await page.getByRole("button", { name: "設定を保存" }).click();
 await page.waitForTimeout(200);
@@ -1030,7 +1034,7 @@ else {
   await varCard.getByRole("button", { name: "この進め方にする" }).first().click();
   await page.waitForTimeout(1200);
   const afterVar = await page.textContent("body");
-  if (!/この進め方にしました|ルールに反します/.test(afterVar)) {
+  if (!/今後14日間|安全に増やせる|この進め方をカレンダーへ保存|ルールに反します/.test(afterVar)) {
     fail("S-9: 選んだ結果が反映されない");
   }
 }
@@ -1663,7 +1667,7 @@ const settingsText = await page.textContent("body");
 for (const g of ["最初に決めるもの", "練習の決まりごと", "データ"]) {
   if (!settingsText.includes(g)) fail(`P-5: 設定画面のグループ「${g}」が無い`);
 }
-if (!settingsText.includes("固定曜日と自作メニュー")) fail("P-5: 設定項目に何ができるかの説明が無い");
+if (!settingsText.includes("曜日の優先・固定と自作メニュー")) fail("P-5: 設定項目に何ができるかの説明が無い");
 // 説明を足しても、到達先そのものは減っていないこと
 for (const label of ["プロフィール", "メニュー設定", "目標・レース", "暑熱順化", "データ管理"]) {
   if (!settingsText.includes(label)) fail(`P-5: 設定から「${label}」に到達できない`);
@@ -1834,7 +1838,9 @@ const calCov = page.locator("section.card", { hasText: "4週間のバランス" 
 if ((await calCov.count()) === 0) fail("S-12: カレンダーに4週間のバランスが出ていない");
 else {
   const t = (await calCov.textContent()) ?? "";
-  if (!/足りていません|足りています/.test(t)) fail("S-12: カレンダーの要約に結論が無い");
+  if (!/次の行動|警告はありません|足りていません|足りています/.test(t)) {
+    fail("S-12: カレンダーの要約に結論が無い");
+  }
   if ((await calCov.getByRole("link", { name: /内訳を見る/ }).count()) === 0) {
     fail("S-12: 内訳への導線が無い");
   }
@@ -1996,6 +2002,45 @@ await shot("34_mark_header");
  * アプリはこれまでどおり端末の中だけで動く必要がある。
  * 未設定の状態で操作できてしまうと、通信エラーで詰まる。
  */
+const syncKey = "sb_publishable_1234567890123456789012_12345678";
+const rejectedSyncKey = "sb_publishable_0000000000000000000000_00000000";
+await page.route(/^https:\/\/[^/]+\.supabase\.co\//, async (route) => {
+  const request = route.request();
+  const target = new URL(request.url());
+  const corsHeaders = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-headers": "apikey, content-type",
+    "access-control-allow-methods": "GET, OPTIONS",
+  };
+  if (request.method() === "OPTIONS") {
+    await route.fulfill({ status: 204, headers: corsHeaders });
+    return;
+  }
+  if (target.pathname === "/auth/v1/settings") {
+    const apiKey = await request.headerValue("apikey");
+    if (apiKey === rejectedSyncKey) {
+      await route.fulfill({ status: 401, body: "invalid api key", headers: corsHeaders });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ external: { google: true } }),
+      headers: corsHeaders,
+    });
+    return;
+  }
+  if (target.pathname === "/auth/v1/authorize") {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<!doctype html><title>OAuth intercepted</title>",
+    });
+    return;
+  }
+  await route.abort("failed");
+});
+
 await page.goto("http://localhost:8791/#/sync");
 await page.waitForTimeout(800);
 const syncText = await page.textContent("body");
@@ -2015,20 +2060,150 @@ else if (!(await syncNowBtn.first().isDisabled())) {
 await page.locator('label:has-text("Project URL") input').fill("https://demo.supabase.co");
 await page.waitForTimeout(300);
 if (!(await page.getByRole("button", { name: "保存する" }).first().isDisabled())) {
-  fail("S-11: anon key が空でも保存できてしまう");
+  fail("S-11: Publishable Key が空でも保存できてしまう");
 }
-await page.locator('label:has-text("anon public key") input').fill("test-anon-key");
+await page.locator('label:has-text("Publishable Key") input').fill(syncKey);
 await page.waitForTimeout(300);
 if (await page.getByRole("button", { name: "保存する" }).first().isDisabled()) {
   fail("S-11: 正しい設定なのに保存できない");
 }
+
+// 誤ったURLを一度保存し、別プロジェクト用のセッションがある状態を作る
+await page.locator('label:has-text("Project URL") input').fill("https://wrong.supabase.co");
+await page.getByRole("button", { name: "保存する" }).first().click();
+await page.waitForTimeout(200);
+await page.evaluate(() => {
+  localStorage.setItem(
+    "forge:sync:session",
+    JSON.stringify({ accessToken: "old-project-token" })
+  );
+});
+const wrongSaved = await page.evaluate(() =>
+  JSON.parse(localStorage.getItem("forge:sync:config") ?? "null")
+);
+if (wrongSaved?.url !== "https://wrong.supabase.co") {
+  fail("S-11: 最初の誤URLが保存された状態を再現できない");
+}
+
+// 保存前でも接続テストはフォームの最新値を使う
+await page
+  .locator('label:has-text("Project URL") input')
+  .fill("  https://correct.supabase.co/  ");
+await page.getByRole("button", { name: "接続をテスト" }).click();
+await page.waitForTimeout(300);
+let syncBody = await page.textContent("body");
+if (!syncBody.includes("correct.supabase.co のSupabase Authへ接続できました")) {
+  fail("S-11: 接続テストが保存済みの古いURLを使っている");
+}
+if (!syncBody.includes("種別: ok") || !syncBody.includes("HTTP 200")) {
+  fail("S-11: 接続テストの診断種別・HTTP statusが表示されない");
+}
+
+// 正しい値を保存。末尾スラッシュ・空白を除き、旧セッションを破棄する
+await page.getByRole("button", { name: "保存する" }).first().click();
+await page.waitForTimeout(250);
+const corrected = await page.evaluate(() => ({
+  config: JSON.parse(localStorage.getItem("forge:sync:config") ?? "null"),
+  session: localStorage.getItem("forge:sync:session"),
+}));
+if (corrected.config?.url !== "https://correct.supabase.co") {
+  fail(`S-11: 修正後URLが正規化保存されない（${corrected.config?.url}）`);
+}
+if (corrected.config?.anonKey !== syncKey) {
+  fail("S-11: 修正後のPublishable Keyが保存値と一致しない");
+}
+if (corrected.session !== null) {
+  fail("S-11: 接続先変更後も古いプロジェクトのセッションが残る");
+}
+
+// ページ再読込後も保存値を使って接続できる
+await page.reload();
+await page.waitForTimeout(500);
+await page.getByRole("button", { name: "接続をテスト" }).click();
+await page.waitForTimeout(250);
+syncBody = await page.textContent("body");
+if (!syncBody.includes("correct.supabase.co のSupabase Authへ接続できました")) {
+  fail("S-11: ページ再読込後に保存済み設定で接続できない");
+}
+
+// PWAを閉じて開き直す相当の新規documentでも同じlocalStorageから復帰する
+await page.goto("about:blank");
+await page.goto("http://localhost:8791/#/sync");
+await page.waitForTimeout(500);
+await page.getByRole("button", { name: "接続をテスト" }).click();
+await page.waitForTimeout(250);
+syncBody = await page.textContent("body");
+if (!syncBody.includes("correct.supabase.co のSupabase Authへ接続できました")) {
+  fail("S-11: PWA再起動相当で保存済み設定から接続できない");
+}
+
+// 形式は正しいが拒否されるKeyを、URL・DNS障害と区別する
+const errorsBeforeRejectedKey = errors.length;
+await page.locator('label:has-text("Publishable Key") input').fill(rejectedSyncKey);
+await page.getByRole("button", { name: "接続をテスト" }).click();
+await page.waitForTimeout(250);
+syncBody = await page.textContent("body");
+if (!syncBody.includes("種別: key") || !syncBody.includes("HTTP 401")) {
+  fail("S-11: 不正なKeyの401を診断表示できない");
+}
+// ここでは401そのものが期待値。追加で発生した別種のconsole errorだけ監視へ戻す。
+const rejectedKeyConsole = errors.splice(errorsBeforeRejectedKey);
+errors.push(...rejectedKeyConsole.filter((e) => !e.includes("status of 401")));
+await page.locator('label:has-text("Publishable Key") input').fill(syncKey);
+await page.getByRole("button", { name: "保存する" }).first().click();
+await page.waitForTimeout(200);
+
+// OAuth開始時のredirect_toはPWAの実URLで、callback後は #/sync へ戻る
+await page.getByRole("button", { name: "Googleでサインイン" }).click();
+await page.waitForURL(/correct\.supabase\.co\/auth\/v1\/authorize/);
+const authorizeUrl = new URL(page.url());
+const redirectTo = authorizeUrl.searchParams.get("redirect_to");
+if (redirectTo !== "http://localhost:8791/?sync=1") {
+  fail(`S-11: PWAのOAuth redirect_toが違う（${redirectTo}）`);
+}
+await page.goto(
+  "http://localhost:8791/?sync=1#access_token=e2e-access&refresh_token=e2e-refresh&expires_at=1900000000"
+);
+await page.waitForFunction(() => location.hash === "#/sync", { timeout: 5000 });
+await page.waitForTimeout(300);
+syncBody = await page.textContent("body");
+if (!syncBody.includes("サインイン済みです")) {
+  fail("S-11: OAuth callback後に同期画面へ戻ってセッションを表示できない");
+}
+const capturedSession = await page.evaluate(() =>
+  JSON.parse(localStorage.getItem("forge:sync:session") ?? "null")
+);
+if (capturedSession?.accessToken !== "e2e-access") {
+  fail("S-11: OAuth callbackのaccess tokenを保存できない");
+}
+if (page.url().includes("access_token") || page.url().includes("refresh_token")) {
+  fail("S-11: OAuth tokenがcallback後もURLに残る");
+}
+
+// Supabase接続設定だけを削除し、練習データ用IndexedDBには触れない
+await page.getByRole("button", { name: "接続設定を消す" }).click();
+await page.waitForTimeout(100);
+await page.getByRole("button", { name: "実行する" }).click();
+await page.waitForTimeout(250);
+const clearedSync = await page.evaluate(async () => ({
+  config: localStorage.getItem("forge:sync:config"),
+  session: localStorage.getItem("forge:sync:session"),
+  databases: indexedDB.databases ? await indexedDB.databases() : [],
+}));
+if (clearedSync.config !== null || clearedSync.session !== null) {
+  fail("S-11: 接続設定のみの削除で同期情報が残る");
+}
+if (!clearedSync.databases.some((d) => d.name === "train800")) {
+  fail("S-11: 接続設定の削除で練習データ用IndexedDBまで消えた");
+}
+
 // 設定画面からも辿れること
 await page.goto("http://localhost:8791/#/settings");
 await page.waitForTimeout(600);
 if (!(await page.textContent("body")).includes("他の端末と記録を引き継ぎます")) {
   fail("S-11: 設定画面から同期に辿れない");
 }
-step("S-11 同期の設定OK（未設定でも成立・中途半端な設定では動かさない）");
+step("S-11 同期設定・再保存・接続診断・OAuth復帰・設定のみ削除OK");
 await shot("37_sync");
 
 // ---- 17. Q-3: 取り込み済みの過去データを作り直せること ----

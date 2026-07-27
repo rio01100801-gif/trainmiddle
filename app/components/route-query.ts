@@ -9,7 +9,8 @@ import { useSyncExternalStore } from "react";
  * 画面コンポーネントは両方で共通なので、この差をここだけに閉じ込める。
  */
 function isHashNav(): boolean {
-  return typeof globalThis !== "undefined" && (globalThis as any).__HASH_NAV__ === true;
+  const navigationGlobal = globalThis as typeof globalThis & { __HASH_NAV__?: boolean };
+  return navigationGlobal.__HASH_NAV__ === true;
 }
 
 export function currentQuery(): URLSearchParams {

@@ -75,6 +75,11 @@ describe("書き出し", () => {
 describe("復元", () => {
   it("上書きで丸ごと戻る", () => {
     const src = setup();
+    src.saveWeekTemplate({
+      enabled: true,
+      slots: { 1: "off", 3: "point" },
+      modes: { 1: "preferred", 3: "fixed" },
+    });
     const file = exportBackup(src, "2026-07-26T09:00:00Z");
 
     const dst = memRepo();
@@ -84,6 +89,7 @@ describe("復元", () => {
     expect(dst.listResults()).toHaveLength(1);
     expect(dst.listSessions().length).toBe(src.listSessions().length);
     expect(dst.getCfe()!.estimated800mSec).toBe(src.getCfe()!.estimated800mSec);
+    expect(dst.getWeekTemplate()?.modes).toEqual({ 1: "preferred", 3: "fixed" });
   });
 
   it("統合しても重複しない", () => {

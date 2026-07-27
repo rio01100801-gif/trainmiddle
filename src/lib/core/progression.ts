@@ -255,6 +255,8 @@ export interface SessionVariant {
   why: string;
   /** どちらを勧めるか。両方とも良い案なので、勧めない側も出す */
   recommended: boolean;
+  /** false の場合、選択日の高負荷量は変えず将来の安全なメニューへ反映する */
+  appliesToCurrent?: boolean;
 }
 
 /**
@@ -275,6 +277,9 @@ export function sessionVariants(
   opts: { trend?: TrendVerdict; limiter?: Limiter }
 ): SessionVariant[] {
   const { trend, limiter } = opts;
+  const protectSpecificVolume = ["high_lactate", "modeling", "race_economy"].includes(
+    base.category
+  );
   const clone = (s: SessionSpec, blocks: RepBlock[], restSec: number, reasons: string[]): SessionSpec => ({
     ...s,
     blocks,
@@ -316,9 +321,11 @@ export function sessionVariants(
   }
 
   if (trend === "tighten") {
-    const a = clone(base, bumpReps(base.blocks, 1), base.restSec, [
+    const a = clone(base, protectSpecificVolume ? base.blocks : bumpReps(base.blocks, 1), base.restSec, [
       ...base.reasons,
-      "余裕があるので1本増やす",
+      protectSpecificVolume
+        ? "高乳酸・中距離特異的の本数は増やさず、次の2週の有酸素量で積み上げる"
+        : "余裕があるので1本増やす",
     ]);
     const b = clone(base, base.blocks, Math.max(MIN_REST_SEC, Math.round(base.restSec * 0.85)), [
       ...base.reasons,
@@ -327,10 +334,13 @@ export function sessionVariants(
     return [
       {
         key: "volume",
-        label: "1本増やす",
+        label: protectSpecificVolume ? "次の2週で量を増やす" : "1本増やす",
         spec: a,
-        why: "同じ設定のまま総量を増やします。積み上げとしては安全側で、失敗しにくい進め方です。",
+        why: protectSpecificVolume
+          ? "この高負荷メニューの本数は増やしません。今後14日のジョグ時間など、安全な量だけを増やします。"
+          : "同じ設定のまま総量を増やします。積み上げとしては安全側で、失敗しにくい進め方です。",
         recommended: limiter !== "endurance",
+        appliesToCurrent: !protectSpecificVolume,
       },
       {
         key: "density",
@@ -343,9 +353,11 @@ export function sessionVariants(
   }
 
   // 据え置き（hold）
-  const a = clone(base, bumpReps(base.blocks, 1), base.restSec, [
+  const a = clone(base, protectSpecificVolume ? base.blocks : bumpReps(base.blocks, 1), base.restSec, [
     ...base.reasons,
-    "量を1本ぶん増やす",
+    protectSpecificVolume
+      ? "高乳酸・中距離特異的の本数は据え置き、次の2週の有酸素量で積み上げる"
+      : "量を1本ぶん増やす",
   ]);
   const b = clone(base, base.blocks, Math.max(MIN_REST_SEC, Math.round(base.restSec * (1 - DENSITY_STEP))), [
     ...base.reasons,
@@ -354,10 +366,13 @@ export function sessionVariants(
   return [
     {
       key: "volume",
-      label: "量を増やす",
+      label: protectSpecificVolume ? "次の2週で量を増やす" : "量を増やす",
       spec: a,
-      why: "本数を増やして総量を積みます。設定タイムは変わらないので、達成できるかどうかの見通しが立てやすい進め方です。",
+      why: protectSpecificVolume
+        ? "高乳酸・中距離特異的の本数は機械的に増やさず、今後14日のジョグ・ロング走などから安全な対象だけを増やします。"
+        : "本数を増やして総量を積みます。設定タイムは変わらないので、達成できるかどうかの見通しが立てやすい進め方です。",
       recommended: limiter !== "endurance",
+      appliesToCurrent: !protectSpecificVolume,
     },
     {
       key: "density",

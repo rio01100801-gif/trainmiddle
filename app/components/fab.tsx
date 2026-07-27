@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { localToday } from "@/lib/core/dates";
-import { withQuery } from "./route";
+import { withQuery } from "./route-query";
 
 /**
  * 記録追加のフローティングボタン（D-3）

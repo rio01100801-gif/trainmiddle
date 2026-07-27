@@ -91,6 +91,11 @@ import {
 import { analyzeRace, RaceAnalysisOutput } from "./core/raceAnalysis";
 import { validateWeekTemplate } from "./core/weekTemplate";
 import {
+  planVolumeProgression,
+  VOLUME_HORIZON_DAYS,
+  type VolumeProgressionChange,
+} from "./core/volumeProgression";
+import {
   adjustPrescription,
   dailyAdjustment,
   executionSamples,
@@ -1803,6 +1808,9 @@ export interface PlanEditResult {
   /** 違反が出るとき、代わりに置ける日 */
   alternatives: { date: string; note: string }[];
   session?: Session;
+  message?: string;
+  volumeChanges?: Omit<VolumeProgressionChange, "next">[];
+  volumeWindowDays?: number;
 }
 
 function violationKey(v: RuleViolation): string {
@@ -2106,10 +2114,13 @@ export function coverageReview(repo: Store, today: string): CoverageReview | und
   const limiter = assessLimiter(athlete, goal?.targetTimeSec).limiter;
   return reviewCoverage({
     sessions: repo.listSessions(),
+    results: repo.listResults(),
+    strengthSessions: repo.listStrengths(),
     today,
     phase,
     limiter,
     weeksToRace: race ? weeksUntil(today, race.dateStart) : undefined,
+    raceDate: race?.dateStart,
   });
 }
 
@@ -2278,17 +2289,66 @@ export function applySessionVariant(
       alternatives: [],
     };
   }
-  return editSession(
-    repo,
-    sessionId,
-    {
-      prescription: chosen.spec.prescription,
-      targetPaces: chosen.spec.targetPaces,
-      durationMin: chosen.spec.durationMin,
-      distanceKm: chosen.spec.distanceKm,
-    },
-    today
-  );
+  let result: PlanEditResult;
+  if (chosen.appliesToCurrent === false) {
+    result = {
+      ok: true,
+      applied: true,
+      newViolations: [],
+      violations: runRuleEngine(buildRuleContext(repo, today)),
+      alternatives: [],
+      session,
+    };
+  } else {
+    result = editSession(
+      repo,
+      sessionId,
+      {
+        prescription: chosen.spec.prescription,
+        targetPaces: chosen.spec.targetPaces,
+        durationMin: chosen.spec.durationMin,
+        distanceKm: chosen.spec.distanceKm,
+      },
+      today
+    );
+  }
+  if (!result.ok || variantKey !== "volume") return result;
+
+  const goal = repo.getGoal();
+  const race = repo.listRaces().find((item) => item.id === goal?.targetRaceId);
+  const volumeChanges = planVolumeProgression({
+    sessions: repo.listSessions(),
+    anchorSessionId: sessionId,
+    today,
+    raceDate: race?.dateStart,
+  });
+  for (const change of volumeChanges) {
+    repo.saveSession(change.next);
+    repo.logChange(
+      {
+        sessionId: change.sessionId,
+        field: change.kind,
+        before: change.before,
+        after: change.after,
+        reason: change.reason,
+        triggeredBy: "VOLUME-PROGRESSION",
+        direction: "up",
+        action: "modify",
+      },
+      true
+    );
+  }
+  const publicChanges = volumeChanges.map(({ next: _next, ...change }) => change);
+  return {
+    ...result,
+    violations: runRuleEngine(buildRuleContext(repo, today)),
+    message:
+      publicChanges.length > 0
+        ? `今後${VOLUME_HORIZON_DAYS}日間の${publicChanges.length}件へ量の増加を反映しました。高乳酸・テーパー・回復日・手動変更は対象外です。`
+        : "安全に増やせる今後の自動生成メニューが無かったため、カレンダーは変更していません。",
+    volumeChanges: publicChanges,
+    volumeWindowDays: VOLUME_HORIZON_DAYS,
+  };
 }
 
 export interface HrUsageLine {

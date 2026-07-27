@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Card, Gauge, fmtSec } from "../components/ui";
-import { useQueryParam, withQuery } from "../components/route";
+import { useQueryParam, withQuery } from "../components/route-query";
 import { localToday } from "@/lib/core/dates";
 
 /**

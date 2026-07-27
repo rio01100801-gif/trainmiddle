@@ -127,17 +127,127 @@ export function metaOf(file: {
 export interface SyncConfig {
   /** Supabase の Project URL */
   url: string;
-  /** anon public key。公開前提の鍵なので端末に置いてよい */
+  /** Publishable key（または旧anon key）。公開前提の鍵なので端末に置いてよい */
   anonKey: string;
+}
+
+/**
+ * iOSの自動補正やコピー時の改行を保存値へ持ち込まない。
+ *
+ * URLとキーはいずれもASCIIで発行される値なので、NFKCで全角英数・記号を半角化し、
+ * 空白類とゼロ幅文字を除いてよい。URLは正しくparseできる場合はoriginへ揃える。
+ */
+function compactCredential(value: string | undefined): string {
+  return (value ?? "")
+    .normalize("NFKC")
+    .replace(/[\s\u200b\u2060\ufeff]+/g, "");
+}
+
+export function normalizeSyncConfig(c: Partial<SyncConfig>): SyncConfig {
+  const rawUrl = compactCredential(c.url);
+  let url = rawUrl.replace(/\/+$/, "");
+  try {
+    const parsed = new URL(rawUrl);
+    if (
+      parsed.protocol === "https:" &&
+      !parsed.username &&
+      !parsed.password &&
+      !parsed.port &&
+      (parsed.pathname === "/" || parsed.pathname === "") &&
+      !parsed.search &&
+      !parsed.hash
+    ) {
+      url = parsed.origin;
+    }
+  } catch {
+    // 検証側で具体的なエラーにする。ここでは入力を勝手に補完しない。
+  }
+  return { url, anonKey: compactCredential(c.anonKey) };
+}
+
+function jwtRole(key: string): string | undefined {
+  const parts = key.split(".");
+  if (parts.length !== 3) return undefined;
+  try {
+    const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = payload.padEnd(Math.ceil(payload.length / 4) * 4, "=");
+    const decoded: unknown = JSON.parse(atob(padded));
+    if (!decoded || typeof decoded !== "object" || !("role" in decoded)) return undefined;
+    const role = (decoded as { role?: unknown }).role;
+    return typeof role === "string" ? role : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** 設定が使える形かどうか。中途半端な設定で通信を始めない */
 export function validateSyncConfig(c: Partial<SyncConfig>): string | undefined {
-  if (!c.url?.trim() && !c.anonKey?.trim()) return "未設定です";
-  if (!c.url?.trim()) return "Project URL が空です";
-  if (!c.anonKey?.trim()) return "anon key が空です";
-  if (!/^https:\/\/[\w-]+\.supabase\.co\/?$/.test(c.url.trim())) {
+  const normalized = normalizeSyncConfig(c);
+  if (!normalized.url && !normalized.anonKey) return "未設定です";
+  if (!normalized.url) return "Project URL が空です";
+  if (!normalized.anonKey) return "Publishable Key が空です";
+
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized.url);
+  } catch {
     return "Project URL の形が違います（https://xxxx.supabase.co）";
   }
+
+  if (
+    parsed.protocol !== "https:" ||
+    !/^[a-z0-9-]+\.supabase\.co$/i.test(parsed.hostname) ||
+    parsed.pathname !== "/" ||
+    parsed.search ||
+    parsed.hash ||
+    parsed.username ||
+    parsed.password ||
+    parsed.port
+  ) {
+    return "Project URL の形が違います（https://xxxx.supabase.co）";
+  }
+
+  if (normalized.anonKey.startsWith("sb_secret_")) {
+    return "Secret Key はブラウザへ保存できません。sb_publishable_ で始まるキーを使ってください";
+  }
+  if (jwtRole(normalized.anonKey) === "service_role") {
+    return "service_role キーはブラウザへ保存できません。anon または Publishable Key を使ってください";
+  }
+  const publishable = /^sb_publishable_[A-Za-z0-9_-]{16,}$/.test(normalized.anonKey);
+  const legacyAnon =
+    normalized.anonKey.split(".").length === 3 && jwtRole(normalized.anonKey) === "anon";
+  if (!publishable && !legacyAnon) {
+    return "Publishable Key の形が違います（sb_publishable_... または旧anon key）";
+  }
   return undefined;
+}
+
+export interface OAuthLocation {
+  origin: string;
+  pathname: string;
+}
+
+/**
+ * Supabaseのimplicit flowは戻りURLのハッシュをトークン格納に使う。
+ * PWAの画面ルートもハッシュなので、PWAだけはクエリで同期画面への復帰意図を残す。
+ * Next.js版は現在の /sync へ直接戻し、ホームへ落とさない。
+ */
+export function oauthRedirectTo(location: OAuthLocation, hashNavigation: boolean): string {
+  const redirect = new URL(location.pathname || "/", location.origin);
+  redirect.search = "";
+  redirect.hash = "";
+  if (hashNavigation) {
+    redirect.searchParams.set("sync", "1");
+  } else if (!redirect.pathname.endsWith("/sync")) {
+    redirect.pathname = "/sync";
+  }
+  return redirect.toString();
+}
+
+export function googleAuthorizeUrl(config: SyncConfig, redirectTo: string): string {
+  const normalized = normalizeSyncConfig(config);
+  const authorize = new URL("/auth/v1/authorize", normalized.url);
+  authorize.searchParams.set("provider", "google");
+  authorize.searchParams.set("redirect_to", redirectTo);
+  return authorize.toString();
 }

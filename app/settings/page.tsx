@@ -28,7 +28,7 @@ const SETTINGS_GROUPS: { title: string; items: { href: string; what: string }[] 
   {
     title: "練習の決まりごと",
     items: [
-      { href: "/plan-settings", what: "固定曜日と自作メニュー。毎週の枠を決めます" },
+      { href: "/plan-settings", what: "曜日の優先・固定と自作メニュー。毎週の希望を決めます" },
       { href: "/heat", what: "暑熱順化のブロック。夏場の設定ペースの扱いが変わります" },
     ],
   },

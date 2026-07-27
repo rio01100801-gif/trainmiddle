@@ -3,7 +3,7 @@ import * as React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Card, CATEGORY_COLORS, CATEGORY_LABELS, ConfirmButton, ViolationList } from "../components/ui";
-import { withQuery } from "../components/route";
+import { withQuery } from "../components/route-query";
 import {
   PrescriptionFields,
   prescriptionPayload,
@@ -11,6 +11,7 @@ import {
 } from "../components/prescription-fields";
 import { SessionEditSheet } from "../components/session-edit-sheet";
 import { localToday } from "@/lib/core/dates";
+import type { CoverageReview } from "@/lib/core/coverage";
 
 /**
  * カレンダー（改修指示書 フェーズC）
@@ -403,7 +404,7 @@ const COVERAGE_JP: Record<string, string> = {
  * 出すのは不足しているもの1つと、分析タブへの導線だけにする。
  */
 function CoverageStrip() {
-  const [d, setD] = useState<any>(null);
+  const [d, setD] = useState<CoverageReview | null>(null);
 
   useEffect(() => {
     fetch("/api/coverage")
@@ -413,7 +414,8 @@ function CoverageStrip() {
   }, []);
 
   if (!d) return null;
-  const top = (d.proposals ?? [])[0];
+  const topSignal = d.balance.signals.find((signal) => signal.level === "warn");
+  const top = d.proposals[0];
 
   return (
     <Card>
@@ -423,7 +425,12 @@ function CoverageStrip() {
           内訳を見る →
         </Link>
       </div>
-      {top ? (
+      {topSignal ? (
+        <p className="text-[12.5px] leading-relaxed">
+          <b style={{ color: "var(--amber)" }}>{topSignal.message}</b>
+          <span style={{ color: "var(--text-3)" }}> 次の行動: {topSignal.action}</span>
+        </p>
+      ) : top ? (
         <p className="text-[12.5px] leading-relaxed">
           <b style={{ color: "var(--amber)" }}>
             {COVERAGE_JP[top.category] ?? top.category}が{top.shortfall}回 足りていません
@@ -435,7 +442,7 @@ function CoverageStrip() {
         </p>
       ) : (
         <p className="text-[12.5px]" style={{ color: "var(--text-2)" }}>
-          直近4週の配分は足りています。
+          予定と実施の4週推移に、今すぐ直す警告はありません。
         </p>
       )}
     </Card>

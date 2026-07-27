@@ -25,6 +25,7 @@ import {
   type Dow,
   type WeekTemplate,
   isPointSlot,
+  modeOf,
   pickCustomMenu,
   slotOf,
 } from "./weekTemplate";
@@ -323,6 +324,135 @@ function weekTemplate(
   }
 }
 
+const DOW_BY_WEEK_INDEX: Dow[] = [1, 2, 3, 4, 5, 6, 0];
+
+function templateForSlot(
+  slot: ReturnType<typeof slotOf>,
+  current: DayTemplate,
+  phase: Phase,
+  economyWeek: number,
+  pointIndex: number,
+  weekParity: number,
+  longRun: boolean
+): DayTemplate {
+  if (slot === "auto") return current;
+  if (slot === "off") return off();
+  if (slot === "point") return pointTemplateFor(phase, economyWeek, pointIndex, weekParity);
+  if (slot === "aerobic") return longRun ? longRunTemplate(60) : jog(40);
+  if (slot === "neural") return strides(6);
+  return categoryTemplate(slot, economyWeek) ?? current;
+}
+
+// longRun 引数と同名になる箇所で明示的に使うための別名。
+const longRunTemplate = longRun;
+
+function hasAdjacentHighLoad(template: (DayTemplate | null)[], index: number): boolean {
+  const current = template[index];
+  if (!current || !isPointCategory(current.category)) return false;
+  return [index - 1, index + 1].some((i) => {
+    const other = i >= 0 && i < template.length ? template[i] : null;
+    return !!other && isPointCategory(other.category);
+  });
+}
+
+/**
+ * 曜日設定を週テンプレートへ反映する。
+ *
+ * fixed は従来どおり枠を上書きする。preferred は同じ週の既存メニューと
+ * 入れ替えるだけなので、週の高負荷回数や休養数を増やさない。
+ * 入れ替え後に高負荷が連日になる場合は希望を見送り、自動配置を残す。
+ */
+export function applyWeekPreferences(
+  source: (DayTemplate | null)[],
+  preference: WeekTemplate | undefined,
+  phase: Phase,
+  economyWeek: number,
+  weekParity: number
+): (DayTemplate | null)[] {
+  if (!preference?.enabled) return [...source];
+  const out = [...source];
+  const fixedPointDows = DOW_BY_WEEK_INDEX.filter(
+    (dow) => modeOf(preference, dow) === "fixed" && isPointSlot(slotOf(preference, dow))
+  );
+
+  // 旧形式の完全固定動作を維持する。
+  for (let index = 0; index < DOW_BY_WEEK_INDEX.length; index++) {
+    const dow = DOW_BY_WEEK_INDEX[index];
+    if (modeOf(preference, dow) !== "fixed") continue;
+    const slot = slotOf(preference, dow);
+    const current = out[index];
+    if (!current) continue;
+    if (slot === "auto") continue;
+    const pointIndex = Math.max(0, fixedPointDows.indexOf(dow));
+    out[index] = templateForSlot(
+      slot,
+      current,
+      phase,
+      economyWeek,
+      pointIndex,
+      weekParity,
+      preference.longRunDow === dow
+    );
+  }
+  // modes の無い旧データだけは「指定曜日以外にポイントを置かない」従来仕様を保つ。
+  if (fixedPointDows.length > 0 && preference.modes === undefined) {
+    for (let index = 0; index < out.length; index++) {
+      const dow = DOW_BY_WEEK_INDEX[index];
+      if (
+        modeOf(preference, dow) !== "fixed" &&
+        out[index] &&
+        isPointCategory(out[index]!.category)
+      ) {
+        out[index] = jog(40);
+      }
+    }
+  }
+
+  // 優先は回数を増やさず、同じ週の動かせる枠との交換だけを試す。
+  for (let target = 0; target < DOW_BY_WEEK_INDEX.length; target++) {
+    const dow = DOW_BY_WEEK_INDEX[target];
+    if (modeOf(preference, dow) !== "preferred") continue;
+    const slot = slotOf(preference, dow);
+    const current = out[target];
+    if (!current || slot === "auto") continue;
+
+    const wantsPoint = isPointSlot(slot);
+    const sourceIndex = out.findIndex((candidate, index) => {
+      if (!candidate || index === target) return false;
+      const candidateDow = DOW_BY_WEEK_INDEX[index];
+      if (modeOf(preference, candidateDow) === "fixed") return false;
+      if (wantsPoint) return isPointCategory(candidate.category);
+      if (slot === "aerobic" && preference.longRunDow === dow) {
+        return candidate.category === "aerobic" && candidate.name === "ロングラン";
+      }
+      return candidate.category === slot;
+    });
+    if (sourceIndex < 0) continue;
+
+    const previousTarget = out[target];
+    const previousSource = out[sourceIndex];
+    out[sourceIndex] = previousTarget;
+    out[target] =
+      slot === "point"
+        ? previousSource
+        : templateForSlot(
+            slot,
+            current,
+            phase,
+            economyWeek,
+            0,
+            weekParity,
+            preference.longRunDow === dow
+          );
+
+    if (wantsPoint && hasAdjacentHighLoad(out, target)) {
+      out[target] = previousTarget;
+      out[sourceIndex] = previousSource;
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // プラン生成
 // ---------------------------------------------------------------------------
@@ -426,16 +556,6 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
       return d > 0 && d <= 3;
     });
 
-  // 3-1: ポイント練習の曜日が明示されているか
-  const hasPointSlots =
-    !!input.weekTemplate?.enabled &&
-    ([0, 1, 2, 3, 4, 5, 6] as Dow[]).some((d) => isPointSlot(slotOf(input.weekTemplate, d)));
-
-  // 週内のポイント枠を月曜起点の順に並べる（1本目/2本目の判定に使う）
-  const pointDowsOrdered = ([1, 2, 3, 4, 5, 6, 0] as Dow[]).filter((d) =>
-    isPointSlot(slotOf(input.weekTemplate, d))
-  );
-
   let w = weekStart(startDate);
   let weekIndex = 0;
   let economyWeek = 0;
@@ -446,7 +566,13 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
     const phase = phaseForDate(midWeek, raceDate);
     phaseByWeek.push({ weekStart: w, phase });
     const grpBase = baseTime(cfeSec, goal.targetTimeSec, phase);
-    const template = weekTemplate(phase, weekIndex % 2, economyWeek);
+    const template = applyWeekPreferences(
+      weekTemplate(phase, weekIndex % 2, economyWeek),
+      input.weekTemplate,
+      phase,
+      economyWeek,
+      weekIndex % 2
+    );
 
     for (let d = 0; d < 7; d++) {
       const date = addDays(w, d);
@@ -455,40 +581,9 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
 
       let tpl = template[d];
       if (!tpl) continue;
+      const dow = new Date(date + "T00:00:00Z").getUTCDay() as Dow;
 
       const daysToTarget = diffDays(date, raceDate);
-      // ---- 3-1: 固定曜日設定の適用 ----
-      // ここで「枠」を先に確定させ、この後のテーパー保護・レース前保護が
-      // 必要なら上書きする。安全側のルールがユーザー設定に優先する。
-      // 「枠」を先に決め、その枠の中で内容（カテゴリ）を割り当てる。
-      const dow = new Date(date + "T00:00:00Z").getUTCDay() as Dow;
-      const slot = slotOf(input.weekTemplate, dow);
-
-      // ポイント練習の曜日を明示している場合、その曜日「以外」には質練習を置かない。
-      // 「火・土がポイント」と指定したのに水曜にも質が入るのでは、
-      // 固定した意味がなくなり、週の質練習が上限(RULE-04)を超えてしまう。
-      if (slot === "auto" && hasPointSlots && isPointCategory(tpl.category)) {
-        tpl = jog(40);
-      }
-
-      if (slot !== "auto") {
-        if (slot === "off") {
-          tpl = off();
-        } else if (slot === "point") {
-          // ポイント練習の枠。内容はフェーズと「週の何本目か」で決める。
-          const idx = Math.max(0, pointDowsOrdered.indexOf(dow));
-          tpl = pointTemplateFor(phase, economyWeek, idx, weekIndex % 2);
-        } else if (slot === "aerobic") {
-          tpl = input.weekTemplate?.longRunDow === dow ? longRun(60) : jog(40);
-        } else if (slot === "neural") {
-          tpl = strides(6);
-        } else if (tpl.category !== slot) {
-          tpl = categoryTemplate(slot, economyWeek) ?? tpl;
-        }
-      }
-
-
-
       // テーパー期: レース8日前に最終高乳酸を1回だけ配置（RULE-07対応）
       if (daysToTarget === 8 && phase === "Taper") {
         tpl = {
@@ -679,7 +774,14 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
         phase,
         rationale: rationaleFor(tpl.category),
         status: "planned",
-        isFixed: false,
+        isFixed:
+          modeOf(input.weekTemplate, dow) === "fixed" &&
+          slotMatchesCategory(slotOf(input.weekTemplate, dow), tpl.category),
+        fixedSource:
+          modeOf(input.weekTemplate, dow) === "fixed" &&
+          slotMatchesCategory(slotOf(input.weekTemplate, dow), tpl.category)
+            ? `${DOW_LABEL_FOR_SOURCE[dow]}曜の固定設定`
+            : undefined,
         timeOfDay: tpl.timeOfDay ?? "pm",
         distanceKm: built.distanceKm,
         durationMin: built.durationMin,
@@ -710,6 +812,25 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
 /** 質練習カテゴリか（ポイント練習の枠を埋めるときの判定） */
 function isPointCategory(c: SessionCategory): boolean {
   return ["high_lactate", "race_economy", "modeling", "cv", "threshold"].includes(c);
+}
+
+const DOW_LABEL_FOR_SOURCE: Record<Dow, string> = {
+  0: "日",
+  1: "月",
+  2: "火",
+  3: "水",
+  4: "木",
+  5: "金",
+  6: "土",
+};
+
+function slotMatchesCategory(
+  slot: ReturnType<typeof slotOf>,
+  category: SessionCategory
+): boolean {
+  if (slot === "point") return isPointCategory(category);
+  if (slot === "auto") return false;
+  return slot === category;
 }
 
 /**

@@ -65,7 +65,11 @@ import type { PhraseRule } from "../src/lib/core/bulkImport";
 import { runRuleEngine, weeklySummary } from "../src/lib/core/rules";
 import { buildAerobicProfile } from "../src/lib/core/pace";
 import { assignExpectedPaces } from "../src/lib/core/rounds";
-import { validateWeekTemplate, type CustomMenu } from "../src/lib/core/weekTemplate";
+import {
+  normalizeWeekTemplate,
+  validateWeekTemplate,
+  type CustomMenu,
+} from "../src/lib/core/weekTemplate";
 import { judgeEconomyTrend } from "../src/lib/core/propagation";
 import { acwr, dailyLoads, highLactate28dAvgPerWeek } from "../src/lib/core/load";
 import { restingHrTrend } from "../src/lib/core/signal";
@@ -312,7 +316,7 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
       };
     },
     POST: (repo, body) => {
-      if (body.weekTemplate) repo.saveWeekTemplate(body.weekTemplate);
+      if (body.weekTemplate) repo.saveWeekTemplate(normalizeWeekTemplate(body.weekTemplate));
       if (body.customMenu) {
         const m: CustomMenu = {
           id: body.customMenu.id ?? `cm-${Date.now()}`,
@@ -333,7 +337,7 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
       return {
         ok: true,
         templateViolations: body.weekTemplate
-          ? validateWeekTemplate(body.weekTemplate)
+          ? validateWeekTemplate(normalizeWeekTemplate(body.weekTemplate))
           : [],
       };
     },

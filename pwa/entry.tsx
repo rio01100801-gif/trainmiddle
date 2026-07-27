@@ -293,7 +293,9 @@ async function boot() {
 
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker
-      .register("./sw.js")
+      // sw.js自体をHTTPキャッシュから取るとVERSION更新の検出が遅れるため、
+      // iOS PWAでも起動時に配信中のService Workerを直接確認する。
+      .register("./sw.js", { updateViaCache: "none" })
       .then((reg) => {
         // 起動のたびに更新を確認する（ホーム画面から起動しても新版が届くように）
         reg.update().catch(() => {});

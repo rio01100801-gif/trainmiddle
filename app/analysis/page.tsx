@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card, CATEGORY_COLORS, CATEGORY_LABELS, fmtSec } from "../components/ui";
 import RaceAnalysis from "../race/page";
+import type { CoverageReview } from "@/lib/core/coverage";
+import type { SessionCategory } from "@/lib/core/types";
 
 /** 単一系列の折れ線（1系列のみなので凡例なし・タイトルが系列名を兼ねる） */
 function LineChart({
@@ -448,7 +450,7 @@ function fmtT(sec?: number): string {
  * 固定曜日設定そのものは変えない。入れ替えるのはその週の予定1件だけ。
  */
 function CoveragePanel() {
-  const [d, setD] = useState<any>(null);
+  const [d, setD] = useState<CoverageReview | null>(null);
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -462,7 +464,7 @@ function CoveragePanel() {
 
   if (!d) return null;
 
-  const apply = async (sessionId: string, category: string) => {
+  const apply = async (sessionId: string, category: SessionCategory) => {
     setBusy(true);
     try {
       const r = await fetch("/api/coverage", {
@@ -487,13 +489,98 @@ function CoveragePanel() {
         「何のための画面か」「で、どうするのか」を先に書く。
       */}
       <p className="text-[11.5px] leading-relaxed mb-2.5" style={{ color: "var(--text-3)" }}>
-        この4週間でどの種類の練習を何回やったかです。
-        固定曜日の枠に収まる範囲でメニューが出るので、特定の種類だけ薄いまま進むことがあります。
+        予定と実施を分け、週ごとの量・高負荷・回復・中止傾向を確認します。
+        距離だけで異なる刺激を同じ負荷とはみなさず、実施負荷とカテゴリ回数も併記します。
         <b style={{ color: "var(--text-2)" }}>
           {" "}
           今日の設定を変える話（ホームの「今日の設定」）とは別で、こちらは1か月の組み立ての話です。
         </b>
       </p>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+        <div className="rounded-lg p-2" style={{ background: "var(--surface-2)" }}>
+          <div className="metric-label">実施距離 / 予定</div>
+          <div className="text-[14px] num">
+            {d.balance.totalCompletedDistanceKm.toFixed(1)} / {d.balance.totalPlannedDistanceKm.toFixed(1)}km
+          </div>
+        </div>
+        <div className="rounded-lg p-2" style={{ background: "var(--surface-2)" }}>
+          <div className="metric-label">実施率</div>
+          <div className="text-[14px] num">
+            {d.balance.adherencePct === undefined ? "記録不足" : `${d.balance.adherencePct}%`}
+          </div>
+        </div>
+        <div className="rounded-lg p-2" style={{ background: "var(--surface-2)" }}>
+          <div className="metric-label">完了した高負荷日</div>
+          <div className="text-[14px] num">{d.balance.totalHighLoadDays}日</div>
+        </div>
+        <div className="rounded-lg p-2" style={{ background: "var(--surface-2)" }}>
+          <div className="metric-label">回復・完全休養</div>
+          <div className="text-[14px] num">{d.balance.totalRecoveryDays}日</div>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto mb-3">
+        <table className="w-full text-[11px]">
+          <thead>
+            <tr style={{ color: "var(--text-3)" }}>
+              <th className="text-left py-1">週</th>
+              <th className="text-right">距離 実/予</th>
+              <th className="text-right">高負荷</th>
+              <th className="text-right">実施率</th>
+              <th className="text-right">変更/中止/未達/未実施</th>
+            </tr>
+          </thead>
+          <tbody>
+            {d.balance.weeks.map((week) => (
+              <tr key={week.weekStart} className="border-t" style={{ borderColor: "var(--border)" }}>
+                <td className="py-1 num">{week.weekStart.slice(5).replace("-", "/")}〜</td>
+                <td className="text-right num">
+                  {week.completedDistanceKm.toFixed(1)}/{week.plannedDistanceKm.toFixed(1)}
+                </td>
+                <td className="text-right num">{week.highLoadDays}</td>
+                <td className="text-right num">
+                  {week.adherencePct === undefined ? "-" : `${week.adherencePct}%`}
+                </td>
+                <td className="text-right num">
+                  {week.modifiedSessions}/{week.skippedSessions}/{week.unmetSessions}/{week.overdueSessions}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 mb-3 text-[11px]">
+        <div>高乳酸・解糖系 <b className="num">{d.balance.totalGlycolytic}</b></div>
+        <div>中距離特異的 <b className="num">{d.balance.totalMiddleDistanceSpecific}</b></div>
+        <div>有酸素高強度 <b className="num">{d.balance.totalAerobicHigh}</b></div>
+        <div>ロング走 <b className="num">{d.balance.totalLongRuns}</b></div>
+        <div>回復日 <b className="num">{d.balance.totalRecoveryDays}</b></div>
+      </div>
+
+      {d.balance.raceProgress ? (
+        <p className="text-[11.5px] mb-3" style={{ color: "var(--text-2)" }}>
+          レースまで <b className="num">{d.balance.raceProgress.daysToRace}日</b>
+          {" "}／ 現在 {d.balance.raceProgress.phase}期
+        </p>
+      ) : null}
+
+      {d.balance.signals.map((signal) => (
+        <div
+          key={`${signal.code}-${signal.dates.join("-")}`}
+          className="rounded-lg p-2.5 mb-2"
+          style={{
+            background: "var(--surface-2)",
+            border: signal.level === "warn" ? "1px solid var(--amber)" : "1px solid var(--border)",
+          }}
+        >
+          <p className="text-[12px] leading-relaxed font-semibold">{signal.message}</p>
+          <p className="text-[11.5px] leading-relaxed mt-1" style={{ color: "var(--text-2)" }}>
+            次の行動: {signal.action}
+          </p>
+        </div>
+      ))}
 
       {/* おすすめを1つだけ先に出す。表を読んでから考えさせない */}
       <div
@@ -528,7 +615,7 @@ function CoveragePanel() {
             </tr>
           </thead>
           <tbody>
-            {(d.targets ?? []).map((t: any) => (
+            {d.targets.map((t) => (
               <tr key={t.category} className="border-t" style={{ borderColor: "var(--border)" }}>
                 <td className="py-1">{COVERAGE_JP[t.category] ?? t.category}</td>
                 <td className="text-right num">{t.actual}</td>
@@ -545,10 +632,10 @@ function CoveragePanel() {
         </table>
       </div>
 
-      {(d.proposals ?? []).length > 0 ? (
+      {d.proposals.length > 0 ? (
         <div className="metric-label mb-1">入れ替えるなら</div>
       ) : null}
-      {(d.proposals ?? []).map((p: any) => (
+      {d.proposals.map((p) => (
         <div
           key={p.category}
           className="border-t pt-2.5 mt-2.5"
@@ -560,7 +647,7 @@ function CoveragePanel() {
               {p.note}
             </p>
           ) : null}
-          {(p.candidates ?? []).map((c: any) => (
+          {p.candidates.map((c) => (
             <div key={c.sessionId} className="mb-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-[11.5px] num" style={{ color: "var(--text-2)" }}>

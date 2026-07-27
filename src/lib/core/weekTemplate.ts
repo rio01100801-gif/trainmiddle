@@ -32,6 +32,7 @@ export const DOW_LABELS: Record<Dow, string> = {
  * - 個別カテゴリ: そのカテゴリに固定する
  */
 export type WeekdaySlot = "auto" | "point" | SessionCategory;
+export type WeekdayPreferenceMode = "none" | "preferred" | "fixed";
 
 export const SLOT_LABELS: Record<string, string> = {
   auto: "自動",
@@ -49,18 +50,49 @@ export const SLOT_LABELS: Record<string, string> = {
 export interface WeekTemplate {
   /** 曜日ごとの枠。未設定の曜日は "auto" 扱い */
   slots: Partial<Record<Dow, WeekdaySlot>>;
+  /**
+   * 曜日指定の強さ。
+   * 旧データには存在しないため、枠があり mode が無い場合は fixed として読む。
+   */
+  modes?: Partial<Record<Dow, WeekdayPreferenceMode>>;
   /** ロングランを置く曜日（aerobic のうち長い方）。未設定なら自動 */
   longRunDow?: Dow;
   enabled: boolean;
 }
 
 export function emptyWeekTemplate(): WeekTemplate {
-  return { slots: {}, enabled: false };
+  return { slots: {}, modes: {}, enabled: false };
 }
 
 export function slotOf(t: WeekTemplate | undefined, dow: Dow): WeekdaySlot {
   if (!t || !t.enabled) return "auto";
   return t.slots[dow] ?? "auto";
+}
+
+export function modeOf(t: WeekTemplate | undefined, dow: Dow): WeekdayPreferenceMode {
+  const slot = slotOf(t, dow);
+  if (slot === "auto") return "none";
+  // 従来の曜日枠は完全固定だったため、modes の無い保存データは固定として維持する。
+  return t?.modes?.[dow] ?? "fixed";
+}
+
+export function normalizeWeekTemplate(t: WeekTemplate): WeekTemplate {
+  const slots: WeekTemplate["slots"] = {};
+  const modes: NonNullable<WeekTemplate["modes"]> = {};
+  for (const dow of [0, 1, 2, 3, 4, 5, 6] as Dow[]) {
+    const slot = t.slots?.[dow] ?? "auto";
+    const mode = modeOf(t, dow);
+    if (slot !== "auto" && mode !== "none") {
+      slots[dow] = slot;
+      modes[dow] = mode;
+    }
+  }
+  return {
+    slots,
+    modes,
+    longRunDow: t.longRunDow,
+    enabled: t.enabled,
+  };
 }
 
 /** その枠が質練習（ポイント練習）か */
@@ -87,8 +119,8 @@ export function validateWeekTemplate(t: WeekTemplate): RuleViolation[] {
   const out: RuleViolation[] = [];
   if (!t.enabled) return out;
 
-  const pointDows = ([0, 1, 2, 3, 4, 5, 6] as Dow[]).filter((d) =>
-    isPointSlot(slotOf(t, d))
+  const pointDows = ([0, 1, 2, 3, 4, 5, 6] as Dow[]).filter(
+    (d) => modeOf(t, d) === "fixed" && isPointSlot(slotOf(t, d))
   );
 
   // --- 週内のポイント練習回数（RULE-04: 最大2回） ---
@@ -96,13 +128,13 @@ export function validateWeekTemplate(t: WeekTemplate): RuleViolation[] {
     out.push({
       rule: "RULE-04",
       level: "ERROR",
-      message: `ポイント練習を週${pointDows.length}回（${pointDows
+      message: `高負荷練習を週${pointDows.length}回（${pointDows
         .map((d) => DOW_LABELS[d])
-        .join("・")}）に固定しています。週の質練習は最大2回です。`,
+        .join("・")}）固定しています。高乳酸・中距離特異的・有酸素高強度が集中します。`,
       dates: [],
       sessionIds: [],
       suggestion:
-        "1つを「自動」またはジョグに変えてください。800mでは質練習の本数より、1本ごとの質の方が効きます。",
+        "1つを「優先」または指定なしに変え、回復状況と前後の負荷から移動できる余地を残してください。",
     });
   }
 
@@ -144,20 +176,20 @@ export function validateWeekTemplate(t: WeekTemplate): RuleViolation[] {
     out.push({
       rule: "TEMPLATE",
       level: "WARN",
-      message: `ポイント練習を${DOW_LABELS[pointDows[0]]}曜の週1回だけに固定しています。`,
+      message: `高負荷練習を${DOW_LABELS[pointDows[0]]}曜の週1回だけに固定しています。`,
       dates: [],
       sessionIds: [],
       suggestion:
-        "固定した曜日以外には質練習が入りません（週1回で確定します）。Build〜Specific期は週2回が標準なので、もう1日ポイント練習の枠を作るか、片方を「自動」に戻すことを検討してください。",
+        "固定はその曜日を動かしませんが、指定なし・優先の曜日には安全性を確認して別の高負荷練習を配置できます。",
     });
   }
 
   // --- 休養日がゼロ ---
   const offDows = ([0, 1, 2, 3, 4, 5, 6] as Dow[]).filter(
-    (d) => slotOf(t, d) === "off"
+    (d) => modeOf(t, d) === "fixed" && slotOf(t, d) === "off"
   );
   const fixedDows = ([0, 1, 2, 3, 4, 5, 6] as Dow[]).filter(
-    (d) => slotOf(t, d) !== "auto"
+    (d) => modeOf(t, d) === "fixed" && slotOf(t, d) !== "auto"
   );
   if (fixedDows.length >= 6 && offDows.length === 0) {
     out.push({
@@ -173,7 +205,7 @@ export function validateWeekTemplate(t: WeekTemplate): RuleViolation[] {
 
   // --- 高乳酸を週2回以上固定（RULE-01） ---
   const hlDows = ([0, 1, 2, 3, 4, 5, 6] as Dow[]).filter(
-    (d) => slotOf(t, d) === "high_lactate"
+    (d) => modeOf(t, d) === "fixed" && slotOf(t, d) === "high_lactate"
   );
   if (hlDows.length > 1) {
     out.push({

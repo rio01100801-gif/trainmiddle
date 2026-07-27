@@ -13,3 +13,6 @@ export * from "./raceAnalysis";
 export * from "./heat";
 export * from "./strength";
 export * from "./rationale";
+export * from "./trainingClassification";
+export * from "./trainingBalance";
+export * from "./volumeProgression";
