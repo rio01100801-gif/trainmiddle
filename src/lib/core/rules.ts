@@ -21,6 +21,7 @@ import type {
   RuleViolation,
   Session,
   SessionCategory,
+  SessionResult,
   StrengthSession,
   WeeklySummary,
 } from "./types";
@@ -62,6 +63,11 @@ export interface RuleContext {
   goal?: Goal;
   athlete: Athlete;
   dailyChecks: DailyCheck[];
+  /**
+   * 実施済みセッションの記録。未指定なら予定だけで評価する。
+   * Map にすることで「未実施」と「記録なし」を予定件数へ混ぜない。
+   */
+  resultsBySessionId?: ReadonlyMap<string, SessionResult>;
   heatBlocks: HeatBlock[];
   /** 日付ごとの予想/実測気温。無い場合は夏季月フラグで代替 */
   dayTempsC?: Record<string, number>;
@@ -72,6 +78,58 @@ export interface RuleContext {
 }
 
 const active = (s: Session) => s.status !== "skipped" && s.category !== "off";
+
+interface RecoveryEvidence {
+  note: string;
+  hasConcern: boolean;
+}
+
+/**
+ * 高負荷の配置警告へ、すでに得られた実施結果と回復状態だけを補足する。
+ *
+ * RPE 8 は propagation.ts の isHard、疲労 4/5 は adaptive.ts の
+ * dailyAdjustment と同じ既存境界を再利用する。ここで新しい安全基準は作らず、
+ * RULE-04 の回数・レベルも変更しない。
+ */
+function recoveryEvidence(ctx: RuleContext, sessions: Session[], week: string): RecoveryEvidence {
+  const results = sessions
+    .map((session) => ctx.resultsBySessionId?.get(session.id))
+    .filter((result): result is SessionResult => result !== undefined);
+  const highRpe = results.filter(
+    (result) =>
+      result.rpe >= 8 ||
+      result.subjective === "hard" ||
+      result.subjective === "very_hard"
+  );
+  const underachieved = results.filter(
+    (result) =>
+      result.aborted === true ||
+      result.achievement === "partial" ||
+      result.achievement === "failed"
+  );
+  const heavyLegs = results.filter((result) => result.nextDayLegs === "heavy");
+  const weekEnd = addDays(week, 6);
+  const fatiguedDays = ctx.dailyChecks.filter(
+    (check) =>
+      check.date >= week &&
+      check.date <= weekEnd &&
+      ((check.legFatigue ?? 0) >= 4 ||
+        (check.overallFatigue ?? 0) >= 4 ||
+        check.signal === "yellow" ||
+        check.signal === "red")
+  );
+
+  const facts: string[] = [];
+  if (highRpe.length > 0) facts.push(`高いRPE・主観強度${highRpe.length}件`);
+  if (underachieved.length > 0) facts.push(`未達・中止${underachieved.length}件`);
+  if (heavyLegs.length > 0) facts.push(`翌日の脚が重い記録${heavyLegs.length}件`);
+  if (fatiguedDays.length > 0) facts.push(`疲労シグナル${fatiguedDays.length}日`);
+
+  return {
+    note: facts.length > 0 ? ` 実施・回復記録では${facts.join("、")}があります。` : "",
+    hasConcern: facts.length > 0,
+  };
+}
 
 function sorted(sessions: Session[]): Session[] {
   return [...sessions].sort((a, b) => a.date.localeCompare(b.date));
@@ -319,6 +377,7 @@ function rule04(ctx: RuleContext): RuleViolation[] {
   const out: RuleViolation[] = [];
   const q = ctx.sessions.filter((s) => active(s) && isHighLoadSession(s));
   for (const [w, list] of groupByWeek(q)) {
+    const recovery = recoveryEvidence(ctx, list, w);
     const glycolytic = list.filter(isGlycolyticSession);
     const specific = list.filter(isMiddleDistanceSpecificSession);
     const aerobicHigh = list.filter(isAerobicHighSession);
@@ -344,12 +403,15 @@ function rule04(ctx: RuleContext): RuleViolation[] {
               "です。" +
               (tooManySpecific
                 ? "高乳酸・中距離特異的な疲労が同じ週に集中しています。"
-                : "種類を問わず高負荷日が同じ週に集中しています。"),
+                : "種類を問わず高負荷日が同じ週に集中しています。") +
+              recovery.note,
             dates: list.map((s) => s.date),
             sessionIds: list.map((s) => s.id),
-            suggestion: tooManySpecific
-              ? "高乳酸・中距離特異的の1回を有酸素系または回復メニューへ変更する案があります。"
-              : "有酸素高強度または高容量の神経・スプリントの1回を低強度有酸素へ変更する案があります。",
+            suggestion: recovery.hasConcern
+              ? "実施・回復記録に負担の兆候があります。次の高負荷1回を低強度有酸素または回復へ変更する案があります。"
+              : tooManySpecific
+                ? "高乳酸・中距離特異的の1回を有酸素系または回復メニューへ変更する案があります。"
+                : "有酸素高強度または高容量の神経・スプリントの1回を低強度有酸素へ変更する案があります。",
           },
           list
         )
@@ -367,10 +429,13 @@ function rule04(ctx: RuleContext): RuleViolation[] {
                 ? `、高容量の神経・スプリント${demandingNeural.length}`
                 : "") +
               "）。" +
-              "一律に禁止はしませんが、実施結果と回復日の確保を確認してください。",
+              "一律に禁止はしませんが、実施結果と回復日の確保を確認してください。" +
+              recovery.note,
             dates: list.map((s) => s.date),
             sessionIds: list.map((s) => s.id),
-            suggestion: "疲労・RPEが高い場合は、有酸素高強度の1回を低強度有酸素へ変更してください。",
+            suggestion: recovery.hasConcern
+              ? "実施・回復記録に負担の兆候があります。有酸素高強度の1回を低強度有酸素へ変更してください。"
+              : "疲労・RPEが高い場合は、有酸素高強度の1回を低強度有酸素へ変更してください。",
           },
           list
         )

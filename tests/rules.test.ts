@@ -129,6 +129,52 @@ describe("RULE-04 週内高負荷の種類と組み合わせ", () => {
     expect(violation.message).toContain("高負荷が3日");
   });
 
+  it("高負荷3日の警告へ実施結果・RPE・疲労を根拠として表示する", () => {
+    const specific = makeSession("2026-04-06", "race_economy");
+    const threshold = makeSession("2026-04-08", "threshold");
+    const cv = makeSession("2026-04-10", "cv");
+    const c = ctx({
+      sessions: [specific, threshold, cv],
+      resultsBySessionId: new Map([
+        [
+          specific.id,
+          {
+            id: "result-specific",
+            sessionId: specific.id,
+            date: specific.date,
+            actualLapsSec: [110],
+            achievement: "partial",
+            rpe: 9,
+            subjective: "very_hard",
+            nextDayLegs: "heavy",
+          },
+        ],
+      ]),
+      dailyChecks: [{ date: "2026-04-09", overallFatigue: 4 }],
+    });
+
+    const violation = violationsOf(runRuleEngine(c), "RULE-04")[0];
+    expect(violation.message).toContain("高いRPE・主観強度1件");
+    expect(violation.message).toContain("未達・中止1件");
+    expect(violation.message).toContain("翌日の脚が重い記録1件");
+    expect(violation.message).toContain("疲労シグナル1日");
+    expect(violation.suggestion).toContain("実施・回復記録に負担の兆候");
+  });
+
+  it("未実施の予定を実施結果として表示しない", () => {
+    const c = ctx({
+      sessions: [
+        makeSession("2026-04-06", "race_economy"),
+        makeSession("2026-04-08", "threshold"),
+        makeSession("2026-04-10", "cv"),
+      ],
+      resultsBySessionId: new Map(),
+    });
+
+    const violation = violationsOf(runRuleEngine(c), "RULE-04")[0];
+    expect(violation.message).not.toContain("実施・回復記録では");
+  });
+
   it("高乳酸・中距離特異的が週3日ならERROR", () => {
     const c = ctx({
       sessions: [

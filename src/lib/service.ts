@@ -216,6 +216,7 @@ export function buildRuleContext(repo: Store, evaluationDate: string): RuleConte
     goal: repo.getGoal(),
     athlete,
     dailyChecks: repo.listDailyChecks(),
+    resultsBySessionId: resultsMap,
     heatBlocks: repo.listHeatBlocks(),
     ltPaceSecPerKm: aerobic.isEstimated ? undefined : aerobic.ltPaceSecPerKm,
     dayTempsC: dayTempsFromResults(repo),
