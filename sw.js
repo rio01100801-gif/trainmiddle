@@ -11,7 +11,7 @@
  *
  * リリースのたびに VERSION を必ず上げること（上げないと install が走らない）。
  */
-const VERSION = "forge-v31";
+const VERSION = "forge-v32";
 const ASSETS = [
   "./",
   "./index.html",
@@ -26,6 +26,7 @@ const ASSETS = [
    *   Safariが画像自体もキャッシュするため。URLが変わらないと追加し直しても古いまま）
    */
   `./icon-180.png?v=${VERSION}`,
+  `./icon-32.png?v=${VERSION}`,
   `./icon-192.png?v=${VERSION}`,
   `./icon-512.png?v=${VERSION}`,
   `./icon-maskable-512.png?v=${VERSION}`,
