@@ -27,12 +27,15 @@
 | 項目 | 値 |
 | --- | --- |
 | branch | `main` |
-| HEAD | `fd15365`（`fix: 目標レースのボーダー正規化と同期の統合・OAuth復帰を修正`） |
+| HEAD | `4364d1e`（`fix: Supabase Storageの保存先を利用者ごとに分離`） |
 | `origin/main` との差 | **0 / 0**（完全一致・push済み） |
 
 直近コミット:
 
 ```
+4364d1e fix: Supabase Storageの保存先を利用者ごとに分離
+bf0e7db docs: 実機確認結果(BUG-02〜04・症状2とも再現なし)を反映
+5799a62 docs: HANDOFF.mdをforge-v33配信後の状態に更新
 fd15365 fix: 目標レースのボーダー正規化と同期の統合・OAuth復帰を修正
 db25d78 feat: FORGEのアイコンと起動画面・UIを刷新
 6424518 feat: 自動生成メニューの個別適応と多様性を改善
@@ -40,14 +43,11 @@ db25d78 feat: FORGEのアイコンと起動画面・UIを刷新
 f304ab8 fix: Supabase初回同期の未作成応答を処理
 157c955 fix: Supabase Storageの書き込み診断を改善
 eeb9cb2 fix: 週間警告に実施結果と疲労を反映
-5724648 fix: 計画分類とレース・カレンダー同期を改善
-32a8386 feat: 計画機能とPWA同期・認証を改善
-d380de4 Phase 5(A): 同期のコアと設定画面／未設定でも成立させる
 ```
 
 ## 未コミット変更
 
-**なし。** NEXT-001 と NEXT-002（Phase 2-1・2-2）の対応ぶんは `fd15365` としてコミット・
+**なし。** NEXT-001 と NEXT-002（Phase 2-1〜2-3）の対応ぶんは `4364d1e` までコミット・
 push・gh-pages配信済み（2026-07-30）。内容は下の「NEXT-001 の完了記録」「NEXT-002」を参照。
 
 > 過去に、同じディレクトリで複数のエージェントが並行編集し、
@@ -57,9 +57,9 @@ push・gh-pages配信済み（2026-07-30）。内容は下の「NEXT-001 の完�
 
 | 項目 | 値 |
 | --- | --- |
-| ソース `pwa/sw.js` | `forge-v33` |
-| `pwa-dist/sw.js` | `forge-v33` |
-| 公開中（`gh-pages`） | `forge-v33`（配信済み・2026-07-30） |
+| ソース `pwa/sw.js` | `forge-v34` |
+| `pwa-dist/sw.js` | `forge-v34` |
+| 公開中（`gh-pages`） | `forge-v34`（配信済み・2026-07-30） |
 | `main:pwa-dist` と `gh-pages` の tree | **一致（配信済み・未配信の差分なし）** |
 
 ---
@@ -122,12 +122,13 @@ verify      typecheck && test && build:all && e2e && e2e:update
 
 ## 作業中
 
-**NEXT-002（Phase 2-3 のコード側まで完了・未コミット）。** 残りは Supabase の
-RLS SQL 適用（本人の作業）のみ。詳細は下の「NEXT-002」。
+**NEXT-002 は commit・push・配信（forge-v34）まで完了。** 残るのは
+「配信後に実機で同期が正しく動くか」の最終確認のみ（本人へ依頼中）。
+次のNEXTには着手していない。
 
 ---
 
-## NEXT-002（一部対応済み・未コミット）
+## NEXT-002（commit 4364d1e・forge-v34 配信済み・実機の最終確認待ち）
 
 **Supabase 設定、Google OAuth、PWA 同期の調査・修正**
 
@@ -154,18 +155,9 @@ AGENTS.md の「完了済み・手動編集・固定予定を上書きしない�
 
 検証: 追加18件が**修正前16件赤 → 修正後緑**。E2E を1経路追加し、
 **保護を外すと3つとも落ちること**を確認して復元（T-4）。`npm run verify` 緑
-（**801件 52ファイル** / `ALL E2E PASS` / `UPDATE E2E PASS`）。VERSION は `forge-v32` のまま。
+（**801件 52ファイル** / `ALL E2E PASS` / `UPDATE E2E PASS`）。
 
-### 残っていること
-
-| Phase | 内容 | 状態 |
-| --- | --- | --- |
-| 2-0 | 報告された2症状の**再現確認** | ✅ 実機で完了（両症状とも forge-v33 で再現なし確認済み） |
-| 2-1 | 統合の安全性 | ✅ commit fd15365・forge-v33配信済み |
-| 2-2 | 診断とエラーの言語化 / OAuth復帰の修正 | ✅ commit fd15365・forge-v33配信済み |
-| 2-3 | Storage の利用者分離と RLS | 🔶 **コード側は完了（未コミット）。RLS の SQL 適用が残っている** |
-
-### 今回やったこと（Phase 2-3: Storage の利用者分離）🔶 コード側のみ
+### Phase 2-3: Storage の利用者分離 ✅
 
 **保存先が全利用者共通のままだった。** `forge/snapshot.json` は固定パスで、
 Google OAuthでサインインできる誰か（想定外の第三者を含む）が同じファイルを
@@ -177,20 +169,36 @@ Google OAuthでサインインできる誰か（想定外の第三者を含む�
   （`src/lib/core/sync.ts` の新規 `jwtSubject`。既存の `jwtRole` と同じ
   デコード基盤を共有するようリファクタ）
 - `uid` が取り出せない場合は**通信せず**明確なエラーにする（共有パスへの
-  黙ったフォールバックは分離の意味を失わせるため絶対にしない）
-- **RLSポリシーを適用するまでは、コードだけでは分離が実効を持たない。**
-  適用手順とSQLは `docs/FORGE_REQUIREMENTS.md` の 2.2.4 に用意した
+  黙ったフォールバックは分離の意味を失わせるため実装していない）
 
 検証: `tests/sync.test.ts` に4件、`tests/supabaseConnection.test.ts` に2件追加
 （先に赤を確認）。E2E は per-user パスへの経路に更新し、**旧共有パスに戻すと
 ユニット3件・E2E3件とも落ちること**を確認して復元（T-4）。`npm run verify` 緑
-（**810件 52ファイル** / `ALL E2E PASS` / `UPDATE E2E PASS`）。VERSION は `forge-v33` のまま
-（前回の配信から変えていない）。
+（**810件 52ファイル** / `ALL E2E PASS` / `UPDATE E2E PASS`）。
 
-**あなたにお願いしたいこと**: `docs/FORGE_REQUIREMENTS.md` 2.2.4 の手順どおり、
-①まずこのコードのまま一度同期を実行 → ②Supabase の SQL Editor でRLSポリシーを適用
-→ ③もう一度同期して確認、の順でお願いします。①を先にやらないと、RLS適用後は
-まだ新しい保存先に何も無い状態から始まります（実害はありません。ローカルが正本です）。
+**外部設定（本人対応・完了）**: Supabase の SQL Editor で RLS ポリシー4本
+（SELECT/INSERT/UPDATE/DELETE、`(storage.foldername(name))[1] = auth.uid()::text`）
+を適用。当初 `docs/FORGE_REQUIREMENTS.md` に用意したSQLに
+`alter table storage.objects enable row level security;` を含めていたが、
+実機で `ERROR: 42501: must be owner of table objects` になったため削除
+（`storage.objects` は SQL Editor の `postgres` ロールの持ち物ではなく、
+Supabaseのプロジェクトでは作成時点でRLSが既に有効なため、この行は不要だった）。
+`create policy` 4本のみで適用成功。ドキュメントは訂正済み。
+
+**未解明点（軽微・実害なし）**: RLS適用直後、コード（forge-v34）がまだ
+配信される**前**に本人が「いま同期する」を試したところ成功した。
+その時点で live だったのは forge-v33（旧・共有パスのコード）のはずで、
+ルート直下の `snapshot.json` は新しいポリシーの `(storage.foldername(name))[1]`
+が NULL になり本来は拒否されるはずだった。なぜ通ったのかは未確認のまま。
+気になる場合は次に触るときに調べる。実害は無い（ローカルが常に正本のため）。
+
+### 完了条件
+
+- [x] Phase 2-0〜2-2 実機で確認済み
+- [x] `npm run verify` 緑
+- [x] commit `4364d1e` → push → gh-pages配信（`forge-v34`）
+- [x] RLSポリシー適用済み（本人確認）
+- [ ] **`forge-v34` 配信後の同期動作を実機で再確認** — まだ本人からの報告を受けていない
 
 ### 今回やったこと（Phase 2-0 + 2-2）✅
 

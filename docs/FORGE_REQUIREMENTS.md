@@ -242,13 +242,12 @@ Supabase プロジェクトは実在し、URL・Publishable Key とも正しい�
 - **Authentication → URL Configuration**（2.2.2 の対応に必須）:
   Site URL を `https://rio01100801-gif.github.io/trainmiddle/` に、
   Redirect URLs に `https://rio01100801-gif.github.io/trainmiddle/**` を追加。
-- **Storage bucket・RLS**（Phase 2-3・コード側は対応済み・未コミット。
-  SQL適用は本人の作業待ち）: `docs/FORGE_BACKLOG.md` 項目2/11 を参照。
+- **Storage bucket・RLS**（Phase 2-3・**完了**。commit `4364d1e`・`forge-v34`配信・
+  RLSポリシー適用済み）: `docs/FORGE_BACKLOG.md` 項目2/11 を参照。
 
   コード側は `forge/snapshot.json`（全利用者共通）から `forge/<uid>/snapshot.json`
-  （利用者ごと）への保存先分離を先に実装した。**この状態でも、RLSポリシーを
-  適用するまでは他人のフォルダへのアクセスをStorage側が拒否しない。**
-  つまりRLSを適用して初めて分離が実効を持つ。次の手順で適用する。
+  （利用者ごと）への保存先分離を実装。RLSポリシーは以下の手順で本人が適用済み
+  （2026-07-30）。**配信後の実機での最終同期確認だけ残っている。**
 
   1. **まず一度、現在のコードで同期を1回実行する**（`いま同期する`）。
      これにより `forge/<uid>/snapshot.json` が新規作成される
