@@ -2256,6 +2256,7 @@ await page.route(/^https:\/\/[^/]+\.supabase\.co\//, async (route) => {
       return;
     }
     if (request.method() === "GET") {
+      // 実機で確認した実際のSupabaseの本文どおり code: "NoSuchKey" も含める
       await route.fulfill({
         status: 400,
         contentType: "application/json",
@@ -2263,6 +2264,7 @@ await page.route(/^https:\/\/[^/]+\.supabase\.co\//, async (route) => {
           statusCode: "404",
           error: "not_found",
           message: "Object not found",
+          code: "NoSuchKey",
         }),
         headers: corsHeaders,
       });

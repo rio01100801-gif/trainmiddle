@@ -633,6 +633,22 @@ async function storageFailure(
  * 同じ400でもBucket not foundやRLS違反は設定不備なので、本文まで一致した場合だけ
  * 「初回同期でまだsnapshot.jsonがない」と判断する。
  */
+/**
+ * Supabase Storageの「未作成」を示すコードは1種類ではない。
+ *
+ * 以前は payload.code を最優先で見て "not_found" とだけ比較していたが、
+ * 実機の初回push（forge/<uid>/snapshot.json、当時まだ存在しないパス）で
+ * 実際のSupabaseは code: "NoSuchKey"（S3互換のオブジェクト未存在コード）を
+ * 返してきた。error には従来どおり "not_found" が入っていたが、code を
+ * 優先して見ていたため一致せず、「初回同期」ではなく本物のエラーとして
+ * 扱ってしまっていた。code・error のどちらかが未存在を示していれば十分とし、
+ * message（"Object not found"）を主な決め手として残す。
+ */
+function isNotFoundCode(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return normalized === "not_found" || normalized === "nosuchkey";
+}
+
 async function isMissingSnapshot(response: Response): Promise<boolean> {
   if (response.status === 404) return true;
   if (response.status !== 400) return false;
@@ -640,16 +656,12 @@ async function isMissingSnapshot(response: Response): Promise<boolean> {
     const value: unknown = await response.clone().json();
     if (!value || typeof value !== "object") return false;
     const payload = value as Record<string, unknown>;
-    const codeValue =
-      typeof payload.code === "string"
-        ? payload.code
-        : typeof payload.error === "string"
-          ? payload.error
-          : "";
-    const code = codeValue.toLowerCase();
+    const codeMatches =
+      (typeof payload.code === "string" && isNotFoundCode(payload.code)) ||
+      (typeof payload.error === "string" && isNotFoundCode(payload.error));
     const message =
       typeof payload.message === "string" ? payload.message.trim().toLowerCase() : "";
-    return code === "not_found" && message === "object not found";
+    return codeMatches && message === "object not found";
   } catch {
     return false;
   }

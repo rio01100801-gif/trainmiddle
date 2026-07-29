@@ -249,6 +249,28 @@ describe("Supabase Storage同期", () => {
     await expect(fetchSnapshot(config, session, { fetchImpl })).resolves.toBeUndefined();
   });
 
+  /*
+   * Phase 2-3 の実機確認で再現: 個人用パス（forge/<uid>/snapshot.json）への
+   * 初回pushで、実際のSupabaseは code:"NoSuchKey" を含む本文を返す。
+   * isMissingSnapshot は payload.code を最優先で見ており、"not_found" と
+   * 一致しない "NoSuchKey" だと誤って「本物のエラー」と判定していた。
+   * error/messageには従来どおり "not_found" / "Object not found" が入っている。
+   */
+  it("実際のSupabaseが返すcode:NoSuchKeyも初回状態として扱う", async () => {
+    const fetchImpl: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          statusCode: "404",
+          error: "not_found",
+          message: "Object not found",
+          code: "NoSuchKey",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } }
+      );
+
+    await expect(fetchSnapshot(config, session, { fetchImpl })).resolves.toBeUndefined();
+  });
+
   it("HTTP 400でもBucket not foundは初回状態にせず設定不備を返す", async () => {
     const fetchImpl: typeof fetch = async () =>
       new Response(

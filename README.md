@@ -441,6 +441,20 @@ Supabase の **Redirect URLs** にこのアプリのURLを登録していない�
 
 RLSポリシー（Supabase側で適用）は `docs/FORGE_REQUIREMENTS.md` の 2.2.4 を参照。
 
+#### 「未作成」判定は複数のコードを受け入れる
+
+新しい個人用パス（`forge/<uid>/snapshot.json`）への初回push（実機・2026-07-30）で、
+実際のSupabaseは `code: "NoSuchKey"`（S3互換のオブジェクト未存在コード）を含む本文を
+返した。`isMissingSnapshot` は `payload.code` を最優先で見て `"not_found"` とだけ
+比較していたため、`"NoSuchKey"` と一致せず「初回同期」ではなく本物のエラーとして
+扱ってしまっていた（`error` フィールドには従来どおり `"not_found"` が入っていたが、
+`code` を優先していたため見なかった）。
+
+`code` と `error` のどちらかが未存在を示していれば十分とし（`isNotFoundCode` が
+`"not_found"` と `"nosuchkey"` の両方を認める）、`message`（`"Object not found"`）を
+主な決め手として残した。テスト環境で使っていた仮のレスポンス形（`code`フィールドが
+無い）では気づけなかった不具合で、実機での初回pushで初めて顕在化した。
+
 ### 3-1 曜日の優先・固定設定
 
 既存の `slots` と `enabled` を残したまま、曜日ごとの `modes` を追加する。

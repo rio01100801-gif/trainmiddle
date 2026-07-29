@@ -47,8 +47,18 @@ eeb9cb2 fix: 週間警告に実施結果と疲労を反映
 
 ## 未コミット変更
 
-**なし。** NEXT-001 と NEXT-002（Phase 2-1〜2-3）の対応ぶんは `4364d1e` までコミット・
-push・gh-pages配信済み（2026-07-30）。内容は下の「NEXT-001 の完了記録」「NEXT-002」を参照。
+**あり（NEXT-002 Phase 2-4 の対応ぶん）。** 指示によりまだ commit / push していない。
+
+```
+ M README.md                       isMissingSnapshotの緩和理由
+ M app/components/supabase.ts      isNotFoundCode追加・code/errorどちらも見る
+ M pwa-dist/bundle.js              build:all の生成物（VERSION は forge-v34 のまま）
+ M pwa/e2e.mjs                     モックにcode:"NoSuchKey"を追加
+ M tests/supabaseConnection.test.ts 新規1件
+```
+
+NEXT-001 と NEXT-002（Phase 2-1〜2-3）は `4364d1e` までコミット・push・
+gh-pages配信済み（2026-07-30）。内容は下の「NEXT-001 の完了記録」「NEXT-002」を参照。
 
 > 過去に、同じディレクトリで複数のエージェントが並行編集し、
 > 一方の未コミット変更が消えかけた経緯がある。**同時に走らせないこと。**
@@ -122,13 +132,13 @@ verify      typecheck && test && build:all && e2e && e2e:update
 
 ## 作業中
 
-**NEXT-002 は commit・push・配信（forge-v34）まで完了。** 残るのは
-「配信後に実機で同期が正しく動くか」の最終確認のみ（本人へ依頼中）。
-次のNEXTには着手していない。
+**NEXT-002（Phase 2-4）。** `forge-v34` 配信後の実機確認で、個人用パスへの
+初回pushが失敗する不具合が見つかり、原因特定・修正・検証まで完了（未コミット）。
+まだ commit・push・配信していない。次のNEXTには着手していない。
 
 ---
 
-## NEXT-002（commit 4364d1e・forge-v34 配信済み・実機の最終確認待ち）
+## NEXT-002（Phase 2-4 まで完了・未コミット）
 
 **Supabase 設定、Google OAuth、PWA 同期の調査・修正**
 
@@ -185,20 +195,45 @@ Google OAuthでサインインできる誰か（想定外の第三者を含む�
 Supabaseのプロジェクトでは作成時点でRLSが既に有効なため、この行は不要だった）。
 `create policy` 4本のみで適用成功。ドキュメントは訂正済み。
 
-**未解明点（軽微・実害なし）**: RLS適用直後、コード（forge-v34）がまだ
-配信される**前**に本人が「いま同期する」を試したところ成功した。
-その時点で live だったのは forge-v33（旧・共有パスのコード）のはずで、
-ルート直下の `snapshot.json` は新しいポリシーの `(storage.foldername(name))[1]`
-が NULL になり本来は拒否されるはずだった。なぜ通ったのかは未確認のまま。
-気になる場合は次に触るときに調べる。実害は無い（ローカルが常に正本のため）。
+**「未解明点」は解消した**（下のPhase 2-4を参照）。RLS適用直後に古いコードで
+成功したのは謎のままだが、実害があったのはPhase 2-4のバグの方だった。
+
+### Phase 2-4: 個人用パスへの初回pushが失敗する不具合を修正 ✅（未コミット）
+
+`forge-v34` 配信後、本人が実機で「いま同期する」を実行したところ、次のエラーが出た。
+
+```
+クラウドの読み取りに失敗しました（HTTP 400）。
+Supabase: NoSuchKey / not_found / Object not found。
+「forge」バケットの存在と、authenticated向けSELECT・INSERT・UPDATEポリシーを確認してください。
+```
+
+**根本原因**: 個人用パス（`forge/<uid>/snapshot.json`）は誰も一度も書き込んでいない
+ため、実際のSupabaseは初回pushで `code: "NoSuchKey"`（S3互換のオブジェクト未存在
+コード）を含む本文を返した。`isMissingSnapshot`（`app/components/supabase.ts`）は
+`payload.code` を最優先で見て文字列 `"not_found"` とだけ比較していたため、
+`"NoSuchKey"` と一致せず「初回同期」と判定できなかった。`error` フィールドには
+従来どおり `"not_found"` が入っていたが、`code` を優先していたため見ていなかった。
+テスト環境のダミー応答には `code` フィールドが無かったため、この不具合はユニット
+テストでは検出できず、**実機の初回pushで初めて顕在化した。**
+
+- `isNotFoundCode` を追加し、`code` と `error` のどちらかが `"not_found"` または
+  `"nosuchkey"`（大小文字問わず）であれば未存在と判定するよう緩和
+- `message`（`"Object not found"`）は引き続き主な決め手として必須のまま
+
+検証: `tests/supabaseConnection.test.ts` に1件追加（実機で見た実際のペイロード
+そのまま）。**修正前ロジックに戻すとユニット1件・E2E2件が落ちること**を確認して
+復元（T-4）。`npm run verify` 緑（**811件 52ファイル** / `ALL E2E PASS` /
+`UPDATE E2E PASS`）。VERSION は `forge-v34` のまま（今回は上げていない）。
 
 ### 完了条件
 
-- [x] Phase 2-0〜2-2 実機で確認済み
+- [x] Phase 2-0〜2-3 実機で確認済み
 - [x] `npm run verify` 緑
 - [x] commit `4364d1e` → push → gh-pages配信（`forge-v34`）
 - [x] RLSポリシー適用済み（本人確認）
-- [ ] **`forge-v34` 配信後の同期動作を実機で再確認** — まだ本人からの報告を受けていない
+- [x] Phase 2-4: 個人用パスへの初回push不具合を発見・修正（**未コミット・未配信**）
+- [ ] **Phase 2-4 配信後の同期動作を実機で再確認** — 配信前なので未実施
 
 ### 今回やったこと（Phase 2-0 + 2-2）✅
 
