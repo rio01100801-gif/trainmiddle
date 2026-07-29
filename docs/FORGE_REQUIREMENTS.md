@@ -220,9 +220,10 @@ Supabase プロジェクトは実在し、URL・Publishable Key とも正しい�
   タイムアウトで落ちることを確認して復元（T-4）。
 - **完了条件（達成済み）**: `npm run verify` 緑（804件 52ファイル /
   `ALL E2E PASS` / `UPDATE E2E PASS`）。VERSION は `forge-v32` のまま。
-- **未再現・未修正の症状2**: iPhone の「サーバに接続できません」。本人が実機で
-  確認したのは症状1のみ。**片方の説明で両方を片付けない**という方針どおり、
-  症状2は原因未確定のまま残す。
+- **症状2（iPhone「サーバに接続できません」）**: `forge-v33` 配信後、本人が実機で
+  再現しないことを確認した（2026-07-30）。**ただし根本原因は未確定。** 症状1の
+  コード修正・Redirect URLs へのワイルドカード追加・当初の入力ミスURLの解消の
+  どれが効いたかは切り分けていない。推測で断定しない。
 - **外部設定（対応済み）**: Supabase の Authentication → URL Configuration に、
   Site URL `https://rio01100801-gif.github.io/trainmiddle/` と、
   Redirect URLs（`.../trainmiddle/` / `.../index.html?sync=1` /
