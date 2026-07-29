@@ -122,13 +122,13 @@ verify      typecheck && test && build:all && e2e && e2e:update
 
 ## 作業中
 
-**なし。** NEXT-002 は Phase 2-1〜2-4 まで commit・push・配信（`forge-v35`）済み。
-残るのは「配信後に実機で同期が正しく動くか」の最終確認のみ（本人へ依頼中）。
-次のNEXTには着手していない。
+**なし。** NEXT-002 は Phase 2-1〜2-4 まで commit・push・配信（`forge-v35`）済みで、
+実機での最終同期確認も完了（本人確認・2026-07-30）。**NEXT-002 は完全に完了。**
+次のNEXTは未着手。
 
 ---
 
-## NEXT-002（Phase 2-4 まで完了・commit d997ddb・forge-v35配信済み・実機最終確認待ち）
+## NEXT-002（完了・commit d997ddb・forge-v35配信済み・実機確認済み）
 
 **Supabase 設定、Google OAuth、PWA 同期の調査・修正**
 
@@ -225,7 +225,9 @@ Supabase: NoSuchKey / not_found / Object not found。
 - [x] RLSポリシー適用済み（本人確認）
 - [x] Phase 2-4: 個人用パスへの初回push不具合を発見・修正
 - [x] commit `d997ddb` → push → gh-pages配信（`forge-v35`）
-- [ ] **`forge-v35` 配信後の同期動作を実機で再確認** — まだ本人からの報告を受けていない
+- [x] **`forge-v35` 配信後の同期動作を実機で再確認** — 本人確認済み（2026-07-30）
+
+**NEXT-002 はこれで全条件を満たし完了。**
 
 ### 今回やったこと（Phase 2-0 + 2-2）✅
 

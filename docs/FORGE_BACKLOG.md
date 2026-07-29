@@ -28,7 +28,7 @@
 
 ## 1. 保存・再読込の4不具合 ✅ 完了（実機確認済み）
 
-**公開中は `forge-v34`（2026-07-30 配信）。** 4件とも本人が実機で確認し、再現しないことを報告済み
+**公開中は `forge-v35`（2026-07-30 配信）。** 4件とも本人が実機で確認し、再現しないことを報告済み
 （`forge-v33` 時点）。
 
 > **ID を付け替えた（2026-07-30）。** 残り3件は以前 `NEXT-002`〜`NEXT-004` と呼んでいたが、
@@ -50,7 +50,7 @@ SQLite/IndexedDB 両保存層 → `exportBackup`・Supabase 同期への影響�
 
 ---
 
-## 2. Supabase・Google OAuth・PWA同期 ✅ ほぼ完了（配信後の最終実機確認のみ残り）
+## 2. Supabase・Google OAuth・PWA同期 ✅ 完了（実機確認済み・2026-07-30）
 
 **概要は `HANDOFF.md` の「NEXT-002」にある。詳細要件は `FORGE_REQUIREMENTS.md` 2.2。**
 
@@ -63,9 +63,9 @@ SQLite/IndexedDB 両保存層 → `exportBackup`・Supabase 同期への影響�
 | **Google サインインの往復**（PCでホームへ戻る症状） | ✅ 📱 実機で再現・原因確定・修正・forge-v33で再現なし確認済み |
 | iPhone「サーバに接続できません」症状 | ✅ 📱 forge-v33で再現なしと確認済み。**根本原因は未確定**（症状1の修正・打ち間違えURLの解消・Redirect URLs追加のどれが効いたか切り分けていない） |
 | Supabase プロジェクト作成・URL Configuration | ✅ プロジェクト作成・Redirect URLs 登録とも完了（スクリーンショットで確認済み） |
-| Storageの利用者分離（`forge/<uid>/snapshot.json`） | ✅ commit 4364d1e・forge-v34配信済み。`jwtSubject`でuidを取り出し保存先を分離 |
+| Storageの利用者分離（`forge/<uid>/snapshot.json`） | ✅ commit d997ddb・forge-v35配信・実機で個人用パスへの同期成功を確認済み |
 | Supabase bucket・RLS | ✅ ポリシー4本を本人が適用済み（2026-07-30）。**配信後の実機同期の最終確認だけ残り** |
-| push / pull / 競合解決の実データ往復 | ⬜（プロジェクトはできたが未実施） |
+| push / pull / 競合解決の実データ往復 | 🔶 pushは実機で成功確認済み。pull・競合解決は複数端末での検証が別途必要 |
 | 同期失敗時の再試行・オフライン復帰 | ❓ |
 
 ---
