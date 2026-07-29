@@ -27,13 +27,13 @@
 | 項目 | 値 |
 | --- | --- |
 | branch | `main` |
-| HEAD | `db25d789f504046c642052c2e07cc3dba280d65a`（`db25d78`） |
-| HEAD のメッセージ | `feat: FORGEのアイコンと起動画面・UIを刷新` |
-| `origin/main` との差 | **0 / 0**（完全一致） |
+| HEAD | `fd15365`（`fix: 目標レースのボーダー正規化と同期の統合・OAuth復帰を修正`） |
+| `origin/main` との差 | **0 / 0**（完全一致・push済み） |
 
-直近10コミット（上位8件が Codex、下2件が Claude Code）:
+直近コミット:
 
 ```
+fd15365 fix: 目標レースのボーダー正規化と同期の統合・OAuth復帰を修正
 db25d78 feat: FORGEのアイコンと起動画面・UIを刷新
 6424518 feat: 自動生成メニューの個別適応と多様性を改善
 227c972 feat: 競技指標と個人補正ロジックを改善
@@ -43,32 +43,12 @@ eeb9cb2 fix: 週間警告に実施結果と疲労を反映
 5724648 fix: 計画分類とレース・カレンダー同期を改善
 32a8386 feat: 計画機能とPWA同期・認証を改善
 d380de4 Phase 5(A): 同期のコアと設定画面／未設定でも成立させる
-f9ac335 Phase 4: 他の選手のメニューを相対強度から自分の設定に換算して登録
 ```
 
 ## 未コミット変更
 
-**あり（NEXT-001 と NEXT-002 Phase 2-1・2-2 の対応ぶん）。** 指示によりまだ commit / push していない。
-
-```
- M README.md                     ボーダー正規化 / 統合の保護 / OAuth復帰の理由
- M app/components/app-shell.tsx  OAuth復帰の着地判断をsync.tsへ委譲
- M app/data/page.tsx             復元結果に「保持」と警告を表示
- M app/sync/page.tsx             取り込み結果の警告を表示
- M pwa-dist/bundle.js            build:all の生成物（VERSION は forge-v32 のまま）
- M pwa-dist/styles.css           同上
- M pwa/e2e.mjs                   NEXT-001 / NEXT-002 の経路を追加
- M src/lib/core/backup.ts        mergeById の keepExisting / RestoreReport.kept
- M src/lib/core/sync.ts          authRedirectLanding（新規）
- M src/lib/service.ts            normalizeRaceBorders / isOwnedByAthlete
- M tests/backupService.test.ts   統合の内訳を上書き＋保持で見る
- M tests/sync.test.ts            authRedirectLanding のテスト3件を追加
-?? tests/goalRaces.test.ts       NEXT-001 新規12件
-?? tests/syncMerge.test.ts       NEXT-002 新規18件
-?? HANDOFF.md / docs/             引継ぎ用（このファイルを含む）
-```
-
-**捨てないこと。** 内容は下の「NEXT-001 の完了記録」を参照。
+**なし。** NEXT-001 と NEXT-002（Phase 2-1・2-2）の対応ぶんは `fd15365` としてコミット・
+push・gh-pages配信済み（2026-07-30）。内容は下の「NEXT-001 の完了記録」「NEXT-002」を参照。
 
 > 過去に、同じディレクトリで複数のエージェントが並行編集し、
 > 一方の未コミット変更が消えかけた経緯がある。**同時に走らせないこと。**
@@ -77,9 +57,9 @@ f9ac335 Phase 4: 他の選手のメニューを相対強度から自分の設定
 
 | 項目 | 値 |
 | --- | --- |
-| ソース `pwa/sw.js` | `forge-v32` |
-| `pwa-dist/sw.js` | `forge-v32` |
-| 公開中（`gh-pages`） | `forge-v32` |
+| ソース `pwa/sw.js` | `forge-v33` |
+| `pwa-dist/sw.js` | `forge-v33` |
+| 公開中（`gh-pages`） | `forge-v33`（配信済み・2026-07-30） |
 | `main:pwa-dist` と `gh-pages` の tree | **一致（配信済み・未配信の差分なし）** |
 
 ---
@@ -214,11 +194,13 @@ Supabase は指定した `redirect_to` を無視して **Site URL** へ飛ばす
 検証: `tests/sync.test.ts` に3件追加（先に赤を確認）。E2E に
 「`?sync=1` が欠けた復帰でも同期画面へ戻る」経路を追加し、**判定を元に戻すと
 タイムアウトで落ちること**を確認して復元（T-4）。`npm run verify` 緑
-（**804件 52ファイル** / `ALL E2E PASS` / `UPDATE E2E PASS`）。VERSION は `forge-v32` のまま。
+（**804件 52ファイル** / `ALL E2E PASS` / `UPDATE E2E PASS`）。
+**その後 `forge-v33` として commit / push / gh-pages配信まで完了済み**（2026-07-30）。
 
 **症状2（iPhone「サーバに接続できません」）は未再現。** 本人が実機で確認したのは症状1のみ。
 別原因の可能性があるため、**片方の説明で両方を片付けない**という方針どおり、
-症状2はまだ「未解決」のまま下に残す。
+症状2はまだ「未解決」のまま下に残す。**`forge-v33` が配信済みなので、次に実機で
+確認するときはこの版で試す。**
 
 **外部設定は対応済み。** Site URL は `https://rio01100801-gif.github.io/trainmiddle/`、
 Redirect URLs に `https://rio01100801-gif.github.io/trainmiddle/**` を含む3件が
@@ -277,7 +259,7 @@ BUG-02〜04 は**実機 iPhone でしか再現確認できない**。実機の�
 
 ---
 
-## NEXT-001 の完了記録（2026-07-30・未コミット）
+## NEXT-001 の完了記録（2026-07-30・commit fd15365 / forge-v33 配信済み）
 
 **目標レースのボーダータイムが再表示時に消える** → ✅ 対応済み
 
@@ -290,9 +272,10 @@ BUG-02〜04 は**実機 iPhone でしか再現確認できない**。実機の�
   `pwa/e2e.mjs`（1経路）/ `README.md` / `pwa-dist/bundle.js`。`app/goal/page.tsx` は変更なし
 - 検証: 修正前に4件赤 →修正後12件緑。E2E は**壊すと落ちることを確認**して復元（T-4）。
   `npm run verify` 緑（783件 51ファイル / `ALL E2E PASS` / `UPDATE E2E PASS`）。
-  VERSION は `forge-v32` のまま
+  当時は VERSION 未更新だったが、**その後 `forge-v33` としてビルド・commit・push・
+  gh-pages配信まで完了済み**（2026-07-30）
 
-**残り**: 実機 `forge-v32` で元の症状が再現するかの確認。
+**残り**: 実機 `forge-v33`（配信済みの最新版）で元の症状が再現するかの確認。
 再現するなら、直したのとは別の原因が残っている。
 
 根拠と閾値の理由は `docs/FORGE_REQUIREMENTS.md` の 2.1 と `README.md` にある。
@@ -337,7 +320,7 @@ BUG-02〜04 は**実機 iPhone でしか再現確認できない**。実機の�
 
 | # | 確認すること |
 | --- | --- |
-| 1 | **BUG-02〜04 が `forge-v32` で今も再現するか**（最優先）。あわせて NEXT-001 の元症状（ボーダーが消える）も再現するか。NEXT-001 は再現確認の前に直したので、まだ残っている可能性がある |
+| 1 | **BUG-02〜04 が `forge-v33`（配信済み最新版）で今も再現するか**（最優先）。あわせて NEXT-001 の元症状（ボーダーが消える）と NEXT-002 の症状1（サインイン後にホームへ戻る）が直っているか、症状2（「サーバに接続できません」）が再現するかも確認する |
 | 2 | Safari と ホーム画面 PWA の両方で起動できる |
 | 3 | Google サインイン後に FORGE の同期画面へ戻る（PC / iPhone 両方） |
 | 4 | PWA と Safari で認証状態・保存領域が別であること |
