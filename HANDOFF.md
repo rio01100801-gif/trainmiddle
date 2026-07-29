@@ -27,12 +27,14 @@
 | 項目 | 値 |
 | --- | --- |
 | branch | `main` |
-| HEAD | `4364d1e`（`fix: Supabase Storageの保存先を利用者ごとに分離`） |
+| HEAD | `d997ddb`（`fix: Supabase Storageの初回push未検出を修正`） |
 | `origin/main` との差 | **0 / 0**（完全一致・push済み） |
 
 直近コミット:
 
 ```
+d997ddb fix: Supabase Storageの初回push未検出を修正
+479e894 docs: forge-v34配信後の状態とRLS適用結果を反映
 4364d1e fix: Supabase Storageの保存先を利用者ごとに分離
 bf0e7db docs: 実機確認結果(BUG-02〜04・症状2とも再現なし)を反映
 5799a62 docs: HANDOFF.mdをforge-v33配信後の状態に更新
@@ -41,24 +43,12 @@ db25d78 feat: FORGEのアイコンと起動画面・UIを刷新
 6424518 feat: 自動生成メニューの個別適応と多様性を改善
 227c972 feat: 競技指標と個人補正ロジックを改善
 f304ab8 fix: Supabase初回同期の未作成応答を処理
-157c955 fix: Supabase Storageの書き込み診断を改善
-eeb9cb2 fix: 週間警告に実施結果と疲労を反映
 ```
 
 ## 未コミット変更
 
-**あり（NEXT-002 Phase 2-4 の対応ぶん）。** 指示によりまだ commit / push していない。
-
-```
- M README.md                       isMissingSnapshotの緩和理由
- M app/components/supabase.ts      isNotFoundCode追加・code/errorどちらも見る
- M pwa-dist/bundle.js              build:all の生成物（VERSION は forge-v34 のまま）
- M pwa/e2e.mjs                     モックにcode:"NoSuchKey"を追加
- M tests/supabaseConnection.test.ts 新規1件
-```
-
-NEXT-001 と NEXT-002（Phase 2-1〜2-3）は `4364d1e` までコミット・push・
-gh-pages配信済み（2026-07-30）。内容は下の「NEXT-001 の完了記録」「NEXT-002」を参照。
+**なし。** NEXT-001 と NEXT-002（Phase 2-1〜2-4）は `d997ddb` までコミット・push・
+gh-pages配信済み（2026-07-30・`forge-v35`）。内容は下の「NEXT-001 の完了記録」「NEXT-002」を参照。
 
 > 過去に、同じディレクトリで複数のエージェントが並行編集し、
 > 一方の未コミット変更が消えかけた経緯がある。**同時に走らせないこと。**
@@ -67,9 +57,9 @@ gh-pages配信済み（2026-07-30）。内容は下の「NEXT-001 の完了記�
 
 | 項目 | 値 |
 | --- | --- |
-| ソース `pwa/sw.js` | `forge-v34` |
-| `pwa-dist/sw.js` | `forge-v34` |
-| 公開中（`gh-pages`） | `forge-v34`（配信済み・2026-07-30） |
+| ソース `pwa/sw.js` | `forge-v35` |
+| `pwa-dist/sw.js` | `forge-v35` |
+| 公開中（`gh-pages`） | `forge-v35`（配信済み・2026-07-30） |
 | `main:pwa-dist` と `gh-pages` の tree | **一致（配信済み・未配信の差分なし）** |
 
 ---
@@ -132,13 +122,13 @@ verify      typecheck && test && build:all && e2e && e2e:update
 
 ## 作業中
 
-**NEXT-002（Phase 2-4）。** `forge-v34` 配信後の実機確認で、個人用パスへの
-初回pushが失敗する不具合が見つかり、原因特定・修正・検証まで完了（未コミット）。
-まだ commit・push・配信していない。次のNEXTには着手していない。
+**なし。** NEXT-002 は Phase 2-1〜2-4 まで commit・push・配信（`forge-v35`）済み。
+残るのは「配信後に実機で同期が正しく動くか」の最終確認のみ（本人へ依頼中）。
+次のNEXTには着手していない。
 
 ---
 
-## NEXT-002（Phase 2-4 まで完了・未コミット）
+## NEXT-002（Phase 2-4 まで完了・commit d997ddb・forge-v35配信済み・実機最終確認待ち）
 
 **Supabase 設定、Google OAuth、PWA 同期の調査・修正**
 
@@ -198,7 +188,7 @@ Supabaseのプロジェクトでは作成時点でRLSが既に有効なため、
 **「未解明点」は解消した**（下のPhase 2-4を参照）。RLS適用直後に古いコードで
 成功したのは謎のままだが、実害があったのはPhase 2-4のバグの方だった。
 
-### Phase 2-4: 個人用パスへの初回pushが失敗する不具合を修正 ✅（未コミット）
+### Phase 2-4: 個人用パスへの初回pushが失敗する不具合を修正 ✅
 
 `forge-v34` 配信後、本人が実機で「いま同期する」を実行したところ、次のエラーが出た。
 
@@ -224,7 +214,8 @@ Supabase: NoSuchKey / not_found / Object not found。
 検証: `tests/supabaseConnection.test.ts` に1件追加（実機で見た実際のペイロード
 そのまま）。**修正前ロジックに戻すとユニット1件・E2E2件が落ちること**を確認して
 復元（T-4）。`npm run verify` 緑（**811件 52ファイル** / `ALL E2E PASS` /
-`UPDATE E2E PASS`）。VERSION は `forge-v34` のまま（今回は上げていない）。
+`UPDATE E2E PASS`）。**その後 `forge-v35` として commit / push / gh-pages配信まで
+完了済み**（2026-07-30）。
 
 ### 完了条件
 
@@ -232,8 +223,9 @@ Supabase: NoSuchKey / not_found / Object not found。
 - [x] `npm run verify` 緑
 - [x] commit `4364d1e` → push → gh-pages配信（`forge-v34`）
 - [x] RLSポリシー適用済み（本人確認）
-- [x] Phase 2-4: 個人用パスへの初回push不具合を発見・修正（**未コミット・未配信**）
-- [ ] **Phase 2-4 配信後の同期動作を実機で再確認** — 配信前なので未実施
+- [x] Phase 2-4: 個人用パスへの初回push不具合を発見・修正
+- [x] commit `d997ddb` → push → gh-pages配信（`forge-v35`）
+- [ ] **`forge-v35` 配信後の同期動作を実機で再確認** — まだ本人からの報告を受けていない
 
 ### 今回やったこと（Phase 2-0 + 2-2）✅
 
