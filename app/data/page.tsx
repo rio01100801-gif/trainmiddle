@@ -170,8 +170,15 @@ export default function DataPage() {
           <div className="mt-2.5 text-[11.5px] num" style={{ color: "var(--text-2)" }}>
             {Object.keys(report.added ?? {}).map((k) => (
               <div key={k}>
-                {k}: 追加 {report.added[k]} / 上書き {report.updated[k] ?? 0}
+                {k}: 追加 {report.added[k]} / 上書き {report.updated[k] ?? 0} / 保持{" "}
+                {report.kept?.[k] ?? 0}
               </div>
+            ))}
+            {/* 守ったこと・読めなかったことを黙って伏せない */}
+            {((report.warnings ?? []) as string[]).map((w: string) => (
+              <p key={w} className="mt-1.5 text-[11.5px] leading-relaxed" role="status">
+                {w}
+              </p>
             ))}
           </div>
         ) : null}

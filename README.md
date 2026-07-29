@@ -376,6 +376,53 @@ M-2・M-6・ルールエンジンと取り合いになる。書き込みは `edi
 RaceのJSONには着順ボーダー `borderPlace` とタイムボーダー `borderTimeSec` を保存する。
 どちらも任意フィールドなのでDB migrationは不要で、旧Race JSONもそのまま読める。
 
+ボーダーの正規化（`normalizeRaceBorders`）は着順 `>= 1`・タイム `> 0` だけを残し、
+それ以外は未入力に戻す。`Number.isFinite` は 0 と負を通すため、これが無いと 0 が保存される。
+0 が入ると `planHeatPace` の `race.borderTimeSec ?? goalTargetSec + 2` が
+0 を nullish と見なさず、予選の通過目安が0秒基準（−0.5秒）になる。
+画面には値が出たまま中身だけ壊れるので気づけない。
+着順を `Math.max(1, ...)` で1着へ丸めないのは、丸めると「0が入ってきた」のか
+「1着通過」なのかが後から区別できなくなるため（読めなかったものは推測で埋めない）。
+
+同じ規則を `importBackup` の races にも通す。復元は `saveGoalAndRaces` を経由せず
+`repo.saveRace` を直接呼ぶので、他端末が書いた壊れた値やSupabaseのpullが素通りするため。
+
+### 統合（merge）で本人のデータを守る
+
+`mergeById` は同じIDを無条件で上書きしていた。同期のpullも競合時の「両方を残す」も
+この経路を通るので、クラウドに残っていた古い自動生成予定が、この端末の
+完了済み・本人編集・固定枠・手動追加・遡り入力を消していた。
+「両方を残す」と書いてあるボタンが片方を消すのは、表示と挙動の食い違いでもある。
+
+`mergeById` に `keepExisting` を渡せるようにし、`importBackup` の sessions では
+`isOwnedByAthlete`（`completed` / `skipped` / `userEdited` / `isFixed` / `backfilled` /
+`origin === "manual"` / `s-user-*`）に当たるものを残す。判定の材料は `regeneratePlan` の
+置き換え判定と同じで、旧データに `origin` が無いため `s-user-*` を手動として保守的に扱う。
+**迷ったら守る側に倒す。** 消えたデータは取り返せないが、残ったものは後から消せる。
+
+`replace` では保護しない。本人が競合画面で「クラウドを優先」を選んだ経路だから。
+
+残した件数は `RestoreReport.kept` で返し、`warnings` にも文章で入れる。
+**守ったことを黙っていると「同期したのに反映されない」ように見える。**
+データ管理画面と同期画面の両方で表示する（`/api/backup` の応答は `{ ok, report }` の形で、
+`report.warnings` を取り違えると黙って空になる）。
+
+### OAuth 復帰は `?sync=1` の残存を前提にしない
+
+実機で「サインインは成功するがホーム画面に戻ったまま同期画面へ遷移しない」を確認した。
+`app-shell.tsx` の受け取りは、戻り先の `?sync=1` というクエリが残っていることを前提に
+同期画面へ戻す判断をしていたが、このクエリは自前では守れない。
+Supabase の **Redirect URLs** にこのアプリのURLを登録していないと、Supabase は
+指定した `redirect_to` を無視して **Site URL** へ飛ばすため、クエリごと落ちる
+（横取り耐性のための仕様で、FORGE側の不具合ではなく設定依存の外部要因）。
+結果、トークンは保存されるのに画面だけホームに居座っていた。
+
+`captureAuthRedirect` が何か拾えた時点で、それは必ず `signInWithGoogle` が発行した
+`redirect_to` からの戻りである（他にこのURLへ来る経路が無い）。したがって
+`?sync=1` の有無を問わず同期画面へ戻してよい。判断を `sync.ts` の
+`authRedirectLanding` という純関数に集約し、`app-shell.tsx` はそれを呼ぶだけにした
+（判断を通信・DOM操作から切り離してテストできるようにするため）。
+
 ### 3-1 曜日の優先・固定設定
 
 既存の `slots` と `enabled` を残したまま、曜日ごとの `modes` を追加する。

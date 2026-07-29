@@ -129,6 +129,31 @@ if (
 }
 step("目標・レース保存→再読込OK（着順・タイムボーダー／通過点レース）");
 
+/*
+ * NEXT-001: 0秒のボーダーを保存させない。
+ * 0 は Number.isFinite を通るうえ planHeatPace の `?? ` も素通りするので、
+ * 保存されると通過目安が −0.5秒 になる。画面には値が出たまま中身だけ壊れるため、
+ * 「保存できたか」ではなく「保存前の値が残っているか」まで見る。
+ */
+await page.locator('label:has-text("過去大会のボーダータイム") input').fill("0");
+await page.getByRole("button", { name: "目標・レースを保存" }).click();
+await page.waitForTimeout(300);
+if (!/ボーダー/.test(await page.locator("main").innerText())) {
+  fail("0秒のボーダーを保存しようとしても理由が出ない");
+}
+// 同じハッシュへの goto は再読込にならないので、一度別画面を挟む
+await page.goto("http://localhost:8791/#/");
+await page.waitForTimeout(200);
+await page.goto("http://localhost:8791/#/goal");
+await page.waitForTimeout(600);
+if (
+  (await page.locator('label:has-text("過去大会のボーダータイム") input').inputValue()) !==
+  "1:51"
+) {
+  fail("0秒を弾いたのに、保存済みのボーダーまで消えている");
+}
+step("NEXT-001 0秒のボーダーを保存せず、保存済みの値も壊さないOK");
+
 // ---- 3b. 固定曜日設定 + 自作メニュー（3-1 / 3-2） ----
 await page.goto("http://localhost:8791/#/plan-settings");
 await page.waitForTimeout(600);
@@ -1301,6 +1326,48 @@ if (backupCheck.before !== backupCheck.after) {
 if (!backupCheck.rejected) fail("M-12: 別のファイルを受け入れてしまう");
 step("M-12 書き出しと復元OK（統合しても重複しない）");
 
+/*
+ * NEXT-002: 統合（クラウドからの取り込みと同じ経路）で、この端末の
+ * 完了済み・本人編集・固定枠を上書きしない。上書きしても画面には
+ * 何も出ないので、実際の中身と、守ったことの表示の両方を見る。
+ */
+const mergeGuard = await page.evaluate(async () => {
+  const sessions = (await fetch("/api/sessions").then((r) => r.json())).sessions;
+  const mine = sessions.find((s) => s.status === "completed") ?? sessions[0];
+  const file = await fetch("/api/backup?download=1").then((r) => r.json());
+
+  // クラウド側は「同じIDだが自動生成の予定のまま」という想定に書き換える
+  const remote = JSON.parse(JSON.stringify(file));
+  remote.data.sessions = remote.data.sessions.map((s) =>
+    s.id === mine.id
+      ? { ...s, name: "クラウドの内容", status: "planned", origin: "generated", userEdited: false }
+      : s
+  );
+  const out = await fetch("/api/backup", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: remote, mode: "merge" }),
+  }).then((r) => r.json());
+  const after = (await fetch("/api/sessions").then((r) => r.json())).sessions.find(
+    (s) => s.id === mine.id
+  );
+  return {
+    protectedStatus: mine.status,
+    name: after?.name,
+    kept: out.report?.kept?.sessions ?? 0,
+    warned: (out.report?.warnings ?? []).some((w) => /そのまま残しました/.test(w)),
+  };
+});
+if (mergeGuard.protectedStatus !== "completed") {
+  fail(`NEXT-002: 完了済みの練習が用意できていない（${mergeGuard.protectedStatus}）`);
+}
+if (mergeGuard.name === "クラウドの内容") {
+  fail("NEXT-002: 統合でこの端末の完了済み練習が上書きされた");
+}
+if (mergeGuard.kept < 1) fail("NEXT-002: 守った件数が報告されない");
+if (!mergeGuard.warned) fail("NEXT-002: 守ったことを画面へ出していない");
+step("NEXT-002 統合で完了済み・本人編集を上書きしないOK（守った件数も出る）");
+
 const contactCheck = await page.evaluate(async () => {
   const rows = [];
   const base = new Date();
@@ -2340,6 +2407,32 @@ if (capturedSession?.accessToken !== "e2e-access") {
 }
 if (page.url().includes("access_token") || page.url().includes("refresh_token")) {
   fail("S-11: OAuth tokenがcallback後もURLに残る");
+}
+
+/*
+ * NEXT-002 実機で再現した不具合: Supabase の Redirect URLs にこのURLを
+ * 登録していないと、Supabase は redirect_to の ?sync=1 を無視して
+ * Site URL（クエリ無し）へ飛ばす。この場合でもトークンさえ受け取れれば
+ * 同期画面へ戻ることを確認する（サインインが黙って失敗して見えないように）。
+ */
+await page.evaluate(() => localStorage.removeItem("forge:sync:session"));
+// ハッシュだけの違いではSPA内遷移としてブラウザが再読込を省略してしまうため、
+// Supabaseなど外部originから戻ってくる実際の遷移（フルリロード）を再現する。
+await page.goto("about:blank");
+await page.goto(
+  "http://localhost:8791/#access_token=e2e-access-2&refresh_token=e2e-refresh-2&expires_at=1900000000"
+);
+await page.waitForFunction(() => location.hash === "#/sync", { timeout: 5000 });
+await page.waitForTimeout(300);
+const syncBodyNoQuery = await page.textContent("body");
+if (!syncBodyNoQuery.includes("サインイン済みです")) {
+  fail("S-11: sync=1が欠けたOAuth callbackで同期画面へ戻れない（Redirect URLs未登録相当）");
+}
+const capturedSessionNoQuery = await page.evaluate(() =>
+  JSON.parse(localStorage.getItem("forge:sync:session") ?? "null")
+);
+if (capturedSessionNoQuery?.accessToken !== "e2e-access-2") {
+  fail("S-11: sync=1が欠けたOAuth callbackのaccess tokenを保存できない");
 }
 
 // StorageのRLS不備を汎用エラーにせず、直すべきポリシーまで表示する

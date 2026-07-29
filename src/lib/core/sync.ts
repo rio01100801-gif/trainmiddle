@@ -251,3 +251,32 @@ export function googleAuthorizeUrl(config: SyncConfig, redirectTo: string): stri
   authorize.searchParams.set("redirect_to", redirectTo);
   return authorize.toString();
 }
+
+export interface AuthRedirectLanding {
+  /** ハッシュルーティング（PWA）のとき、着地させるハッシュ */
+  hash?: string;
+  /** 通常ルーティング（Next.js）のとき、遷移させるパス */
+  pathname?: string;
+}
+
+/**
+ * サインインの戻りを受け取った後、同期画面へ着地させる必要があるか決める。
+ *
+ * 以前は `?sync=1` というクエリが残っていることを前提にしていたが、
+ * Supabase の Redirect URLs にこのアプリのURLを登録していないと、
+ * Supabase は指定した redirect_to を無視して Site URL へ飛ばすため、
+ * クエリごと落ちる（横取り耐性のための仕様で、こちらの制御が及ばない）。
+ * その結果、トークンは保存されるのに画面だけホームに居座っていた。
+ *
+ * `captureAuthRedirect` が何か拾えた時点で、それは必ず `signInWithGoogle` が
+ * 発行した redirect_to からの戻りである（他にこのURLへ来る経路が無い）。
+ * したがって `?sync=1` の有無を問わず、同期画面へ戻してよい。
+ */
+export function authRedirectLanding(
+  hashNavigation: boolean,
+  pathname: string
+): AuthRedirectLanding {
+  if (hashNavigation) return { hash: "#/sync" };
+  if (!pathname.endsWith("/sync")) return { pathname: "/sync" };
+  return {};
+}

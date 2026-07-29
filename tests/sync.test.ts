@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  authRedirectLanding,
   decideSync,
   googleAuthorizeUrl,
   metaOf,
@@ -153,5 +154,35 @@ describe("OAuthの戻り先", () => {
     expect(authorize.pathname).toBe("/auth/v1/authorize");
     expect(authorize.searchParams.get("provider")).toBe("google");
     expect(authorize.searchParams.get("redirect_to")).toBe("https://example.com/sync");
+  });
+});
+
+describe("OAuthの戻りを受け取った後の着地", () => {
+  /*
+   * 実機で確認された不具合: サインインは成功してトークンも保存されるのに、
+   * ホーム画面に戻ったまま同期画面へ遷移しない。
+   *
+   * 原因は、着地先の判断が `?sync=1` というクエリの残存に依存していたこと。
+   * このクエリは自前では守れない。Supabase の Redirect URLs にPWAのURLが
+   * 登録されていないと、Supabaseは指定した redirect_to を無視して
+   * Site URL へ飛ばすため、クエリごと落ちる（Authorization Code横取り耐性のための仕様で、
+   * FORGE側のバグではなく設定依存の外部要因）。
+   *
+   * captureAuthRedirect が何か拾えた時点で、それは必ず signInWithGoogle が
+   * 発行した redirect_to からの戻りである（他にこのURLへ来る経路が無い）。
+   * したがって `?sync=1` の有無を問わず、トークンを受け取れたら同期画面へ戻ってよい。
+   */
+  it("PWA（ハッシュルーティング）は sync=1 が無くてもハッシュで同期画面へ戻す", () => {
+    expect(authRedirectLanding(true, "/trainmiddle/index.html")).toEqual({
+      hash: "#/sync",
+    });
+  });
+
+  it("Next.js は sync=1 が無くても /sync へ戻す", () => {
+    expect(authRedirectLanding(false, "/")).toEqual({ pathname: "/sync" });
+  });
+
+  it("Next.js で既に /sync にいるなら遷移しない", () => {
+    expect(authRedirectLanding(false, "/sync")).toEqual({});
   });
 });

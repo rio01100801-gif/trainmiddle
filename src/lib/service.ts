@@ -272,6 +272,38 @@ export function racesForGoal(repo: Store): Race[] {
 }
 
 /**
+ * 通過ボーダーを、読めた値だけ残す形に整える。
+ *
+ * `Number.isFinite` は 0 と負を通す。0 が保存されると `planHeatPace` の
+ * `race.borderTimeSec ?? goalTargetSec + 2` が 0 を nullish と見なさないため、
+ * 予選の通過目安が0秒基準（−0.5秒）になる。画面には値が出たまま中身だけ壊れる。
+ *
+ * 画面（`app/goal/page.tsx`）は入力を検証しているが、APIは `req.json()` の生データを、
+ * `importBackup` は他端末が書いたJSON（Supabaseのpullも同じ経路）を受けるので、
+ * 保存層の手前でも同じ規則を通す。
+ *
+ * 着順は以前 `Math.max(1, ...)` で1着へ丸めていた。丸めると「0が入ってきた」のか
+ * 「1着通過」なのかが後から区別できなくなるので、丸めずに未入力へ戻す。
+ */
+function normalizeRaceBorders(race: Race): Race {
+  return {
+    ...race,
+    borderPlace:
+      race.borderPlace !== undefined &&
+      Number.isFinite(race.borderPlace) &&
+      race.borderPlace >= 1
+        ? Math.trunc(race.borderPlace)
+        : undefined,
+    borderTimeSec:
+      race.borderTimeSec !== undefined &&
+      Number.isFinite(race.borderTimeSec) &&
+      race.borderTimeSec > 0
+        ? race.borderTimeSec
+        : undefined,
+  };
+}
+
+/**
  * 目標とレースを同じ保存単位として更新し、保存後の実体を返す。
  *
  * 画面だけが新しい値でDBが古い、または並び替えで通過点レースのIDが変わる状態を避ける。
@@ -284,24 +316,9 @@ export function saveGoalAndRaces(
 ): { goal: Goal; races: Race[] } {
   const unique = new Map<string, Race>();
   for (const race of races) {
-    const borderPlace =
-      race.borderPlace !== undefined && Number.isFinite(race.borderPlace)
-        ? Math.max(1, Math.trunc(race.borderPlace))
-        : undefined;
-    const borderTimeSec =
-      race.borderTimeSec !== undefined && Number.isFinite(race.borderTimeSec)
-        ? race.borderTimeSec
-        : undefined;
     unique.set(
       race.id,
-      assignExpectedPaces(
-        {
-          ...race,
-          borderPlace,
-          borderTimeSec,
-        },
-        goal.targetTimeSec
-      )
+      assignExpectedPaces(normalizeRaceBorders(race), goal.targetTimeSec)
     );
   }
 
@@ -365,6 +382,32 @@ function completedTemplateHistory(repo: Store): TemplateHistoryEntry[] {
   });
 }
 
+/**
+ * 「これは本人のものだから、相手側の値で消してはいけない」予定かどうか。
+ *
+ * 同期の統合（merge）で使う。統合は「両方を残す」操作なので、
+ * 別端末やクラウドに残っていた古い自動生成予定で、
+ * この端末の完了済み・本人編集・固定枠・手動追加・遡り入力を上書きしない。
+ *
+ * 判定の材料は regeneratePlan の置き換え判定と同じ。
+ * 旧データには origin が無いので、`s-user-*` を手動として保守的に扱う。
+ * 迷ったら守る側に倒す（消えたデータは取り返せないが、残ったものは後から消せる）。
+ *
+ * クラウドを本当に優先したいときは、本人が競合画面で「クラウドを優先」を選ぶ。
+ * そちらは replace なので、この保護は掛からない。
+ */
+function isOwnedByAthlete(session: Session): boolean {
+  return (
+    session.status === "completed" ||
+    session.status === "skipped" ||
+    session.userEdited === true ||
+    session.isFixed === true ||
+    session.backfilled === true ||
+    session.origin === "manual" ||
+    session.id.startsWith("s-user-")
+  );
+}
+
 export function regeneratePlan(repo: Store, startDate: string): {
   sessionCount: number;
   strengthCount: number;
@@ -401,6 +444,10 @@ export function regeneratePlan(repo: Store, startDate: string): {
    * - 旧形式は s-user-* / 固定 / backfilled を手動データとして保護し、
    *   planned の自動生成候補だけを置き換える。
    * - 本人が編集した予定、完了・中止済みは残す。
+   *
+   * 同じ「本人のものは消さない」判断を、同期の統合でも使う（isOwnedByAthlete）。
+   * 判定の材料は同じだが、こちらは「置き換えてよいか」、あちらは「守るべきか」を見る。
+   * 片方を直したらもう片方も確認すること。
    */
   for (const session of savedSessions) {
     const legacyGeneratedPlanned =
@@ -2791,7 +2838,7 @@ export function importBackup(
   if (!isBackupFile(file)) {
     throw new Error("このファイルはFORGEの書き出しファイルではありません");
   }
-  const report: RestoreReport = { mode, added: {}, updated: {}, warnings: [] };
+  const report: RestoreReport = { mode, added: {}, updated: {}, kept: {}, warnings: [] };
   const d = file.data as Record<string, any>;
 
   if (mode === "replace") repo.resetAll();
@@ -2805,18 +2852,28 @@ export function importBackup(
     name: string,
     incoming: T[] | undefined,
     existing: () => T[],
-    save: (x: T) => void
+    save: (x: T) => void,
+    keepExisting?: (mine: T, theirs: T) => boolean
   ) => {
     if (!incoming) return;
     const cur = mode === "replace" ? [] : existing();
-    const { merged, added, updated } = mergeById(cur, incoming);
+    const { merged, added, updated, kept } = mergeById(cur, incoming, keepExisting);
     report.added[name] = added;
     report.updated[name] = updated;
+    report.kept[name] = kept;
     for (const x of merged) save(x);
   };
 
-  put("races", d.races, () => repo.listRaces(), (x) => repo.saveRace(x));
-  put("sessions", d.sessions, () => repo.listSessions(), (x) => repo.saveSession(x));
+  // 復元は saveGoalAndRaces を通らないので、ボーダーの規則はここでも通す
+  put("races", d.races, () => repo.listRaces(), (x) => repo.saveRace(normalizeRaceBorders(x)));
+  put(
+    "sessions",
+    d.sessions,
+    () => repo.listSessions(),
+    (x) => repo.saveSession(x),
+    // replace は本人が「クラウドを優先」と決めた経路なので保護しない
+    mode === "merge" ? (mine: Session) => isOwnedByAthlete(mine) : undefined
+  );
   put("strengths", d.strengths, () => repo.listStrengths(), (x) => repo.saveStrength(x));
   put("results", d.results, () => repo.listResults(), (x) => repo.saveResult(x));
   put("markers", d.markers, () => repo.listMarkers(), (x) => repo.saveMarker(x));
@@ -2843,6 +2900,14 @@ export function importBackup(
   if (file.version > BACKUP_VERSION) {
     report.warnings.push(
       `このファイルは新しい形式（v${file.version}）です。読めない項目がある可能性があります`
+    );
+  }
+  // 守ったことを黙っていると、取り込めなかったのか守られたのかが分からない
+  const keptSessions = report.kept.sessions ?? 0;
+  if (keptSessions > 0) {
+    report.warnings.push(
+      `この端末の練習 ${keptSessions}件（完了済み・本人が編集・固定枠・手動追加・遡り入力）は` +
+        `そのまま残しました。取り込んだ側の内容で置き換えたい場合は「クラウドを優先」を選んでください`
     );
   }
   return report;

@@ -157,8 +157,12 @@ export default function SyncPage() {
         setMsg("クラウドへ送りました。");
         setDecision(null);
       } else if (d.action === "pull" || d.action === "first_pull") {
-        await restore(remoteFile, "merge");
-        setMsg("クラウドから取り込みました。画面を再読み込みします…");
+        const pullWarnings = await restore(remoteFile, "merge");
+        setMsg(
+          ["クラウドから取り込みました。画面を再読み込みします…", pullWarnings]
+            .filter(Boolean)
+            .join("\n")
+        );
         setDecision(null);
         setTimeout(() => location.reload(), 1200);
       }
@@ -169,7 +173,14 @@ export default function SyncPage() {
     }
   }, [lastSynced]);
 
-  const restore = async (file: unknown, mode: "merge" | "replace") => {
+  /**
+   * 取り込みを実行し、守った件数などの警告を返す。
+   *
+   * 統合は「両方を残す」操作なので、この端末の完了済み・本人編集・固定枠は
+   * 相手側の値で置き換えない。**置き換えなかったことを黙っていると、
+   * 同期したのに反映されていないように見える**ので、必ず画面へ出す。
+   */
+  const restore = async (file: unknown, mode: "merge" | "replace"): Promise<string> => {
     const r = await fetch("/api/backup", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -177,6 +188,8 @@ export default function SyncPage() {
     });
     const out = await r.json();
     if (out.error) throw new Error(out.error);
+    // APIは { ok, report } で返す。report.warnings を取り違えると黙って空になる
+    const warnings: string[] = Array.isArray(out.report?.warnings) ? out.report.warnings : [];
     const candidate =
       file && typeof file === "object"
         ? (file as { exportedAt?: string; counts?: Record<string, number> })
@@ -184,6 +197,7 @@ export default function SyncPage() {
     const m = metaOf(candidate);
     if (m) saveLastSynced(m);
     if (m) setLastSynced(m);
+    return warnings.join("\n");
   };
 
   /** 競合したときの選択 */
@@ -205,19 +219,27 @@ export default function SyncPage() {
         setLastSynced(next);
         setMsg("この端末の内容でクラウドを上書きしました。");
       } else if (key === "keep_remote") {
-        await restore(remoteFile, "replace");
-        setMsg("クラウドの内容で端末を上書きしました。再読み込みします…");
+        const replaceWarnings = await restore(remoteFile, "replace");
+        setMsg(
+          ["クラウドの内容で端末を上書きしました。再読み込みします…", replaceWarnings]
+            .filter(Boolean)
+            .join("\n")
+        );
         setTimeout(() => location.reload(), 1200);
       } else {
         // 統合してから、統合後のものをクラウドへ返す
-        await restore(remoteFile, "merge");
+        const mergeWarnings = await restore(remoteFile, "merge");
         const merged = await fetch("/api/backup?download=1").then((r) => r.json());
         await putSnapshot(cfg as SyncConfig, s, merged);
         const next = metaOf(merged);
         if (!next) throw new Error("統合後の書き出し情報を確認できませんでした。");
         saveLastSynced(next);
         setLastSynced(next);
-        setMsg("両方を残して統合し、クラウドにも反映しました。再読み込みします…");
+        setMsg(
+          ["両方を残して統合し、クラウドにも反映しました。再読み込みします…", mergeWarnings]
+            .filter(Boolean)
+            .join("\n")
+        );
         setTimeout(() => location.reload(), 1200);
       }
       setDecision(null);
@@ -416,7 +438,12 @@ export default function SyncPage() {
           いま同期する
         </button>
         {msg ? (
-          <p className="text-[12px] leading-relaxed mt-2.5" style={{ color: "var(--text-2)" }}>
+          // 守った件数などを続けて出すので、改行を潰さない
+          <p
+            className="text-[12px] leading-relaxed mt-2.5 whitespace-pre-line"
+            role="status"
+            style={{ color: "var(--text-2)" }}
+          >
             {msg}
           </p>
         ) : null}

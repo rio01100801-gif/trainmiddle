@@ -120,7 +120,13 @@ describe("復元", () => {
     expect(src.listSessions().length).toBe(before);
     expect(src.listResults()).toHaveLength(1);
     expect(report.added.sessions).toBe(0);
-    expect(report.updated.sessions).toBe(before);
+    /*
+     * 完了済み・本人編集・固定枠は統合で上書きせず「保持」に数える（NEXT-002）。
+     * 自分自身への統合なので最終的な中身は変わらないが、内訳は上書きと保持に割れる。
+     * 全件がどちらかに入り、取りこぼしが無いことを見る。
+     */
+    expect(report.updated.sessions + report.kept.sessions).toBe(before);
+    expect(report.kept.sessions).toBeGreaterThan(0);
   });
 
   it("日次コンディションは日付で突き合わせる", () => {
