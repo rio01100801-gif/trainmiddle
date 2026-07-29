@@ -62,7 +62,8 @@ SQLite/IndexedDB 両保存層 → `exportBackup`・Supabase 同期への影響�
 | **Google サインインの往復**（PCでホームへ戻る症状） | ✅ 📱 実機で再現・原因確定・修正・forge-v33で再現なし確認済み |
 | iPhone「サーバに接続できません」症状 | ✅ 📱 forge-v33で再現なしと確認済み。**根本原因は未確定**（症状1の修正・打ち間違えURLの解消・Redirect URLs追加のどれが効いたか切り分けていない） |
 | Supabase プロジェクト作成・URL Configuration | ✅ プロジェクト作成・Redirect URLs 登録とも完了（スクリーンショットで確認済み） |
-| Supabase bucket・RLS | 🔑 未着手（残りはこれだけ） |
+| Storageの利用者分離（`forge/<uid>/snapshot.json`） | 🔶 コード側完了（未コミット）。`jwtSubject`でuidを取り出し保存先を分離 |
+| Supabase bucket・RLS | 🔑 SQL用意済み（`FORGE_REQUIREMENTS.md` 2.2.4）。適用は本人待ち |
 | push / pull / 競合解決の実データ往復 | ⬜（プロジェクトはできたが未実施） |
 | 同期失敗時の再試行・オフライン復帰 | ❓ |
 
@@ -185,7 +186,7 @@ FIT を共有できるか、Web Share Target が PWA で安定するかを先に
 | 項目 | 状態 |
 | --- | --- |
 | **Next.js API に認証が無い**（`openRepo()` の共通 SQLite） | ⬜ |
-| Supabase Storage の利用者分離（現状は共通 `snapshot.json`） | ⬜ 🔑 |
+| Supabase Storage の利用者分離（`forge/<uid>/snapshot.json`） | 🔶 コード完了・RLS適用待ち（項目2参照） |
 | RLS（SELECT / INSERT / UPDATE / DELETE を本人に限定） | ⬜ 🔑 |
 | 秘密情報がバンドル・ログに出ないこと | ❓ |
 | ファイル取込の安全性（ZIP bomb / path traversal / XML entity） | ⬜ |

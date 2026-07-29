@@ -10,6 +10,13 @@ import type { RuleContext } from "@/lib/core/rules";
 
 let seq = 0;
 
+/** テスト用の署名なしJWT。中身（sub等のクレーム）だけを検査対象にする */
+export function fakeJwt(payload: Record<string, unknown>): string {
+  const part = (obj: Record<string, unknown>) =>
+    Buffer.from(JSON.stringify(obj)).toString("base64url");
+  return `${part({ alg: "none" })}.${part(payload)}.sig`;
+}
+
 /** 伊藤選手相当のテスト用プロフィール */
 export function testAthlete(overrides: Partial<Athlete> = {}): Athlete {
   return {

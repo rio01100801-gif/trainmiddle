@@ -423,6 +423,24 @@ Supabase の **Redirect URLs** にこのアプリのURLを登録していない�
 `authRedirectLanding` という純関数に集約し、`app-shell.tsx` はそれを呼ぶだけにした
 （判断を通信・DOM操作から切り離してテストできるようにするため）。
 
+### Supabase Storage の保存先を利用者ごとに分ける
+
+以前は全利用者が同じ `forge/snapshot.json` を共有していた。Google OAuthでサインイン
+できる者（想定外の第三者を含む）が同じファイルを読み書きできてしまうため、
+利用者ごとに `forge/<uid>/snapshot.json` へ分ける。
+
+`uid` はセッションの `accessToken`（Supabaseが発行したJWT）の `sub` クレームから
+取り出す（`sync.ts` の `jwtSubject`）。署名検証はしない。ここでの用途は保存先パスの
+組み立てだけで信頼境界には使わないため——実際の可否は Storage 側の RLS
+（`(storage.foldername(name))[1] = auth.uid()`）が、リクエストごとに検証済みの
+トークンで判断する。改ざんされた `sub` を渡されても、他人のフォルダには RLS が拒否する。
+
+`accessToken` から `uid` が取り出せない場合（壊れたセッション等）は、通信せず
+明確なエラーにする。共有パスへの黙ったフォールバックは、分離の意味を失わせるため
+絶対にしない。
+
+RLSポリシー（Supabase側で適用）は `docs/FORGE_REQUIREMENTS.md` の 2.2.4 を参照。
+
 ### 3-1 曜日の優先・固定設定
 
 既存の `slots` と `enabled` を残したまま、曜日ごとの `modes` を追加する。

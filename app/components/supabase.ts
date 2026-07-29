@@ -12,6 +12,7 @@
  */
 import {
   googleAuthorizeUrl,
+  jwtSubject,
   normalizeSyncConfig,
   oauthRedirectTo,
   validateSyncConfig,
@@ -533,9 +534,29 @@ export function consumeAuthMessage(): string | undefined {
   return message;
 }
 
-/** 保存してあるスナップショットの置き場所。1人1ファイル */
+/**
+ * 保存してあるスナップショットの置き場所。
+ *
+ * 以前は全利用者が同じ `forge/snapshot.json` を共有していた。
+ * OAuthでサインインできる誰か（利用者本人以外も含む）が同じファイルを
+ * 読み書きできてしまうため、利用者ごとに `forge/<uid>/snapshot.json` へ分ける。
+ * 実際の可否は Storage 側の RLS（`(storage.foldername(name))[1] = auth.uid()`）が
+ * 検証済みトークンで判断する。ここでのパス組み立ては利便性のためだけで、
+ * 改ざんされた `sub` を渡されても、他人のフォルダには RLS が拒否する。
+ */
 const BUCKET = "forge";
-const OBJECT = "snapshot.json";
+const OBJECT_NAME = "snapshot.json";
+
+/** サインイン中の利用者のスナップショット置き場所。取り出せない場合は通信しない */
+function snapshotObjectPath(session: SyncSession): string {
+  const uid = jwtSubject(session.accessToken);
+  if (!uid) {
+    throw new Error(
+      "サインイン情報を確認できませんでした。サインアウト後、Googleで再サインインしてください。"
+    );
+  }
+  return `${uid}/${OBJECT_NAME}`;
+}
 
 export interface StorageRequestOptions {
   fetchImpl?: typeof fetch;
@@ -641,8 +662,9 @@ export async function fetchSnapshot(
   options: StorageRequestOptions = {}
 ): Promise<unknown | undefined> {
   const runtime = createRuntime(cfg);
+  const objectPath = snapshotObjectPath(session);
   const fetchImpl = options.fetchImpl ?? fetch;
-  const r = await fetchImpl(`${runtime.url}/storage/v1/object/${BUCKET}/${OBJECT}`, {
+  const r = await fetchImpl(`${runtime.url}/storage/v1/object/${BUCKET}/${objectPath}`, {
     headers: headers(runtime, session),
   });
   // 400全体を空扱いにはしない。Supabase固有の「Object not found」だけを
@@ -660,8 +682,9 @@ export async function putSnapshot(
   options: StorageRequestOptions = {}
 ): Promise<void> {
   const runtime = createRuntime(cfg);
+  const objectPath = snapshotObjectPath(session);
   const fetchImpl = options.fetchImpl ?? fetch;
-  const r = await fetchImpl(`${runtime.url}/storage/v1/object/${BUCKET}/${OBJECT}`, {
+  const r = await fetchImpl(`${runtime.url}/storage/v1/object/${BUCKET}/${objectPath}`, {
     method: "POST",
     headers: {
       ...headers(runtime, session),

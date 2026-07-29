@@ -9,11 +9,13 @@ import {
   authRedirectLanding,
   decideSync,
   googleAuthorizeUrl,
+  jwtSubject,
   metaOf,
   normalizeSyncConfig,
   oauthRedirectTo,
   validateSyncConfig,
 } from "@/lib/core/sync";
+import { fakeJwt } from "./helpers";
 
 const A = { exportedAt: "2026-07-27T09:00:00Z", totalCount: 100 };
 const B = { exportedAt: "2026-07-28T09:00:00Z", totalCount: 110 };
@@ -184,5 +186,30 @@ describe("OAuthの戻りを受け取った後の着地", () => {
 
   it("Next.js で既に /sync にいるなら遷移しない", () => {
     expect(authRedirectLanding(false, "/sync")).toEqual({});
+  });
+});
+
+describe("アクセストークンからのユーザーID取り出し（Storage分離の基礎）", () => {
+  /*
+   * Phase 2-3: Supabase Storage の利用者分離。
+   * サインイン中のユーザーIDが分からないと、保存先を個人ごとに分けられない。
+   * accessToken（Supabase発行のJWT）のsubクレームから取り出す。
+   * 署名検証はしない — 実際の可否はStorage側のRLSが検証済みトークンで行うため、
+   * ここでの用途は「保存先パスの組み立て」だけで、信頼境界には使わない。
+   */
+  it("subクレームをユーザーIDとして取り出す", () => {
+    expect(jwtSubject(fakeJwt({ sub: "user-123" }))).toBe("user-123");
+  });
+
+  it("subが無ければ取り出せない", () => {
+    expect(jwtSubject(fakeJwt({ role: "authenticated" }))).toBeUndefined();
+  });
+
+  it("JWTの形（3分割）でなければ取り出せない", () => {
+    expect(jwtSubject("not-a-jwt")).toBeUndefined();
+  });
+
+  it("ペイロードが壊れていれば取り出せない", () => {
+    expect(jwtSubject("aaa.###.bbb")).toBeUndefined();
   });
 });

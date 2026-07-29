@@ -2195,6 +2195,18 @@ const syncKey = "sb_publishable_1234567890123456789012_12345678";
 const rejectedSyncKey = "sb_publishable_0000000000000000000000_00000000";
 let syncStorageMode = "rls";
 let syncStorageWriteSeen = false;
+
+/*
+ * Phase 2-3: Storageの保存先は利用者ごとに分ける（forge/<uid>/snapshot.json）。
+ * accessTokenのsubクレームからuidを取り出すので、e2eの偽トークンもJWTの形にする。
+ * 署名は検証しないのでダミーでよい。
+ */
+function fakeJwt(payload) {
+  const part = (obj) => Buffer.from(JSON.stringify(obj)).toString("base64url");
+  return `${part({ alg: "none" })}.${part(payload)}.sig`;
+}
+const e2eAccessToken = fakeJwt({ sub: "e2e-user-1" });
+const e2eStorageObjectPath = "/storage/v1/object/forge/e2e-user-1/snapshot.json";
 await page.route(/^https:\/\/[^/]+\.supabase\.co\//, async (route) => {
   const request = route.request();
   const target = new URL(request.url());
@@ -2229,7 +2241,7 @@ await page.route(/^https:\/\/[^/]+\.supabase\.co\//, async (route) => {
     });
     return;
   }
-  if (target.pathname === "/storage/v1/object/forge/snapshot.json") {
+  if (target.pathname === e2eStorageObjectPath) {
     if (syncStorageMode === "rls") {
       await route.fulfill({
         status: 403,
@@ -2420,7 +2432,7 @@ await page.evaluate(() => localStorage.removeItem("forge:sync:session"));
 // Supabaseなど外部originから戻ってくる実際の遷移（フルリロード）を再現する。
 await page.goto("about:blank");
 await page.goto(
-  "http://localhost:8791/#access_token=e2e-access-2&refresh_token=e2e-refresh-2&expires_at=1900000000"
+  `http://localhost:8791/#access_token=${e2eAccessToken}&refresh_token=e2e-refresh-2&expires_at=1900000000`
 );
 await page.waitForFunction(() => location.hash === "#/sync", { timeout: 5000 });
 await page.waitForTimeout(300);
@@ -2431,7 +2443,7 @@ if (!syncBodyNoQuery.includes("サインイン済みです")) {
 const capturedSessionNoQuery = await page.evaluate(() =>
   JSON.parse(localStorage.getItem("forge:sync:session") ?? "null")
 );
-if (capturedSessionNoQuery?.accessToken !== "e2e-access-2") {
+if (capturedSessionNoQuery?.accessToken !== e2eAccessToken) {
   fail("S-11: sync=1が欠けたOAuth callbackのaccess tokenを保存できない");
 }
 

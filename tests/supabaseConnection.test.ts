@@ -12,6 +12,7 @@ import {
   saveSyncConfig,
   testConnection,
 } from "../app/components/supabase";
+import { fakeJwt } from "./helpers";
 
 const KEY = "sb_publishable_1234567890123456789012_12345678";
 
@@ -222,7 +223,7 @@ describe("OAuth callbackの解析", () => {
 
 describe("Supabase Storage同期", () => {
   const config = { url: "https://storage.supabase.co", anonKey: KEY };
-  const session = { accessToken: "user-access-token" };
+  const session = { accessToken: fakeJwt({ sub: "user-abc" }) };
 
   it("404を未作成スナップショットとして扱う", async () => {
     const fetchImpl: typeof fetch = async () =>
@@ -309,7 +310,7 @@ describe("Supabase Storage同期", () => {
   it("成功時は同じオブジェクトをupsertし、認証値を本文やエラーへ混ぜない", async () => {
     const fetchImpl: typeof fetch = async (input, init) => {
       expect(String(input)).toBe(
-        "https://storage.supabase.co/storage/v1/object/forge/snapshot.json"
+        "https://storage.supabase.co/storage/v1/object/forge/user-abc/snapshot.json"
       );
       expect(init?.method).toBe("POST");
       expect(new Headers(init?.headers).get("x-upsert")).toBe("true");
@@ -320,5 +321,41 @@ describe("Supabase Storage同期", () => {
     await expect(
       putSnapshot(config, session, { exportedAt: "2026-07-27" }, { fetchImpl })
     ).resolves.toBeUndefined();
+  });
+
+  /*
+   * Phase 2-3: 保存先を利用者ごとに分ける。
+   * 以前は全利用者が同じ forge/snapshot.json を共有しており、
+   * OAuthで誰がサインインしても同じファイルを読み書きできた。
+   */
+  it("利用者IDごとに異なるパスへ保存する（他の利用者のファイルに触れない）", async () => {
+    const other = { accessToken: fakeJwt({ sub: "user-xyz" }) };
+    const seenPaths: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      seenPaths.push(new URL(String(input)).pathname);
+      return new Response(null, { status: 200 });
+    };
+
+    await putSnapshot(config, session, { exportedAt: "2026-07-27" }, { fetchImpl });
+    await putSnapshot(config, other, { exportedAt: "2026-07-27" }, { fetchImpl });
+
+    expect(seenPaths).toEqual([
+      "/storage/v1/object/forge/user-abc/snapshot.json",
+      "/storage/v1/object/forge/user-xyz/snapshot.json",
+    ]);
+  });
+
+  it("アクセストークンから利用者IDを取り出せない場合は通信せず、値を含まない明確なエラーにする", async () => {
+    const brokenSession = { accessToken: "not-a-jwt" };
+    const fetchImpl: typeof fetch = async () => {
+      throw new Error("この場合は通信してはいけない");
+    };
+
+    await expect(
+      fetchSnapshot(config, brokenSession, { fetchImpl })
+    ).rejects.toThrow("サインイン情報を確認できません");
+    await expect(
+      putSnapshot(config, brokenSession, { exportedAt: "2026-07-27" }, { fetchImpl })
+    ).rejects.toThrow("サインイン情報を確認できません");
   });
 });

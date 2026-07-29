@@ -242,8 +242,74 @@ Supabase プロジェクトは実在し、URL・Publishable Key とも正しい�
 - **Authentication → URL Configuration**（2.2.2 の対応に必須）:
   Site URL を `https://rio01100801-gif.github.io/trainmiddle/` に、
   Redirect URLs に `https://rio01100801-gif.github.io/trainmiddle/**` を追加。
-- **Storage bucket・RLS**（Phase 2-3・未着手）: `docs/FORGE_BACKLOG.md` 項目2/11 を参照。
-  SQL は着手時に提示する。
+- **Storage bucket・RLS**（Phase 2-3・コード側は対応済み・未コミット。
+  SQL適用は本人の作業待ち）: `docs/FORGE_BACKLOG.md` 項目2/11 を参照。
+
+  コード側は `forge/snapshot.json`（全利用者共通）から `forge/<uid>/snapshot.json`
+  （利用者ごと）への保存先分離を先に実装した。**この状態でも、RLSポリシーを
+  適用するまでは他人のフォルダへのアクセスをStorage側が拒否しない。**
+  つまりRLSを適用して初めて分離が実効を持つ。次の手順で適用する。
+
+  1. **まず一度、現在のコードで同期を1回実行する**（`いま同期する`）。
+     これにより `forge/<uid>/snapshot.json` が新規作成される
+     （旧 `forge/snapshot.json` は自動移行しない。ローカルのSQLite/IndexedDBが
+     常に正本なので、再送信すればよい）。
+  2. Supabase の **SQL Editor** で以下を実行する。
+
+     > `alter table storage.objects enable row level security;` は**実行しないこと**。
+     > 実機で試したところ `ERROR: 42501: must be owner of table objects` になった。
+     > `storage.objects` は SQL Editor の `postgres` ロールの持ち物ではなく、
+     > Supabaseのプロジェクトでは作成時点でこのテーブルのRLSが既に有効なので、
+     > この行はそもそも不要。`create policy` の4本だけを実行すればよい。
+
+     ```sql
+     -- forgeバケット内、自分のUIDフォルダ配下だけを読み書きできるようにする
+     create policy "forge_own_folder_select"
+     on storage.objects for select
+     to authenticated
+     using (
+       bucket_id = 'forge'
+       and (storage.foldername(name))[1] = auth.uid()::text
+     );
+
+     create policy "forge_own_folder_insert"
+     on storage.objects for insert
+     to authenticated
+     with check (
+       bucket_id = 'forge'
+       and (storage.foldername(name))[1] = auth.uid()::text
+     );
+
+     create policy "forge_own_folder_update"
+     on storage.objects for update
+     to authenticated
+     using (
+       bucket_id = 'forge'
+       and (storage.foldername(name))[1] = auth.uid()::text
+     )
+     with check (
+       bucket_id = 'forge'
+       and (storage.foldername(name))[1] = auth.uid()::text
+     );
+
+     create policy "forge_own_folder_delete"
+     on storage.objects for delete
+     to authenticated
+     using (
+       bucket_id = 'forge'
+       and (storage.foldername(name))[1] = auth.uid()::text
+     );
+     ```
+
+  3. 適用後、同期をもう一度実行して push/pull できることを確認する。
+  4. 旧 `forge/snapshot.json`（フォルダ無しのルート直下）は、上のポリシーだと
+     `(storage.foldername(name))[1]` が空になるため誰からも読めなくなる。
+     害はない（ローカルが正本のため）が、Supabaseダッシュボードの
+     Storageブラウザから手動で削除してもよい（任意・急がない）。
+
+  **ロールバック**: ポリシーを削除すれば元の状態（RLS無し）に戻る。
+  `drop policy "forge_own_folder_select" on storage.objects;` のように
+  4つのポリシー名を指定して削除する。
 
 ---
 

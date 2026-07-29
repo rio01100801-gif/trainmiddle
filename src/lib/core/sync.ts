@@ -165,19 +165,40 @@ export function normalizeSyncConfig(c: Partial<SyncConfig>): SyncConfig {
   return { url, anonKey: compactCredential(c.anonKey) };
 }
 
-function jwtRole(key: string): string | undefined {
-  const parts = key.split(".");
+/**
+ * JWTのペイロードだけを読む（署名検証はしない）。
+ *
+ * ここでの用途は2つとも「表示・保存先の組み立て」のためであり、信頼境界には使わない。
+ * 実際の可否は、Supabase側がリクエストごとに検証したトークンで判断する
+ * （anon/service_roleの拒否はvalidateSyncConfigの案内、Storageの認可はRLS）。
+ * 改ざんされたトークンで騙されても、Supabase側の検証で弾かれるだけで実害はない。
+ */
+function decodeJwtPayload(token: string): Record<string, unknown> | undefined {
+  const parts = token.split(".");
   if (parts.length !== 3) return undefined;
   try {
     const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
     const padded = payload.padEnd(Math.ceil(payload.length / 4) * 4, "=");
     const decoded: unknown = JSON.parse(atob(padded));
-    if (!decoded || typeof decoded !== "object" || !("role" in decoded)) return undefined;
-    const role = (decoded as { role?: unknown }).role;
-    return typeof role === "string" ? role : undefined;
+    return decoded && typeof decoded === "object" ? (decoded as Record<string, unknown>) : undefined;
   } catch {
     return undefined;
   }
+}
+
+function jwtRole(key: string): string | undefined {
+  const role = decodeJwtPayload(key)?.role;
+  return typeof role === "string" ? role : undefined;
+}
+
+/**
+ * アクセストークン（Supabaseが発行したセッションJWT）から、サインイン中の
+ * ユーザーIDを取り出す。Supabase Storageの保存先を利用者ごとに分ける
+ * （`<uid>/snapshot.json`）ために使う。
+ */
+export function jwtSubject(accessToken: string): string | undefined {
+  const sub = decodeJwtPayload(accessToken)?.sub;
+  return typeof sub === "string" && sub.length > 0 ? sub : undefined;
 }
 
 /** 設定が使える形かどうか。中途半端な設定で通信を始めない */
