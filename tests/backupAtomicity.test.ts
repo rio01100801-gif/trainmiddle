@@ -6,7 +6,7 @@
  * 「全消去してから壊れたデータで復元を試みる」＝データ消失になりえた。
  */
 import { describe, expect, it } from "vitest";
-import { validateBackup } from "@/lib/core/backup";
+import { BACKUP_MAX_BYTES, validateBackup, validateBackupFileSize } from "@/lib/core/backup";
 import { exportBackup, importBackup, saveGoalAndRaces } from "@/lib/service";
 import type { Store } from "@/lib/db/store";
 import { memRepo } from "./sqlite-helper";
@@ -134,4 +134,17 @@ describe("importBackup の原子性", () => {
       expect(report.mode).toBe("replace");
     });
   }
+});
+
+describe("validateBackupFileSize（対象7: 依存関係と基本セキュリティ）", () => {
+  it("上限以下なら許可する", () => {
+    expect(validateBackupFileSize(1024)).toEqual({ ok: true });
+    expect(validateBackupFileSize(BACKUP_MAX_BYTES)).toEqual({ ok: true });
+  });
+
+  it("上限を超えたら理由つきで拒否する", () => {
+    const r = validateBackupFileSize(BACKUP_MAX_BYTES + 1);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toContain("上限");
+  });
 });

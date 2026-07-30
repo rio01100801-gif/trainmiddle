@@ -141,3 +141,70 @@ describe("追加と削除", () => {
     expect(repo.getSession(s.id)).toBeUndefined();
   });
 });
+
+describe("対象6: 危険なトレーニング提案の防止", () => {
+  it("editSessionは人類の記録を超える設定ペースを拒否する（forceでも通らない）", () => {
+    const repo = setup();
+    const s = hlSessions(repo)[0];
+    const out = editSession(
+      repo,
+      s.id,
+      { targetPaces: [{ distanceM: 300, targetSecFast: 3.9, targetSecSlow: 3.9 }] },
+      TODAY,
+      { force: true }
+    );
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("人類の記録");
+    // 保存されていないこと
+    expect(repo.getSession(s.id)!.targetPaces[0].targetSecFast).not.toBe(3.9);
+  });
+
+  it("addSessionは人類の記録を超える設定ペースを拒否する", () => {
+    const repo = setup();
+    const date = addDays(TODAY, 2);
+    const before = repo.listSessions().length;
+    const out = addSession(
+      repo,
+      {
+        date,
+        category: "high_lactate",
+        name: "テスト",
+        timeOfDay: "am",
+        targetPaces: [{ distanceM: 300, targetSecFast: 3.9, targetSecSlow: 3.9 }],
+      },
+      TODAY
+    );
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("人類の記録");
+    // 拒否された分は増えていない（他の自動生成分と紛れないよう件数で見る）
+    expect(repo.listSessions().length).toBe(before);
+  });
+
+  it("妥当な設定ペースへの変更は通常通り通る", () => {
+    const repo = setup();
+    const s = hlSessions(repo)[0];
+    const out = editSession(
+      repo,
+      s.id,
+      { targetPaces: [{ distanceM: 300, targetSecFast: 43, targetSecSlow: 44 }] },
+      TODAY
+    );
+    expect(out.ok).toBe(true);
+  });
+
+  it("regeneratePlanは通常の生成でunsafeSkippedが0になる（誤検知が無い回帰確認）", () => {
+    const repo = memRepo();
+    repo.saveAthlete(testAthlete());
+    const race = makeRace("2026-09-25");
+    repo.saveRace(race);
+    repo.saveGoal({
+      targetEvent: "800m",
+      targetTimeSec: 108.9,
+      targetRaceId: race.id,
+      subRaceIds: [],
+    });
+    const out = regeneratePlan(repo, TODAY);
+    expect(out.unsafeSkipped).toBe(0);
+    expect(out.sessionCount).toBeGreaterThan(0);
+  });
+});

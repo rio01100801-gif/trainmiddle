@@ -16,6 +16,26 @@
  */
 import type { DailyCheck, FitnessMarker } from "./types";
 
+/**
+ * Apple HealthのXML書き出しのサイズ上限（対象7: 依存関係と基本セキュリティ）。
+ * ランニング以外の全指標を含むため、複数年ぶんの書き出しは数百MBになりうる
+ * （既存の「読み込みに1分ほどかかります」の案内もこれを前提にしている）。
+ * 500MBは通常の複数年ぶんの書き出しでも収まる規模で、これを超える場合は
+ * 破損または想定外のファイルとして早期に弾く（ブラウザのメモリ上限で
+ * 落ちる前に理由を示すため。FITの`FIT_MAX_BYTES`と同じ考え方）。
+ */
+export const HEALTH_XML_MAX_BYTES = 500 * 1024 * 1024;
+
+export function validateHealthXmlSize(bytes: number): { ok: true } | { ok: false; message: string } {
+  if (bytes > HEALTH_XML_MAX_BYTES) {
+    return {
+      ok: false,
+      message: `ファイルサイズが上限（${Math.floor(HEALTH_XML_MAX_BYTES / 1024 / 1024)}MB）を超えています。`,
+    };
+  }
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------------------
 // プロバイダ抽象（要望8: 将来 garmin / coros / polar を足せる形にする）
 // ---------------------------------------------------------------------------

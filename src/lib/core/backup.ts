@@ -12,6 +12,26 @@
 export const BACKUP_FORMAT = "forge-backup";
 export const BACKUP_VERSION = 1;
 
+/**
+ * バックアップJSONのサイズ上限（対象7: 依存関係と基本セキュリティ）。
+ * 個人利用・数年分のデータでも、FITの生バイトをbase64で含む取込が複数あって
+ * せいぜい数MB〜十数MB程度に収まる想定。50MBはその数倍の余裕を持たせた値で、
+ * 壊れた・巨大なファイルを読み込んでブラウザのメモリを圧迫する前に弾く
+ * （FITの`FIT_MAX_BYTES`と同じ考え方）。読み込み前のFileサイズで判定するため、
+ * 中身（JSON構造）の検証である`validateBackup`より前の段階で使う。
+ */
+export const BACKUP_MAX_BYTES = 50 * 1024 * 1024;
+
+export function validateBackupFileSize(bytes: number): { ok: true } | { ok: false; message: string } {
+  if (bytes > BACKUP_MAX_BYTES) {
+    return {
+      ok: false,
+      message: `ファイルサイズが上限（${Math.floor(BACKUP_MAX_BYTES / 1024 / 1024)}MB）を超えています。`,
+    };
+  }
+  return { ok: true };
+}
+
 export interface BackupFile {
   format: typeof BACKUP_FORMAT;
   version: number;

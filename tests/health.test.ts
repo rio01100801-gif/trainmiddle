@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
+  HEALTH_XML_MAX_BYTES,
   hrvDeviation,
   isRunning,
   parseAppleHealthExport,
   sleepHoursToScore,
   toDailyCheck,
   toFitnessMarker,
+  validateHealthXmlSize,
 } from "@/lib/core/healthImport";
 
 const SAMPLE = `<?xml version="1.0" encoding="UTF-8"?>
@@ -157,5 +159,18 @@ describe("HRVのベースライン比較", () => {
 
   it("当日のHRVが無ければ何も返さない", () => {
     expect(hrvDeviation(undefined, history).deviationPct).toBeUndefined();
+  });
+});
+
+describe("validateHealthXmlSize（対象7: 依存関係と基本セキュリティ）", () => {
+  it("上限以下なら許可する", () => {
+    expect(validateHealthXmlSize(1024)).toEqual({ ok: true });
+    expect(validateHealthXmlSize(HEALTH_XML_MAX_BYTES)).toEqual({ ok: true });
+  });
+
+  it("上限を超えたら理由つきで拒否する", () => {
+    const r = validateHealthXmlSize(HEALTH_XML_MAX_BYTES + 1);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toContain("上限");
   });
 });

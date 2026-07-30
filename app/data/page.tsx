@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card, ConfirmButton } from "../components/ui";
 import { localToday } from "@/lib/core/dates";
+import { validateBackupFileSize } from "@/lib/core/backup";
 
 /**
  * データ管理
@@ -77,6 +78,11 @@ export default function DataPage() {
   };
 
   const importJson = (file: File) => {
+    const sizeCheck = validateBackupFileSize(file.size);
+    if (!sizeCheck.ok) {
+      setMsg(sizeCheck.message);
+      return;
+    }
     const reader = new FileReader();
     reader.onload = async () => {
       setBusy(true);

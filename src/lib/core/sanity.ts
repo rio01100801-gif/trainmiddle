@@ -15,7 +15,7 @@
  * 「ありえないが本当」ということは中距離のトレーニングデータには無いので、
  * 迷ったら止める側に倒してよい。
  */
-import type { Athlete } from "./types";
+import type { Athlete, Session, TargetPace } from "./types";
 import type { PastEntry } from "./backfill";
 import { fmtPaceSecPerKm } from "./inputFormat";
 
@@ -234,4 +234,68 @@ export function checkPastEntry(e: PastEntry, athlete?: Athlete): SanityIssue[] {
 
 export function hasBlockingIssue(issues: SanityIssue[]): boolean {
   return issues.some((i) => i.severity === "error");
+}
+
+// ---------------------------------------------------------------------------
+// 対象6: 危険なトレーニング提案の防止
+//
+// checkPastEntry は「実測」（過去にやったこと）を検査するが、
+// 「これから提案する設定ペース」（自動生成・手入力どちらの経路も含む）には
+// 同種のチェックがどこにも無かった。物理的にありえない値の境界は
+// 実測でも設定でも変わらないため、同じ閾値（REP_PACE_MIN/MAX_S_PER_M）を使う。
+// ---------------------------------------------------------------------------
+
+/**
+ * 設定ペース（`Session.targetPaces`）の妥当性チェック。
+ * 自動生成（`periodization.ts`）・手入力（`addSession`/`editSession`）の
+ * どちらの経路もここを通す。
+ */
+export function checkTargetPaces(targetPaces: TargetPace[]): SanityIssue[] {
+  const out: SanityIssue[] = [];
+  for (const tp of targetPaces) {
+    if (!(tp.distanceM > 0)) {
+      out.push({
+        severity: "error",
+        field: "targetPaces",
+        message: `設定の距離 ${tp.distanceM}m は不正です`,
+      });
+      continue;
+    }
+    for (const [label, sec] of [
+      ["速い側", tp.targetSecFast],
+      ["遅い側", tp.targetSecSlow],
+    ] as const) {
+      if (!(sec > 0)) {
+        out.push({
+          severity: "error",
+          field: "targetPaces",
+          message: `${tp.distanceM}mの設定タイム（${label}）が不正です: ${sec}秒`,
+        });
+        continue;
+      }
+      const p = paceOf(tp.distanceM, sec);
+      if (p < REP_PACE_MIN_S_PER_M) {
+        out.push({
+          severity: "error",
+          field: "targetPaces",
+          message: `${tp.distanceM}mの設定（${label}）${sec}秒（${fmtPaceSecPerKm(
+            p * 1000
+          )}/km）は人類の記録を超える速さです。小数点や単位を確認してください`,
+        });
+      } else if (p > REP_PACE_MAX_S_PER_M) {
+        out.push({
+          severity: "error",
+          field: "targetPaces",
+          message: `${tp.distanceM}mの設定（${label}）${sec}秒（${fmtPaceSecPerKm(
+            p * 1000
+          )}/km）は遅すぎます。単位を確認してください`,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+export function checkSessionPlausibility(session: Session): SanityIssue[] {
+  return checkTargetPaces(session.targetPaces);
 }

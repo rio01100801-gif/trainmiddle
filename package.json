@@ -4,9 +4,9 @@
   "private": true,
   "description": "800m特化 トレーニングメニュー生成・管理ツール",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 127.0.0.1",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -H 127.0.0.1",
     "test": "vitest run --maxWorkers=1 --minWorkers=1",
     "test:watch": "vitest",
     "typecheck": "node --max-old-space-size=2048 node_modules/typescript/bin/tsc --noEmit -p tsconfig.json",

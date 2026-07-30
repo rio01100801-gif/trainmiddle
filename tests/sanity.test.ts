@@ -6,8 +6,13 @@
  * 読めた間違いは素通しでCFEまで届く。
  */
 import { describe, it, expect } from "vitest";
-import { checkPastEntry, hasBlockingIssue } from "@/lib/core/sanity";
-import { testAthlete } from "./helpers";
+import {
+  checkPastEntry,
+  checkSessionPlausibility,
+  checkTargetPaces,
+  hasBlockingIssue,
+} from "@/lib/core/sanity";
+import { testAthlete, makeSession } from "./helpers";
 import type { PastEntry } from "@/lib/core/backfill";
 
 const A = testAthlete(); // 800m 109.51 / 400m 49.0 / 1500m 236.0
@@ -192,5 +197,46 @@ describe("休養・補強は検査対象にしない", () => {
   });
   it("補強は何も出さない", () => {
     expect(checkPastEntry(pe({ kind: "strength" }), A)).toEqual([]);
+  });
+});
+
+describe("checkTargetPaces（対象6: 危険なトレーニング提案の防止）", () => {
+  it("妥当な設定ペースは通る（300mを41秒台）", () => {
+    const issues = checkTargetPaces([{ distanceM: 300, targetSecFast: 40, targetSecSlow: 42 }]);
+    expect(hasBlockingIssue(issues)).toBe(false);
+  });
+
+  it("人類の記録を超える速さの設定は拒否する（桁の打ち間違いを想定）", () => {
+    // 300mを3.9秒 = 0.013秒/m。世界記録（100mで9.58秒=0.0958秒/m）よりずっと速い
+    const issues = checkTargetPaces([{ distanceM: 300, targetSecFast: 3.9, targetSecSlow: 3.9 }]);
+    expect(hasBlockingIssue(issues)).toBe(true);
+    expect(issues[0].message).toContain("人類の記録");
+  });
+
+  it("遅すぎる設定（単位の取り違え）も拒否する", () => {
+    const issues = checkTargetPaces([{ distanceM: 300, targetSecFast: 4000, targetSecSlow: 4000 }]);
+    expect(hasBlockingIssue(issues)).toBe(true);
+  });
+
+  it("距離や設定タイムが0以下なら拒否する", () => {
+    expect(hasBlockingIssue(checkTargetPaces([{ distanceM: 0, targetSecFast: 40, targetSecSlow: 40 }]))).toBe(true);
+    expect(hasBlockingIssue(checkTargetPaces([{ distanceM: 300, targetSecFast: -1, targetSecSlow: 40 }]))).toBe(true);
+  });
+
+  it("空配列は何も出さない", () => {
+    expect(checkTargetPaces([])).toEqual([]);
+  });
+});
+
+describe("checkSessionPlausibility", () => {
+  it("Sessionのtargetpacesを検査する", () => {
+    const bad = makeSession("2026-07-20", "high_lactate", {
+      targetPaces: [{ distanceM: 300, targetSecFast: 3.9, targetSecSlow: 3.9 }],
+    });
+    expect(hasBlockingIssue(checkSessionPlausibility(bad))).toBe(true);
+    const ok = makeSession("2026-07-20", "high_lactate", {
+      targetPaces: [{ distanceM: 300, targetSecFast: 40, targetSecSlow: 42 }],
+    });
+    expect(hasBlockingIssue(checkSessionPlausibility(ok))).toBe(false);
   });
 });

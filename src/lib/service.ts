@@ -77,7 +77,12 @@ import {
   type ParsedRow,
   type PhraseRule,
 } from "./core/bulkImport";
-import { checkPastEntry, hasBlockingIssue, type SanityIssue } from "./core/sanity";
+import {
+  checkPastEntry,
+  checkSessionPlausibility,
+  hasBlockingIssue,
+  type SanityIssue,
+} from "./core/sanity";
 import { cfeRange, spreadOf } from "./core/backfill";
 import { groupBySamePrescription } from "./core/samePrescription";
 import { planRaceSplits, type RaceLapSample } from "./core/racePlan";
@@ -427,6 +432,8 @@ export function regeneratePlan(repo: Store, startDate: string): {
   /** M-7: 制限因子で振り替えた枠。黙って配分を変えないための記録 */
   limiterSwaps: { date: string; from: string; to: string; note: string }[];
   limiterNote?: string;
+  /** 対象6: 生成ロジックのバグで物理的にありえない設定ペースが出て、除外した枠数 */
+  unsafeSkipped: number;
 } {
   const athlete = repo.getAthlete();
   const goal = repo.getGoal();
@@ -544,9 +551,19 @@ export function regeneratePlan(repo: Store, startDate: string): {
   const occupiedSlots = new Set(
     repo.listSessions().map((session) => `${session.date}|${session.timeOfDay}`)
   );
-  const generatedSessions = plan.sessions.filter(
+  const candidateSessions = plan.sessions.filter(
     (session) => !occupiedSlots.has(`${session.date}|${session.timeOfDay}`)
   );
+  /*
+   * 対象6: 危険なトレーニング提案の防止。
+   * 生成ロジックのバグで物理的にありえない設定ペースが出た場合、
+   * 全体の生成を止めるのではなく、その枠だけを除いて件数を報告する
+   * （黙って混ぜない。1枠のバグで明日の練習全体が消えるのも避ける）。
+   */
+  const generatedSessions = candidateSessions.filter(
+    (session) => !hasBlockingIssue(checkSessionPlausibility(session))
+  );
+  const unsafeSkipped = candidateSessions.length - generatedSessions.length;
   repo.saveSessions(generatedSessions);
   repo.saveStrengths(plan.strengthSessions);
 
@@ -575,6 +592,7 @@ export function regeneratePlan(repo: Store, startDate: string): {
         ? `制限因子は「${LIMITER_LABELS[limiter.limiter]}」と判定しました。` +
           `${plan.limiterSwaps.length}枠を振り替えています（${plan.limiterSwaps[0].from} → ${plan.limiterSwaps[0].to} ほか）`
         : undefined,
+    unsafeSkipped,
   };
 }
 
@@ -2376,6 +2394,20 @@ export function editSession(
     status: "modified",
     userEdited: true,
   };
+  // 対象6: 物理的にありえない設定ペースは、ルール判定・forceより前に弾く
+  if (updates.targetPaces) {
+    const plausibility = checkSessionPlausibility(next);
+    if (hasBlockingIssue(plausibility)) {
+      return {
+        ok: false,
+        error: plausibility.find((i) => i.severity === "error")!.message,
+        applied: false,
+        newViolations: [],
+        violations: [],
+        alternatives: [],
+      };
+    }
+  }
   const after = evaluateWith(repo, sessionId, next, today);
   const newViolations = after.filter((v) => !baseKeys.has(violationKey(v)));
   const hasError = newViolations.some((v) => v.level === "ERROR");
@@ -2474,6 +2506,18 @@ export function addSession(
     durationMin: input.durationMin,
     paceSecPerKm: input.paceSecPerKm,
   };
+  // 対象6: 物理的にありえない設定ペースは、ルールエンジンの判断以前に弾く（forceでも越えられない）
+  const plausibility = checkSessionPlausibility(session);
+  if (hasBlockingIssue(plausibility)) {
+    return {
+      ok: false,
+      error: plausibility.find((i) => i.severity === "error")!.message,
+      applied: false,
+      newViolations: [],
+      violations: [],
+      alternatives: [],
+    };
+  }
   repo.saveSession(session);
   const after = runRuleEngine(buildRuleContext(repo, today));
   return {

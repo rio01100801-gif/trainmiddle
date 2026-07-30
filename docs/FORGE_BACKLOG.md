@@ -184,15 +184,16 @@ SQLite/IndexedDB 両保存層 → `exportBackup`・Supabase 同期への影響�
 
 ---
 
-## 11. セキュリティ・認証認可・RLS
+## 11. セキュリティ・認証認可・RLS ✅ 完了（NEXT-003・対象3・6・7）
 
 | 項目 | 状態 |
 | --- | --- |
-| **Next.js API に認証が無い**（`openRepo()` の共通 SQLite） | ⬜ |
+| **Next.js API に認証が無い**（`openRepo()` の共通 SQLite） | ✅ 実装・検証済み・未コミット。`-H 127.0.0.1`固定＋`FORGE_API_TOKEN`によるmiddleware（対象3） |
 | Supabase Storage の利用者分離（`forge/<uid>/snapshot.json`） | ✅ コード・RLSとも完了（項目2参照） |
 | RLS（SELECT / INSERT / UPDATE / DELETE を本人に限定） | ⬜ 🔑 |
-| 秘密情報がバンドル・ログに出ないこと | ❓ |
-| ファイル取込の安全性（ZIP bomb / path traversal / XML entity） | ⬜ |
+| 秘密情報がバンドル・ログに出ないこと | ✅ 確認済み。ハードコードなし。`.gitignore`に`.env`系を追加（対象7） |
+| **ファイル取込の安全性**（サイズ上限。ZIP bomb対策相当） | ✅ 実装・検証済み・未コミット。バックアップJSON50MB・Apple Health XML500MBの上限を追加（対象7）。XXEは正規表現パースのため対象外と確認 |
+| **危険なトレーニング提案の防止** | ✅ 実装・検証済み・未コミット。`checkTargetPaces`で設定ペースの妥当性を`addSession`/`editSession`/`regeneratePlan`に配線（対象6） |
 
 ⚠️ **利用者が1人でも、公開URL・Supabase・OAuth を使う以上「認可は不要」と判断しない。**
 

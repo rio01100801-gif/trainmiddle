@@ -26,6 +26,7 @@ import RunPage from "../app/run/page";
 import SyncPage from "../app/sync/page";
 
 import type { FitParseResult } from "../src/lib/core/fitParse";
+import { validateHealthXmlSize } from "../src/lib/core/healthImport";
 import {
   classifyLaps,
   type IntervalClassifyResult,
@@ -70,6 +71,11 @@ function HealthImportCard() {
   React.useEffect(loadSyncs, [loadSyncs]);
 
   const handleFile = async (file: File) => {
+    const sizeCheck = validateHealthXmlSize(file.size);
+    if (!sizeCheck.ok) {
+      setMsg(sizeCheck.message);
+      return;
+    }
     setBusy(true);
     setMsg("読み込み中…（ファイルが大きい場合は1分ほどかかります）");
     setResult(null);

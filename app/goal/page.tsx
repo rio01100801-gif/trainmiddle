@@ -189,7 +189,10 @@ export default function GoalPage() {
     }
     setMsg(
       `プラン生成完了: ${d.sessionCount}セッション + 補強${d.strengthCount}件` +
-        (d.customMenusUsed ? ` ／ 自作メニュー${d.customMenusUsed}種類を使用` : "")
+        (d.customMenusUsed ? ` ／ 自作メニュー${d.customMenusUsed}種類を使用` : "") +
+        (d.unsafeSkipped > 0
+          ? ` ／ 設定ペースが物理的にありえない${d.unsafeSkipped}枠は安全のため除外しました`
+          : "")
     );
     setViolations([...(d.templateViolations ?? []), ...(d.violations ?? [])]);
   };
