@@ -861,15 +861,32 @@ SDKを入れず REST を直接叩いています。使うのは「サインイ�
 1. https://supabase.com でサインアップ → **New project**（無料枠で足ります）
    - Region は **Northeast Asia (Tokyo)**
 2. **Storage** → New bucket → 名前を `forge`（Private のまま）
-3. bucket のポリシーを追加（自分のファイルだけ読み書きできるようにする）
+3. bucket のポリシーを追加（**自分のフォルダだけ**読み書きできるようにする）
    - Storage → forge → Policies → New policy → *For full customization*
    - 対象roleは `authenticated`
-   - `SELECT`: `using (bucket_id = 'forge')`
-   - `INSERT`: `with check (bucket_id = 'forge')`
-   - `UPDATE`: `using (bucket_id = 'forge')` と `with check (bucket_id = 'forge')`
+   - `SELECT`: `using (bucket_id = 'forge' and (storage.foldername(name))[1] = auth.uid()::text)`
+   - `INSERT`: `with check (bucket_id = 'forge' and (storage.foldername(name))[1] = auth.uid()::text)`
+   - `UPDATE`: 同じ条件を `using` と `with check` の両方に設定
+   - `bucket_id = 'forge'`だけの条件（`(storage.foldername(name))[1] = auth.uid()`が無い版）は
+     **絶対に使わないこと**。それだと同じSupabaseプロジェクトでサインインできた
+     他の誰か（本人以外）が、他人の`<uid>/snapshot.json`を読み書きできてしまう。
+     アプリのコード側は`forge/<uid>/snapshot.json`というパス規約に沿って保存先を
+     組み立てるが（`app/components/supabase.ts`の`snapshotObjectPath`）、
+     **実際にそれを強制しているのはこのRLSポリシーだけ**であり、パスの
+     組み立ては利便性のためだけで信用の根拠にはならない。
    - 初回アップロードにも、Storage APIが保存した行を返すための`SELECT`が必要。
      `INSERT`だけでは「new row violates row-level security policy」で失敗する。
    - 上書き保存（`x-upsert: true`）には`SELECT`・`INSERT`・`UPDATE`の3つが必要。
+   - `DELETE`ポリシーも同じ条件で作っておく（アプリのコードからは現状呼んで
+     いないが、Supabaseダッシュボードから手動で古いオブジェクトを消す場合の
+     安全のため。「データ削除とプライバシー」節を参照）。
+   - bucketのMIME type制限を`application/json`、サイズ上限を50MB
+     （`BACKUP_MAX_BYTES`と同じ）に設定しておく。
+   - 上記すべてのSQLは`supabase/migrations/0001_forge_storage_rls.sql`に
+     まとめてある。**自動適用はしない**——SupabaseのSQL Editorに手動で
+     貼り付けて実行すること。既存ポリシーの確認・削除・新規作成・
+     確認クエリ・手動テスト手順・ロールバック・既存データの移行注意点まで
+     すべてそのファイルに書いてある。
 4. **Authentication → Providers → Google** を有効化
    - Google Cloud Console で OAuth クライアントID（ウェブ）を作る
    - 承認済みリダイレクトURIに、Supabaseが表示する
@@ -922,20 +939,29 @@ IndexedDB内の練習データは消しません。Service Worker cacheにも設
 成功時のaccess token / refresh tokenはURL fragmentから受け取って直ちにURLから除きます。
 PKCEの認可コードを使っていないため、サーバー側のcode交換処理はありません。
 
-### Appleヘルスの自動連携（iOSショートカット）
+### Appleヘルスの自動連携（iOSショートカット）— **未実装。下記の手順は行わないこと**
 
 **HealthKitはWebから読めません。** Safari やホーム画面に追加したアプリからは
 技術的に呼び出せず、これは工夫で超えられる制約ではありません。
-ネイティブ化（Apple Developer Program 年99ドル）は採らない方針なので、
-手を減らすなら **iOSのショートカット**を使います。
 
-1. ショートカットApp → オートメーション → 毎日 6:00
-2. アクション: **ヘルスケアサンプルを取得**（安静時心拍・睡眠時間）
-3. アクション: **URLの内容を取得**
-   - URL: `https://xxxx.supabase.co/storage/v1/object/forge/health.json`
-   - メソッド: POST ／ ヘッダに `apikey` と `Authorization: Bearer <anon key>`
-   - 本文: `{"date":"...","restingHr":..,"sleepHours":..}`
-4. アプリ側は同期のときにこれを取り込みます
+⚠️ **セキュリティ・プライバシー監査（2026-07-31）で発覚**: 以前このセクションには
+「ショートカットで安静時心拍・睡眠時間を`forge/health.json`へPOSTする」という
+手順が書かれていたが、**アプリ側のコードはこの`health.json`をどこからも
+読んでいない**（`forge/health.json`を参照する箇所がゼロ）。書いても何も起きない、
+死んだ手順だった。加えて、この手順の保存先`forge/health.json`は
+「S-11 同期」節で説明している`forge/<uid>/snapshot.json`という利用者別の
+パスに従っておらず、RLSポリシー（`supabase/migrations/0001_forge_storage_rls.sql`）
+の保護対象外——書き込みが仮に成功していたとしても、本人以外が読み書きできる
+可能性のある場所に安静時心拍・睡眠時間を置くことになっていた。**このセクションの
+手順はもう案内しない。** 実際に機能する経路は次で説明する手動の書き出し取り込みのみ。
+
+日々の安静時心拍・睡眠・HRVを含む実際の取り込み経路は、下の「Apple ヘルスケア連携」
+節にある**手動のexport.xml取り込み**だけです。取り込んだデータはローカルの
+Store（IndexedDB/SQLite）に入り、同期を使っていれば他の練習データと同じ
+`forge/<uid>/snapshot.json`経由でクラウドへ届きます（＝同じRLSで保護される）。
+自動化したい場合、ネイティブ化（Apple Developer Program 年99ドル）を使わない
+方針の範囲では、iOSショートカットから**このアプリのIndexedDBへ直接書く**手段が
+無いため、現状は手動取り込みを定期的に行う運用になります。
 
 日次データ（安静時心拍・睡眠）はこれで自動になります。
 ワークアウトの詳細は書き出しファイルの取り込みのままです
@@ -1222,6 +1248,162 @@ Session/SessionResultを作り直す関数で、分類ロジックを直した�
 - **LTの信頼度が結果0件→1件で"low"から"medium"へ一気に上がる**: 1件のラベル
   付きサンプルと2件の無ラベルサンプルが同じ信頼度になる粒度の粗さ。実害は
   小さいと判断し、今回は直さない。
+
+## セキュリティ・プライバシー監査（2026-07-31）
+
+「1人利用だから認可は不要」とは判断しない、という前提で行った。実際に公開URL
+（GitHub Pages）・Google OAuth・Supabase（Auth + Storage）・Next.js APIを使っている
+ため、認可の欠落は本人以外にも実害が及びうる。
+
+### 外部公開される入口・信頼境界
+
+| 入口 | 認証 | 現状 |
+| --- | --- | --- |
+| GitHub Pages（`pwa-dist/`） | 無し（誰でも閲覧可） | 静的アプリコードのみ。データ・秘密情報は含まれない（後述） |
+| Supabase Storage（`forge/<uid>/snapshot.json`） | Google OAuth必須 | RLSが唯一の分離手段（今回SQLを整備） |
+| Google OAuth | Google側 | redirectToは`location.origin`由来のみ、Supabase側のRedirect URL許可リストが実効的な境界 |
+| Next.js API（`app/api/*`） | 127.0.0.1限定待受 + 任意の`FORGE_API_TOKEN` | 今回、本番相当（`NODE_ENV=production`）でトークン未設定なら閉じるよう変更 |
+
+保存される個人情報: PB・日々の練習記録・心拍・睡眠・故障ログ（部位・痛みレベル）・
+FIT生バイナリ・Apple Health由来データ。**service role key・JWT secret・OAuth
+client secretはコード上どこにも存在しない**（`git log --all -S`でservice_role・
+sb_secret_・JWTパターンを検索し、ヒットは全て警告コメントか値の妥当性検証ロジック
+であることを確認。実際の値の埋め込みは無い）。
+
+### 見つけて直したこと
+
+**1. README記載のSupabase RLS設定手順が実装と不一致だった** — 「S-11 同期」節
+参照。旧手順は`using (bucket_id = 'forge')`という**バケット全体**に効くポリシー
+を案内しており、実際のコード（`forge/<uid>/snapshot.json`というuid別パス）が
+前提とする分離を強制できていなかった。もし手順どおりに新規構築していたら、
+同じSupabaseプロジェクトにサインインできた誰か（本人以外を含む）が他人の
+スナップショットを読み書きできる状態になっていた。修正済みのSQLを
+`supabase/migrations/0001_forge_storage_rls.sql`に用意した（SELECT/INSERT/UPDATE/
+DELETEを`auth.uid()`とパスの一致で絞る、確認クエリ・手動テスト手順・ロールバック
+・既存データ移行の注意点つき）。**リポジトリからは自動適用しない**——本番の
+Supabaseプロジェクトへの変更はSQL Editorで手動実行すること。
+
+**2. Apple ヘルスケアのiOSショートカット自動連携が死んだ手順だった** —
+「S-11 同期」節参照。`forge/health.json`へPOSTする手順が書かれていたが、
+アプリのコードはこのパスをどこからも読んでいない上、`<uid>/`という利用者別
+パス規約にも従っていなかった（RLSの保護対象外になりうる場所に安静時心拍・
+睡眠時間を書く手順だった）。手順を「未実装。行わないこと」と明記し、実際に
+機能する経路（手動export.xml取り込み）へ誘導するよう修正した。
+
+**3. Next.js APIが`FORGE_API_TOKEN`未設定時、常に無認証で通っていた** —
+`middleware.ts`。ローカル限定待受（127.0.0.1）という前提が崩れた場合（例:
+このNext.jsサーバーを将来どこかへホスティングし、環境変数の設定を忘れる）
+への多層防御が無かった。判定ロジックを`src/lib/core/apiAuth.ts`
+（フレームワーク非依存・単体テスト可能）へ切り出し、`NODE_ENV=production`
+かつトークン未設定なら**全API を401で閉じる**ように変更した。`npm run dev`
+は`development`のため、既存のローカル開発体験は変わらない。`npm run start`
+で本番相当のビルドをローカル確認する場合は`FORGE_API_TOKEN`の設定が必要になる
+（`.env.example`参照）。
+
+**4. `.env.example`が存在しなかった** — 新規追加。参照している環境変数は
+`FORGE_API_TOKEN`のみ（Supabase接続先はアプリの設定画面からlocalStorageへ
+保存する方式で、ビルド時の環境変数は使わない）。
+
+**検証**: `checkApiAuth`の単体テスト6件を追加（`tests/apiAuth.test.ts`）。
+T-4でfail-closed条件を無効化し、赤に戻ることを確認して復元。
+
+### 調査して「問題なし」と確認できたこと
+
+- **XSS**: `dangerouslySetInnerHTML`・`innerHTML`・`eval`・`new Function`・
+  `document.write`は`app/`・`src/`・`pwa/`のどこにも無い。React標準のエスケープ
+  のみで完結している。
+- **Service Worker**: 同一オリジン以外のリクエストには一切介入せず（`pwa/sw.js`）、
+  キャッシュ対象は静的アセット（html/js/css/manifest/アイコン）のみ。APIレスポンス・
+  IndexedDBデータ・トークンをキャッシュに置くことは無い。共有端末での前回利用者の
+  データ残留リスクは無い。
+- **CORS**: どの`app/api/*/route.ts`も`Access-Control-Allow-Origin`等を設定して
+  おらず、既定で他オリジンからは読めない。`middleware.ts`の`matcher`は
+  `/api/:path*`で全29ルートを漏れなくカバーしている。
+- **バックアップ・書き出し**: `exportBackup()`はStoreのgetterのみから構築されて
+  おり、Supabaseのaccess/refresh tokenや`FORGE_API_TOKEN`が含まれる経路は無い
+  （トークンはlocalStorageの別キーにあり、Storeとは無関係）。
+- **ログ**: `src/lib/`・`app/`のどこにも`console.error`/`console.log`/`console.warn`
+  は無い（本番コード経路）。Sentry等のテレメトリも組み込まれていない。
+- **GitHub Pages配信物**: `pwa-dist/`のビルドスクリプト（`scripts/build-pwa.mjs`・
+  `scripts/build-static.mjs`）は環境変数・鍵・データを一切埋め込まない。
+  ビルド成果物に選手名・PB・秘密情報が含まれないことを確認済み。
+- **CSRF**: Cookieを一切使っていない（`document.cookie`・`NextResponse`の
+  cookie設定・`cookies()`のいずれも未使用）。認証はSupabaseのBearerトークン
+  （localStorageから明示的に付与）と任意の`FORGE_API_TOKEN`ヘッダのみで、
+  ブラウザが自動送信する認証情報が無いため、伝統的なCSRF（他サイトからの
+  意図しないリクエスト送信）は成立しない。
+- **レート制限**: 同期処理にリトライ/バックオフのループは存在しない
+  （単発リクエストのみ）。無限リトライ・同期ループのリスクは無い。同期画面の
+  保存・テストボタンは処理中`disabled`になり二重送信を防ぐ。
+- **OAuth redirectTo**: `location.origin`/`location.pathname`からのみ組み立てて
+  おり、クエリパラメータ等のユーザー入力からは作らない。実効的な許可境界は
+  Supabase側のRedirect URL許可リスト（README「S-11」手順で設定）。
+- **ファイル取込**: ZIPを解凍するコードはリポジトリに存在しない（Apple Health
+  はexport.xmlを直接読む方式のため、ZIP bomb・パストラバーサル・シンボリック
+  リンクの類はそもそも対象外）。Apple Health XMLは正規表現でパースしており
+  DOMパーサ不使用のためXML外部実体参照（XXE）の対象にならない（既存のP0監査
+  対象7で確認済み・今回再確認）。FIT（5MB）・バックアップJSON（50MB）・
+  Health XML（500MB）はいずれも`File.size`の時点で上限を確認してから読み込む。
+
+### 指摘したが今回直していないこと
+
+- **バックアップJSONの深いネストによるスタックオーバーフローの理論的余地**:
+  50MBの上限内でも、極端に深くネストしたJSON（`[[[[...]]]]`等）は`JSON.parse`
+  でスタックオーバーフローしうる。単一利用者がローカルの自分のファイルでしか
+  発生させられず、起きても該当タブが落ちるだけ（他者への影響・データ漏洩は
+  無い）ため、深さ制限パーサの追加は見送った。
+- **Supabase access/refresh tokenのlocalStorage平文保存**: Supabaseの
+  implicit flow（PKCE不使用）を採用している設計上の帰結で、既存文書
+  （「S-11」節）に記載済み。GitHub Pagesは他者が書き込めるオリジンではない
+  ため、悪意あるブラウザ拡張か将来のXSSが無い限り現実的な脅威にはならない。
+  PKCEへの移行やサーバー側セッション管理の導入は設計変更にあたるため、
+  今回のバグ修正の範囲を超えると判断した。
+- **クラウド上のスナップショット（`forge/<uid>/snapshot.json`）を削除する機能が
+  無い**: 「接続設定を消す」はローカルのSupabase設定・サインイン状態・最終同期
+  情報だけを消し、Supabase Storage上のオブジェクト自体は残る。サインアウトしても
+  データは消えない。削除するにはSupabaseダッシュボードから手動で行う必要がある
+  （`supabase/migrations/0001_forge_storage_rls.sql`にDELETEポリシーは用意した）。
+  アプリ内に「クラウドデータを削除する」ボタンを追加するのは新機能であり、
+  今回のセキュリティ修正の範囲を超えると判断し見送った。
+- **`vitest`の critical脆弱性（GHSA-5xrq-8626-4rwp）**: `vitest --ui`使用時の
+  任意ファイル読み取り。本プロジェクトは`vitest run`/`vitest`（watch）のみ使用し
+  `--ui`は使わないため実害は無いが、devDependencyのため`npm audit`上は
+  critical表示のまま残る。`next@14`系の7件（DoS・キャッシュ汚染・CSP nonce
+  XSS等）は既存のP0監査で「self-hosted限定・`next@16`へのメジャーアップグレード
+  はPWAビルドの仕組み全体に影響する大きな変更のため別タスク」と判断済みで
+  変更なし。
+
+### データ削除とプライバシー（実際に保存される場所と削除経路）
+
+| 操作 | 消えるもの | 消えないもの |
+| --- | --- | --- |
+| 設定 → 同期 → **接続設定を消す** | Supabase接続設定・サインイン状態・最終同期情報（localStorage） | 練習データ（IndexedDB）・Supabase Storage上のスナップショット |
+| 設定 → 同期 → **サインアウト** | サインイン状態のみ | 接続設定・練習データ・クラウド上のスナップショット |
+| 過去データ画面での個別削除 | 該当の過去データ1件 | 他のデータ全て |
+| バックアップ復元（上書き） | 復元前のローカルデータ全て（`Store`の全消去→復元データで置換） | 復元ファイル自体・クラウド上のスナップショット |
+| （無し）クラウドデータの削除 | — | Supabase Storage上の`forge/<uid>/snapshot.json`はアプリからは削除できない。手動でSupabaseダッシュボードから削除する必要がある |
+| （無し）全ローカルデータの一括削除 | — | ブラウザの「サイトデータを消去」等、アプリ外の操作が必要 |
+
+法的な断定はしない。上表は現在のコードが実際に行う削除範囲の事実のみ。
+
+### 検証
+
+- 新規: `tests/apiAuth.test.ts`（6件）。T-4でfail-closed条件を無効化し赤に戻る
+  ことを確認して復元。
+- `npm run typecheck`・`npm test`（63ファイル933件）・`npm run build:all`・
+  `npm run e2e`・`npm run e2e:update`: 全てPASS。
+- `next build`→`npm run start`で実機起動し、`FORGE_API_TOKEN`の3パターン
+  （未設定／誤り／一致）をcurlで確認: 未設定・誤りは全APIが401、一致した
+  場合はミドルウェアを通過してルート自身のロジック（この場合は選手未登録
+  エラー）まで到達することを確認した。
+- `npm audit`: 前回と同じ7件（moderate 3・high 3・critical 1）。`next`系は
+  既存判断どおり据え置き、`vitest`のcriticalは`--ui`未使用のため実害無しと
+  判断（詳細は「指摘したが今回直していないこと」）。
+- 外部Supabaseが必要な検証（RLSの実効性・他ユーザーからの拒否確認）は
+  自動実行できないため、`supabase/migrations/0001_forge_storage_rls.sql`
+  内に手動確認手順（本人のSELECT/INSERT/UPDATE成功・他人のオブジェクトへの
+  アクセス拒否・未認証拒否）を記載した。**本番Supabaseへの適用と確認は
+  リポジトリ外の作業であり、今回は実行していない。**
 
 ## PWA版（iPhone単体で動くバージョン）
 

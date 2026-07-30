@@ -27,43 +27,55 @@
 | 項目 | 値 |
 | --- | --- |
 | branch | `main` |
-| HEAD | `d997ddb`（`fix: Supabase Storageの初回push未検出を修正`） |
-| `origin/main` との差 | **0 / 0**（完全一致・push済み） |
+| HEAD | `dba5f56`（`fix: トレーニングロジック統合監査で見つかった3件のバグを修正`） |
+| `origin/main` との差 | **0 / 0**（完全一致・push済み・forge-v36としてgh-pages配信済み） |
 
 直近コミット:
 
 ```
+dba5f56 fix: トレーニングロジック統合監査で見つかった3件のバグを修正
+e654778 fix: 統合監査で見つけた既存バグ2件を修正
+a9ec349 feat: P0監査の残り3項目（依存関係・危険な提案防止・API認証）に対応
+8900c7d feat: FIT/Garmin取込基盤とPWA保存保証・UI/UXアクセシビリティ改善を追加
+9d14ead docs: NEXT-002完了（forge-v35実機確認済み）を反映
+51ada24 docs: forge-v35配信後の状態を反映
 d997ddb fix: Supabase Storageの初回push未検出を修正
 479e894 docs: forge-v34配信後の状態とRLS適用結果を反映
 4364d1e fix: Supabase Storageの保存先を利用者ごとに分離
 bf0e7db docs: 実機確認結果(BUG-02〜04・症状2とも再現なし)を反映
-5799a62 docs: HANDOFF.mdをforge-v33配信後の状態に更新
-fd15365 fix: 目標レースのボーダー正規化と同期の統合・OAuth復帰を修正
-db25d78 feat: FORGEのアイコンと起動画面・UIを刷新
-6424518 feat: 自動生成メニューの個別適応と多様性を改善
-227c972 feat: 競技指標と個人補正ロジックを改善
-f304ab8 fix: Supabase初回同期の未作成応答を処理
 ```
 
 ## 未コミット変更
 
-**あり（2026-07-31・トレーニングロジック統合監査）。** 本人の指示により
-「監査・最小修正・テストまでで、VERSION更新・commit・push・gh-pages配信は
-明示的な許可を待って停止」の状態。`npm run verify`（typecheck/test 927件/
-build:all/e2e/e2e:update）は全てPASS済み。配信物（`pwa-dist/`）は
-`build:all`実行済みだが`VERSION`（`forge-v35`のまま）は上げていない。
+**あり（2026-07-31・セキュリティ・プライバシー監査）。** `npm run verify`
+（typecheck/test 933件/build:all/e2e/e2e:update）は全てPASS済み。加えて
+`next build`→`npm run start`で実機起動し、`FORGE_API_TOKEN`未設定/誤り/一致の
+3パターンをcurlで確認済み（401/401/通過）。**VERSION更新・commit・push・
+gh-pages配信はまだ行っていない**（本人の標準運用に従い許可待ち）。
 
-変更点の詳細は README.md の「トレーニングロジック統合監査」セクションを参照。
+変更点の詳細は README.md の「セキュリティ・プライバシー監査」セクションを参照。
 要約:
-- `src/lib/core/cfe.ts` / `src/lib/service.ts`: 目標タイムのCFE混入除去、
-  暑熱/疲労ガードレールの対称化（2件のバグ修正）
-- `src/lib/core/coverage.ts`: ロングラン判定を正式な`isLongRun`に統一
-- `tests/cfe.test.ts` 更新、`tests/coverage.test.ts`に回帰テスト追加、
-  `tests/goldenCases.test.ts` / `tests/propertyBoundary.test.ts` 新規追加
+- `middleware.ts` / `src/lib/core/apiAuth.ts`（新規）: Next.js APIが
+  `FORGE_API_TOKEN`未設定時、`NODE_ENV=production`なら全API を401で閉じる
+  よう変更（fail closed）。`npm run dev`のローカル開発体験は変わらない。
+- `supabase/migrations/0001_forge_storage_rls.sql`（新規）: Supabase Storage
+  の`forge`バケットを利用者ごと（`auth.uid()`とパスの一致）に分離するRLS。
+  **リポジトリからは自動適用していない**。本番Supabaseへの適用はSQL Editorで
+  手動実行が必要（ファイル内に確認・テスト・ロールバック手順あり）。
+- `README.md`「S-11 同期」節: RLS設定手順の実装との不一致を修正、
+  Apple ヘルスケアのiOSショートカット連携が未実装（死んだ手順）だったことを
+  明記して手順を撤回。
+- `.env.example`（新規）: `FORGE_API_TOKEN`のみ記載。
+- `tests/apiAuth.test.ts`（新規・6件）
 
-次に取りかかる担当は、まず本人にVERSION更新・commit・push・配信の許可を
-取ってから進めること。README.mdの同セクション末尾に「指摘したが直していない
-こと」が5件あるので、次の作業候補として扱ってよい。
+次に取りかかる担当（または本人）がやること:
+1. VERSION更新・commit・push・配信の許可を判断する
+2. 本番Supabaseへ`supabase/migrations/0001_forge_storage_rls.sql`を手動適用
+   するかどうかを判断する（適用にはSupabaseダッシュボードのSQL Editorが必要。
+   適用前に「既存ポリシーを確認するSELECT」を必ず先に実行すること）
+3. README.mdの同セクション末尾「指摘したが今回直していないこと」に4件ある
+   ので、次の作業候補として扱ってよい（クラウドスナップショット削除機能の
+   欠如、Supabase implicit flowの平文トークン保存など）
 
 ---
 
