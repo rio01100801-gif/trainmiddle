@@ -39,6 +39,115 @@ export function isBackupFile(x: unknown): x is BackupFile {
   return !!o && o.format === BACKUP_FORMAT && typeof o.version === "number" && !!o.data;
 }
 
+export interface BackupIssue {
+  path: string;
+  reason: string;
+}
+export type BackupValidation =
+  | { ok: true; file: BackupFile }
+  | { ok: false; issues: BackupIssue[] };
+
+/** idで突き合わせる各コレクション。復元処理（service.ts の importBackup）と対応する */
+const ID_KEYED_COLLECTIONS = [
+  "races", "sessions", "strengths", "results", "markers",
+  "injuries", "customMenus", "phrases", "pastEntries", "heatBlocks", "fitImports",
+] as const;
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+/**
+ * バックアップ全体を復元前に検証する。
+ *
+ * `isBackupFile` は format・version・data の存在しか見ておらず、中身が
+ * 壊れていても復元処理へそのまま渡っていた。replaceモードは検証前に
+ * `resetAll()` していたため、壊れたファイルで「全消去してから壊れた
+ * データで復元を試みる」＝データ消失になりえた。
+ *
+ * ここで見るのは、復元処理（各 `save*` 呼び出し）が確実に壊れる形
+ * ——配列であるべき箇所が配列でない、idキーの型が違う——だけ。
+ * 距離・時間などドメインの値そのものは検証しない。読めなかった値を
+ * 推測で埋めないのと同じ理由で、ここで過剰に断定的な検証をすると、
+ * 将来フィールドが増えた正常なバックアップまで拒否しかねない。
+ */
+export function validateBackup(x: unknown): BackupValidation {
+  if (!isBackupFile(x)) {
+    return { ok: false, issues: [{ path: "(root)", reason: "FORGEの書き出しファイルではありません" }] };
+  }
+  const issues: BackupIssue[] = [];
+  const data = isPlainObject(x.data) ? x.data : {};
+  if (!isPlainObject(x.data)) issues.push({ path: "data", reason: "オブジェクトではありません" });
+
+  const checkIdArray = (key: string) => {
+    const value = data[key];
+    if (value === undefined) return;
+    if (!Array.isArray(value)) {
+      issues.push({ path: key, reason: "配列ではありません" });
+      return;
+    }
+    value.forEach((item, i) => {
+      if (!isPlainObject(item)) {
+        issues.push({ path: `${key}[${i}]`, reason: "オブジェクトではありません" });
+        return;
+      }
+      if (typeof item.id !== "string" || item.id.length === 0) {
+        issues.push({ path: `${key}[${i}].id`, reason: "idが文字列ではありません" });
+      }
+    });
+  };
+  for (const key of ID_KEYED_COLLECTIONS) checkIdArray(key);
+
+  const dailyChecks = data.dailyChecks;
+  if (dailyChecks !== undefined) {
+    if (!Array.isArray(dailyChecks)) {
+      issues.push({ path: "dailyChecks", reason: "配列ではありません" });
+    } else {
+      dailyChecks.forEach((item, i) => {
+        if (!isPlainObject(item) || typeof item.date !== "string") {
+          issues.push({ path: `dailyChecks[${i}].date`, reason: "dateが文字列ではありません" });
+        }
+      });
+    }
+  }
+
+  const heatEntries = data.heatEntries;
+  if (heatEntries !== undefined) {
+    if (!Array.isArray(heatEntries)) {
+      issues.push({ path: "heatEntries", reason: "配列ではありません" });
+    } else {
+      heatEntries.forEach((item, i) => {
+        if (!isPlainObject(item) || typeof item.blockId !== "string") {
+          issues.push({ path: `heatEntries[${i}].blockId`, reason: "blockIdが文字列ではありません" });
+        }
+      });
+    }
+  }
+
+  const kv = data.kv;
+  if (kv !== undefined) {
+    if (!Array.isArray(kv)) {
+      issues.push({ path: "kv", reason: "配列ではありません" });
+    } else {
+      kv.forEach((item, i) => {
+        if (!isPlainObject(item) || typeof item.key !== "string") {
+          issues.push({ path: `kv[${i}].key`, reason: "keyが文字列ではありません" });
+        }
+      });
+    }
+  }
+
+  for (const key of ["athlete", "goal", "cfe", "weekTemplate"] as const) {
+    const value = data[key];
+    if (value !== undefined && !isPlainObject(value)) {
+      issues.push({ path: key, reason: "オブジェクトではありません" });
+    }
+  }
+
+  if (issues.length > 0) return { ok: false, issues };
+  return { ok: true, file: x };
+}
+
 /**
  * IDをキーにする統合。同じidは既定では取り込む側で上書きする。
  *

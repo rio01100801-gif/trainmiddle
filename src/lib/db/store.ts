@@ -6,6 +6,7 @@
  */
 import type { PastEntry } from "../core/backfill";
 import type { PhraseRule } from "../core/bulkImport";
+import type { FitImportRecord } from "../core/fitToSession";
 import type { SyncRecord } from "../core/healthImport";
 import type { CustomMenu, WeekTemplate } from "../core/weekTemplate";
 import type {
@@ -89,6 +90,10 @@ export interface Store {
   saveSync(r: SyncRecord): void;
   listSyncs(limit?: number): SyncRecord[];
 
+  /** FIT取込 Phase 4: 3層データモデルでの保存（元ファイル・自動解析） */
+  saveFitImport(r: FitImportRecord): void;
+  listFitImports(): FitImportRecord[];
+
   saveInjury(i: InjuryLog): void;
   listInjuries(): InjuryLog[];
   deleteInjury(id: string): void;
@@ -109,4 +114,12 @@ export interface Store {
 
   /** 全データの消去（復元時の「上書き」で使う） */
   resetAll(): void;
+
+  /**
+   * 一連の書き込みを1つの単位として扱う。`fn` の中で例外が起きたら、
+   * 呼び出し前の状態へ戻してから同じ例外を投げ直す（握りつぶさない）。
+   * バックアップ復元のように「途中で1件でも壊れていたら全体を無かったことにする」
+   * 処理のために追加した（対象2: 安全なバックアップ復元）。
+   */
+  transaction<T>(fn: () => T): T;
 }

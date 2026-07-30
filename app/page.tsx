@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { localToday } from "@/lib/core/dates";
-import { Card, Sparkline, fmtSec } from "./components/ui";
+import { Card, Sparkline, StatusText, fmtSec } from "./components/ui";
 import { withQuery } from "./components/route-query";
 import { SessionEditSheet } from "./components/session-edit-sheet";
 import { saveSplashSummary } from "./components/splash-cache";
@@ -372,9 +372,9 @@ function TodayAdjust({ sessionId, today }: { sessionId?: string; today: string }
       ) : null}
 
       {blocked ? (
-        <p className="text-[13px] leading-relaxed mb-2" style={{ color: "var(--red)" }}>
+        <StatusText kind="error" className="text-[13px] leading-relaxed mb-2">
           赤信号です。この日に高負荷練習は入れません。低強度有酸素か休養へ置き換えてください。
-        </p>
+        </StatusText>
       ) : null}
 
       {p?.hasChange ? (
@@ -468,13 +468,14 @@ function Notices({ today }: { today: string }) {
     fetch("/api/backup").then((r) => r.json()).then(setBackup).catch(() => {});
   }, [today]);
 
-  const items: { text: string; href: string; label: string; color: string }[] = [];
+  const items: { text: string; href: string; label: string; color: string; warn?: boolean }[] = [];
   if (taper?.stage && taper.stage !== "none" && taper.adjustments?.some((a: any) => a.next)) {
     items.push({
       text: taper.notice,
       href: "/plan-settings",
       label: "調整内容を見る",
       color: "var(--amber)",
+      warn: true,
     });
   }
   if (backup?.remind) {
@@ -495,7 +496,12 @@ function Notices({ today }: { today: string }) {
           className="flex items-center justify-between gap-2 flex-wrap"
           style={{ marginTop: i > 0 ? 10 : 0 }}
         >
-          <p className="text-[12px] leading-relaxed flex-1" style={{ color: it.color }}>
+          <p
+            className="text-[12px] leading-relaxed flex-1"
+            role={it.warn ? "status" : undefined}
+            style={{ color: it.color }}
+          >
+            {it.warn ? <span aria-hidden="true">⚠ </span> : null}
             {it.text}
           </p>
           <Link href={it.href} className="btn-ghost !text-[11.5px] !py-1.5">
@@ -1027,9 +1033,9 @@ function Recovery({ d }: { d: any }) {
         ) : null}
       </div>
       {d.signalEscalated ? (
-        <p className="text-[11.5px] mt-1.5" style={{ color: "var(--amber)" }}>
+        <StatusText kind="warning" className="text-[11.5px] mt-1.5">
           黄信号が続いているため警戒に引き上げています。
-        </p>
+        </StatusText>
       ) : null}
 
       <div className="grid grid-cols-3 gap-3 mt-4 pt-3.5 border-t" style={{ borderColor: "var(--border)" }}>

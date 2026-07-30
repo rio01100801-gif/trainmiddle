@@ -45,11 +45,32 @@ const nextShim = {
   },
 };
 
+/*
+ * splitting: true にすると、entry.tsx内の動的import（`await import(...)`）が
+ * 別ファイル（chunk）に分かれる。FIT解析（fit-file-parser、Garmin公式の
+ * プロファイル定義を丸ごと含み重い）を、FIT画面を実際に開いたときだけ
+ * 読み込むようにするため（対象1・2とは無関係。bundleサイズ対策）。
+ *
+ * chunkのファイル名にはハッシュが入るため、内容が変わればファイル名も変わる。
+ * pwa/sw.js の isAppShell() は index.html/bundle.js/styles.css/manifestだけを
+ * network-first にしており、chunkはそこに含めていない。含めなくてよい理由は、
+ * ハッシュ付きファイル名を持つ以上「同じ名前なのに中身が古い」が起きないため
+ * （cache-first で問題ない。むしろ毎回取りに行かない分、通常の再訪問が速くなる）。
+ *
+ * ESM出力になるため index.html 側の <script> は type="module" にする必要がある
+ * （pwa/index.html を参照）。
+ */
 const result = await Bun.build({
   entrypoints: [path.join(root, "pwa", "entry.tsx")],
   outdir: path.join(root, "pwa-dist"),
-  naming: "bundle.js",
+  naming: {
+    entry: "bundle.js",
+    chunk: "chunk-[hash].js",
+    asset: "[name]-[hash].[ext]",
+  },
   target: "browser",
+  format: "esm",
+  splitting: true,
   minify: true,
   plugins: [nextShim],
 });

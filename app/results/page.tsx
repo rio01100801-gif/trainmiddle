@@ -7,6 +7,7 @@ import {
   ConfirmButton,
   Scale5,
   Sparkline,
+  StatusText,
   UndoBar,
   ViolationList,
   fmtPace,
@@ -339,9 +340,9 @@ function DailyCheckCard({ date }: { date: string }) {
             </p>
           ))}
           {out.changes?.length > 0 ? (
-            <p className="text-[11px] mt-1" style={{ color: "var(--amber)" }}>
+            <StatusText kind="warning" className="text-[11px] mt-1">
               高負荷練習{out.changes.length}件を低強度有酸素に自動置換しました。
-            </p>
+            </StatusText>
           ) : null}
         </div>
       ) : null}
@@ -472,7 +473,7 @@ function InjuryCard({ sessions, date }: { sessions: any[]; date: string }) {
       title="故障ログ"
       right={
         <button
-          className="text-[11px] min-h-[32px] px-2"
+          className="text-[11px] min-h-[44px] px-2"
           style={{ color: "var(--volt)" }}
           onClick={() => setOpen((v) => !v)}
         >
@@ -679,10 +680,11 @@ function AerobicMarkerForm({ defaultDate }: { defaultDate?: string }) {
     <Card title="有酸素の実測データ（閾値走・ペース走・距離走）">
       {profile?.refreshHint ? (
         <p
+          role="status"
           className="text-[11.5px] mb-2 border-l-2 pl-2 leading-relaxed"
           style={{ color: "var(--amber)", borderColor: "var(--amber)" }}
         >
-          {profile.refreshHint}
+          <span aria-hidden="true">⚠</span> {profile.refreshHint}
         </p>
       ) : null}
       <div className="grid grid-cols-2 sm:flex gap-2 sm:flex-wrap sm:items-end">
@@ -1370,9 +1372,9 @@ function ResultForm({
           ) : null}
           {/* 3つとも入っていて食い違うとき。勝手に直さず、どれかが違うと出すだけ */}
           {triple.mismatch ? (
-            <div className="col-span-2 text-[11px] leading-relaxed" style={{ color: "var(--amber)" }}>
+            <StatusText kind="warning" className="col-span-2 text-[11px] leading-relaxed">
               {triple.mismatch}
-            </div>
+            </StatusText>
           ) : null}
         </div>
       ) : mode === "interval" ? (
@@ -1659,9 +1661,15 @@ function ResultForm({
                 雨
               </label>
               {envNotes.length > 0 ? (
-                <div className="col-span-2 text-[10.5px] leading-relaxed" style={{ color: "var(--amber)" }}>
+                <div
+                  role="status"
+                  className="col-span-2 text-[10.5px] leading-relaxed"
+                  style={{ color: "var(--amber)" }}
+                >
                   {envNotes.map((n, i) => (
-                    <p key={i}>・{n}</p>
+                    <p key={i}>
+                      <span aria-hidden="true">⚠</span> {n}
+                    </p>
                   ))}
                 </div>
               ) : null}

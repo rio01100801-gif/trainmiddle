@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Card, CATEGORY_COLORS, CATEGORY_LABELS, fmtSec } from "../components/ui";
+import { Card, CATEGORY_COLORS, CATEGORY_LABELS, StatusText, fmtSec } from "../components/ui";
 import RaceAnalysis from "../race/page";
 import type { CoverageReview } from "@/lib/core/coverage";
 import type { SessionCategory } from "@/lib/core/types";
@@ -677,9 +677,9 @@ function CoveragePanel() {
                 </button>
               </div>
               {c.cost ? (
-                <p className="text-[11px] leading-relaxed mt-1" style={{ color: "var(--amber)" }}>
+                <StatusText kind="warning" className="text-[11px] leading-relaxed mt-1">
                   {c.cost}
-                </p>
+                </StatusText>
               ) : null}
             </div>
           ))}

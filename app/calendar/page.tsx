@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Card, CATEGORY_COLORS, CATEGORY_LABELS, ConfirmButton, ViolationList } from "../components/ui";
+import { Card, CATEGORY_COLORS, CATEGORY_LABELS, ConfirmButton, StatusText, ViolationList } from "../components/ui";
 import { withQuery } from "../components/route-query";
 import {
   PrescriptionFields,
@@ -208,13 +208,21 @@ export default function CalendarPage() {
     <div className="calendar-screen flex flex-col gap-3">
       <Card className="calendar-controls">
         <div className="flex gap-2 items-center flex-wrap">
-          <button className="btn-ghost !py-1.5 !px-2.5 !text-[12px]" onClick={() => shift(-1)}>
+          <button
+            className="btn-ghost !py-1.5 !px-2.5 !text-[12px] min-w-[44px]"
+            aria-label="前の期間"
+            onClick={() => shift(-1)}
+          >
             ←
           </button>
           <span className="text-[13px] font-semibold num flex-1 text-center">
             {from} 〜 {addDays(from, span - 1)}
           </span>
-          <button className="btn-ghost !py-1.5 !px-2.5 !text-[12px]" onClick={() => shift(1)}>
+          <button
+            className="btn-ghost !py-1.5 !px-2.5 !text-[12px] min-w-[44px]"
+            aria-label="次の期間"
+            onClick={() => shift(1)}
+          >
             →
           </button>
         </div>
@@ -313,9 +321,9 @@ export default function CalendarPage() {
       {conflict ? (
         <Card title="この移動はルールに反します">
           {(conflict.newViolations ?? []).map((v: any, i: number) => (
-            <p key={i} className="text-[12px] leading-relaxed mb-1.5" style={{ color: "var(--red)" }}>
+            <StatusText key={i} kind="error" className="text-[12px] leading-relaxed mb-1.5">
               {v.rule}: {v.message}
-            </p>
+            </StatusText>
           ))}
           {conflict.alternatives?.length ? (
             <>

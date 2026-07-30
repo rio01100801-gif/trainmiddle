@@ -23,6 +23,7 @@ import type { SyncRecord } from "../core/healthImport";
 import type { CustomMenu, WeekTemplate } from "../core/weekTemplate";
 import type { PastEntry } from "../core/backfill";
 import type { PhraseRule } from "../core/bulkImport";
+import type { FitImportRecord } from "../core/fitToSession";
 import { SCHEMA_SQL } from "./schema";
 
 export class Repo implements Store {
@@ -317,6 +318,22 @@ export class Repo implements Store {
     ).map((r) => JSON.parse(r.json) as SyncRecord);
   }
 
+  // ---- FIT取込（Phase 4: 3層データモデル） ----
+  saveFitImport(r: FitImportRecord): void {
+    this.db
+      .prepare(
+        "INSERT INTO fit_imports (id, imported_at, json) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET imported_at = excluded.imported_at, json = excluded.json"
+      )
+      .run(r.id, r.importedAtUtc, JSON.stringify(r));
+  }
+  listFitImports(): FitImportRecord[] {
+    return (
+      this.db.prepare("SELECT json FROM fit_imports ORDER BY imported_at DESC").all() as {
+        json: string;
+      }[]
+    ).map((r) => JSON.parse(r.json) as FitImportRecord);
+  }
+
   // ---- 故障ログ（2-3） ----
   saveInjury(i: InjuryLog): void {
     this.db
@@ -380,9 +397,26 @@ export class Repo implements Store {
       "athlete", "goal", "races", "sessions", "strength_sessions", "session_results",
       "daily_checks", "fitness_markers", "cfe", "heat_blocks", "heat_entries",
       "injuries", "week_template", "custom_menus", "phrases", "past_entries",
-      "syncs", "change_log", "kv",
+      "syncs", "change_log", "kv", "fit_imports",
     ]) {
       this.db.prepare(`DELETE FROM ${t}`).run();
+    }
+  }
+
+  /**
+   * 実際のSQLトランザクション。`exec` は3つの実体（bun:sqlite / node:sqlite /
+   * better-sqlite3）すべてが同じ生SQLで対応するため、新しい抽象を足さずに済む。
+   * ネストは想定していない（呼び出し元がネストしないよう注意する）。
+   */
+  transaction<T>(fn: () => T): T {
+    this.db.exec("BEGIN");
+    try {
+      const result = fn();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
     }
   }
 

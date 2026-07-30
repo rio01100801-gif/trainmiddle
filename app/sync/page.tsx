@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Card, ConfirmButton } from "../components/ui";
+import { Card, ConfirmButton, StatusText } from "../components/ui";
 import { localToday } from "@/lib/core/dates";
 import {
   decideSync,
@@ -305,23 +305,20 @@ export default function SyncPage() {
           />
         </label>
         {configError && (url || anonKey) ? (
-          <p className="text-[11.5px] mb-2" style={{ color: "var(--amber)" }}>
+          <StatusText kind="warning" className="text-[11.5px] mb-2">
             {configError}
-          </p>
+          </StatusText>
         ) : null}
         {/* 保存し忘れに気づけるようにする。直したつもりで直っていない、を防ぐ */}
         {dirty && (url || anonKey) ? (
-          <p className="text-[11.5px] mb-2" style={{ color: "var(--amber)" }}>
+          <StatusText kind="warning" className="text-[11.5px] mb-2">
             入力欄の内容がまだ保存されていません。
             {saved.url ? `いま保存されている接続先は ${saved.url} です。` : ""}
             保存しないと、画面を開き直したときに元に戻ります。
-          </p>
+          </StatusText>
         ) : null}
         {tested ? (
-          <p
-            className="text-[11.5px] leading-relaxed mb-2"
-            style={{ color: tested.ok ? "var(--forge)" : "var(--amber)" }}
-          >
+          <StatusText kind={tested.ok ? "success" : "warning"} className="text-[11.5px] leading-relaxed mb-2">
             {tested.message}
             <span className="block mt-1 num" style={{ color: "var(--text-3)" }}>
               種別: {tested.ok ? "ok" : tested.kind}
@@ -329,12 +326,12 @@ export default function SyncPage() {
               {tested.urlHost ? ` ／ ${tested.urlHost}` : ""}
               {` ／ ${tested.durationMs}ms`}
             </span>
-          </p>
+          </StatusText>
         ) : null}
         {storageError ? (
-          <p className="text-[11.5px] mb-2" style={{ color: "var(--red)" }}>
+          <StatusText kind="error" className="text-[11.5px] mb-2">
             保存領域エラー: {storageError}
-          </p>
+          </StatusText>
         ) : null}
         <div className="flex gap-2 flex-wrap">
           <button className="btn-volt" onClick={save} disabled={!configured || busy}>
@@ -424,10 +421,10 @@ export default function SyncPage() {
                 先に接続先を入れて保存してください。
               </p>
             ) : dirty ? (
-              <p className="text-[11.5px] mt-2" style={{ color: "var(--amber)" }}>
+              <StatusText kind="warning" className="text-[11.5px] mt-2">
                 入力欄が未保存です。保存してからサインインしてください
                 （保存済みの値でサインインするため）。
-              </p>
+              </StatusText>
             ) : null}
           </>
         )}

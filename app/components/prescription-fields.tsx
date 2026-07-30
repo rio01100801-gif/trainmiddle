@@ -2,6 +2,7 @@
 import * as React from "react";
 import { useEffect, useRef, useState } from "react";
 import { resizeValues, type PrescriptionStructure, type RepSlot } from "@/lib/core/prescription";
+import { StatusText } from "./ui";
 
 /**
  * N-2 / N-3 メニュー本文に合わせて入力欄を組み立てる部分。
@@ -261,9 +262,9 @@ export function PrescriptionFields({
         </p>
       ) : null}
       {uncertain ? (
-        <p className="text-[10.5px] mb-1.5" style={{ color: "var(--amber)" }}>
+        <StatusText kind="warning" className="text-[10.5px] mb-1.5">
           設定タイムが書かれていないためカテゴリが決まりません。選んでください
-        </p>
+        </StatusText>
       ) : null}
       {structure && !structure.recognized ? (
         <p className="text-[10.5px] mb-1.5" style={{ color: "var(--text-3)" }}>

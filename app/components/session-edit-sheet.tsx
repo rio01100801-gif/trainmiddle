@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { useEffect, useState } from "react";
-import { Card, ConfirmButton } from "./ui";
+import { Card, ConfirmButton, StatusText } from "./ui";
 import { withQuery } from "./route-query";
 import { PrescriptionFields, prescriptionPayload, usePrescriptionFields } from "./prescription-fields";
 import type { Session } from "@/lib/core/types";
@@ -107,16 +107,16 @@ export function SessionEditSheet({
       <PrescriptionFields state={fields} emptyCategoryLabel="カテゴリ" />
 
       {err ? (
-        <p className="text-[11.5px] mb-2" style={{ color: "var(--red)" }}>
+        <StatusText kind="error" className="text-[11.5px] mb-2">
           {err}
-        </p>
+        </StatusText>
       ) : null}
       {violations.length > 0 ? (
         <div className="mb-2">
           {violations.map((v: any, i: number) => (
-            <p key={i} className="text-[11px] mb-1" style={{ color: "var(--red)" }}>
+            <StatusText key={i} kind="error" className="text-[11px] mb-1">
               {v.rule}: {v.message}
-            </p>
+            </StatusText>
           ))}
           <button
             className="btn-ghost !text-[11.5px]"

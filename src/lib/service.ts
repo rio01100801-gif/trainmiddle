@@ -132,14 +132,23 @@ import { buildWeeklyReview, type WeeklyReview } from "./core/weeklyReview";
 import {
   BACKUP_FORMAT,
   BACKUP_VERSION,
-  isBackupFile,
   mergeByDate,
   mergeById,
   shouldRemindBackup,
+  validateBackup,
   type BackupFile,
   type RestoreMode,
   type RestoreReport,
 } from "./core/backup";
+import {
+  buildBackfilledSessionAndResult,
+  buildLinkedResult,
+  deriveFitActuals,
+  fitToSessionAndResult,
+  type FitImportRecord,
+} from "./core/fitToSession";
+import type { FitParseResult } from "./core/fitParse";
+import type { IntervalClassifyResult, IntervalKind } from "./core/intervalClassify";
 import {
   planTaper,
   shouldSuppressVolumeAdjustment,
@@ -1353,6 +1362,201 @@ export function rebuildPastDerived(repo: Store): PastRebuildResult {
 export function rebuildPastDerivedOnce(repo: Store): PastRebuildResult | undefined {
   if (repo.getKv<string>(PAST_REBUILD_KEY) === PAST_REBUILD_VERSION) return undefined;
   return rebuildPastDerived(repo);
+}
+
+// ---------------------------------------------------------------------------
+// FIT取込 Phase 4: 3層データモデルでの保存
+// ---------------------------------------------------------------------------
+
+export interface ImportFitFileInput {
+  fileName: string;
+  /** 元ファイルの生バイト列（base64） */
+  rawBytesBase64: string;
+  parse: FitParseResult;
+  autoClassification: IntervalClassifyResult;
+  /** 本人が画面上で直した後の最終的な種別（lap配列と同じ並び） */
+  confirmedKinds: IntervalKind[];
+  /**
+   * FIT取込 Phase 6: 計画済みセッションへの紐付け。
+   * 省略時（1回目の呼び出し）は確認要否だけを判定して返す。
+   * 文字列 = そのセッションIDへ紐付ける。null = 紐付けず新規のbackfilled記録にする。
+   */
+  linkToSessionId?: string | null;
+}
+
+export interface FitPlannedCandidate {
+  id: string;
+  name: string;
+  prescription: string;
+  category: SessionCategory;
+}
+
+/** 計画済みセッションが見つかったので、紐付けるかどうかを本人に確認してほしいという応答 */
+export interface ImportFitFileNeedsConfirmation {
+  needsConfirmation: true;
+  date: string;
+  candidates: FitPlannedCandidate[];
+}
+
+export interface ImportFitFileOutput {
+  needsConfirmation?: false;
+  record: FitImportRecord;
+  session: Session;
+  result: SessionResult;
+  warnings: string[];
+  /** 同じ元ファイル（生バイト列が完全一致）が既に取り込まれていた場合 true。新規登録ではなく上書き */
+  duplicate: boolean;
+  /** 既存の計画済みセッションへ紐付けたか（true）、新規のbackfilled記録か（false） */
+  linked: boolean;
+  /** 紐付けた場合のみ。CFE更新・ルール違反など、通常の記録経路と同じ結果 */
+  processResult?: ProcessResultOutput;
+}
+
+export type ImportFitFileResult = ImportFitFileNeedsConfirmation | ImportFitFileOutput;
+
+/**
+ * FITの「確認済み」内容を登録する。
+ *
+ * FIT取込 Phase 6: 計画済みセッションとの紐付け。
+ * 導出した日付に`status: "planned"`のセッションがあれば、`linkToSessionId`を
+ * 指定せずに呼んだ1回目はいったん保存せず`needsConfirmation`を返す。
+ * 呼び出し側（画面）が本人に確認し、選んだ結果を`linkToSessionId`に入れて
+ * もう一度呼ぶ。
+ *
+ * - 紐付ける場合: `processResult`（通常の記録経路）にそのまま渡す。
+ *   手入力で記録した場合と同じくCFE更新・ルールエンジンが働く——
+ *   「今日やる予定だった練習を、手入力の代わりにFITで正確に記録する」ことと
+ *   同じだから。計画とFITの実測内容（インターバルかジョグか等）が食い違って
+ *   いても検知しない（通常の手入力経路も同様に検知していないため、
+ *   ここだけ新しく厳しくしない）。
+ * - 紐付けない場合（計画が無い、または本人が「新しい記録として登録する」を
+ *   選んだ場合）: 従来通り`backfilled: true`の新規セッションを作る。
+ *   ルールエンジンの評価対象・自動生成の上書き対象からは外れる
+ *   （過去データの遡り入力と同じ扱い）。
+ *
+ * 元ファイル・自動解析（`FitImportRecord`）と導出したSession/SessionResultは
+ * 1つのトランザクションで保存する（対象2と同じしくみ）。
+ *
+ * FIT取込 Phase 5: 二重登録防止。生バイト列（元ファイル）が既存の取込と
+ * 完全一致すれば、そのときのidをそのまま再利用する。`saveFitImport` /
+ * `saveSession` / `saveResult` はどれも同じidへのINSERT...ON CONFLICT DO UPDATE
+ * （またはIndexedDBでの同id上書き）なので、同じファイルの再登録は新規の
+ * 二重登録ではなく上書きになる——一括入力（`pe-bulk-*`）やApple Health
+ * （`ah-*`）が内容から決まるidで自然に二重登録を防いでいるのと同じ考え方。
+ * 完全一致以外（同じ活動を別の書き出しで得たファイル等）は別記録として扱う
+ * （推測で「同じ活動だろう」と判定しない）。
+ */
+export function importFitFile(repo: Store, input: ImportFitFileInput): ImportFitFileResult {
+  const cfe = repo.getCfe();
+  const derived = deriveFitActuals({
+    parse: input.parse,
+    confirmedKinds: input.confirmedKinds,
+    grpSecPerM: cfe ? cfe.estimated800mSec / 800 : undefined,
+  });
+
+  if (input.linkToSessionId === undefined) {
+    const planned = repo
+      .listSessions(derived.date, derived.date)
+      .filter((s) => s.status === "planned");
+    if (planned.length > 0) {
+      return {
+        needsConfirmation: true,
+        date: derived.date,
+        candidates: planned.map((s) => ({
+          id: s.id,
+          name: s.name,
+          prescription: s.prescription,
+          category: s.category,
+        })),
+      };
+    }
+  }
+
+  const existing = repo
+    .listFitImports()
+    .find((r) => r.rawBytesBase64 === input.rawBytesBase64);
+  // Date.now()だけだと、短時間に別ファイルを続けて取り込んだ場合にミリ秒が
+  // 衝突しうる（衝突すると全く別の記録を上書きしてしまう）。二重登録防止の
+  // 前提が崩れるため、乱数を足して衝突を避ける。
+  const id = existing?.id ?? `fit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  if (input.linkToSessionId) {
+    const target = repo.getSession(input.linkToSessionId);
+    if (!target) throw new Error("紐付け先のセッションが見つかりません");
+    const result = buildLinkedResult(derived, target.id, `fit-r-${id}`, input.fileName);
+    const { processOutput, record } = repo.transaction(() => {
+      const processOutput = processResult(repo, result);
+      const savedResult = repo.resultForSession(target.id)!;
+      const record: FitImportRecord = {
+        id,
+        importedAtUtc: new Date().toISOString(),
+        fileName: input.fileName,
+        rawBytesBase64: input.rawBytesBase64,
+        parse: input.parse,
+        autoClassification: input.autoClassification,
+        confirmedKinds: input.confirmedKinds,
+        sessionId: target.id,
+        resultId: savedResult.id,
+      };
+      repo.saveFitImport(record);
+      return { processOutput, record };
+    });
+    return {
+      record,
+      session: repo.getSession(target.id)!,
+      result: repo.resultForSession(target.id)!,
+      warnings: derived.warnings,
+      duplicate: existing !== undefined,
+      linked: true,
+      processResult: processOutput,
+    };
+  }
+
+  const { session, result } = buildBackfilledSessionAndResult(derived, id, input.fileName);
+  const record: FitImportRecord = {
+    id,
+    importedAtUtc: new Date().toISOString(),
+    fileName: input.fileName,
+    rawBytesBase64: input.rawBytesBase64,
+    parse: input.parse,
+    autoClassification: input.autoClassification,
+    confirmedKinds: input.confirmedKinds,
+    sessionId: session.id,
+    resultId: result.id,
+  };
+  repo.transaction(() => {
+    repo.saveFitImport(record);
+    repo.saveSession(session);
+    repo.saveResult(result);
+  });
+  return { record, session, result, warnings: derived.warnings, duplicate: existing !== undefined, linked: false };
+}
+
+/**
+ * 保存済みのFIT取込から、セッションと結果を作り直す。
+ *
+ * `rebuildPastDerived`（過去データ）と同じ理由: `fitToSessionAndResult` は
+ * 取り込んだ瞬間にしか走らないので、変換ロジックを直しても既存の取込ぶんには
+ * 反映されない。`FitImportRecord`（元ファイル＋自動解析＋確認済み種別）が
+ * 唯一の元データで、`fit-s-*`/`fit-r-*` はそこから機械的に決まる。
+ */
+export function rebuildFitDerived(repo: Store): { imports: number; rebuilt: number } {
+  const imports = repo.listFitImports();
+  const cfe = repo.getCfe();
+  let rebuilt = 0;
+  for (const record of imports) {
+    const { session, result } = fitToSessionAndResult({
+      sourceId: record.id,
+      fileName: record.fileName,
+      parse: record.parse,
+      confirmedKinds: record.confirmedKinds,
+      grpSecPerM: cfe ? cfe.estimated800mSec / 800 : undefined,
+    });
+    repo.saveSession(session);
+    repo.saveResult(result);
+    rebuilt++;
+  }
+  return { imports: imports.length, rebuilt };
 }
 
 export interface AssessFitnessOutput extends FitnessAssessment {
@@ -2803,6 +3007,7 @@ export function exportBackup(repo: Store, now: string): BackupFile {
     customMenus: repo.listCustomMenus(),
     phrases: repo.listPhrases(),
     pastEntries: repo.listPastEntries(),
+    fitImports: repo.listFitImports(),
     kv: repo.listKv<unknown>(""),
   };
   const counts: Record<string, number> = {};
@@ -2829,18 +3034,57 @@ export function backupStatus(repo: Store, today: string) {
  * 復元。
  * replace = いま入っているものを消してから入れる
  * merge   = idで突き合わせて足す（重複を作らない）
+ *
+ * 対象2（安全なバックアップ復元）: 完全検証が終わるまで既存データを削除しない。
+ * `validateBackup` は各コレクションの形（配列か・idが文字列か）を先に確認する。
+ * さらに実際の書き込み（`resetAll()` を含む）は `repo.transaction()` で包み、
+ * 検証をすり抜けた想定外のデータで途中失敗しても、開始前の状態へ完全に戻す
+ * （SQLiteは実トランザクション、IndexedDBはスナップショットからの差し戻し）。
  */
 export function importBackup(
   repo: Store,
   file: unknown,
   mode: RestoreMode
 ): RestoreReport {
-  if (!isBackupFile(file)) {
-    throw new Error("このファイルはFORGEの書き出しファイルではありません");
+  const validation = validateBackup(file);
+  if (!validation.ok) {
+    const detail = validation.issues
+      .slice(0, 5)
+      .map((i) => `${i.path}: ${i.reason}`)
+      .join(" / ");
+    throw new Error(`このファイルは復元できません（${detail}）`);
   }
+  const validFile = validation.file;
   const report: RestoreReport = { mode, added: {}, updated: {}, kept: {}, warnings: [] };
-  const d = file.data as Record<string, any>;
+  const d = validFile.data as Record<string, any>;
 
+  repo.transaction(() => {
+    importBackupData(repo, d, mode, report);
+  });
+
+  if (validFile.version > BACKUP_VERSION) {
+    report.warnings.push(
+      `このファイルは新しい形式（v${validFile.version}）です。読めない項目がある可能性があります`
+    );
+  }
+  // 守ったことを黙っていると、取り込めなかったのか守られたのかが分からない
+  const keptSessions = report.kept.sessions ?? 0;
+  if (keptSessions > 0) {
+    report.warnings.push(
+      `この端末の練習 ${keptSessions}件（完了済み・本人が編集・固定枠・手動追加・遡り入力）は` +
+        `そのまま残しました。取り込んだ側の内容で置き換えたい場合は「クラウドを優先」を選んでください`
+    );
+  }
+  return report;
+}
+
+/** importBackup の実際の書き込み部分。repo.transaction() の中でだけ呼ぶ */
+function importBackupData(
+  repo: Store,
+  d: Record<string, any>,
+  mode: RestoreMode,
+  report: RestoreReport
+): void {
   if (mode === "replace") repo.resetAll();
 
   if (d.athlete) repo.saveAthlete(d.athlete);
@@ -2882,6 +3126,7 @@ export function importBackup(
   put("phrases", d.phrases, () => repo.listPhrases(), (x) => repo.savePhrase(x));
   put("pastEntries", d.pastEntries, () => repo.listPastEntries(), (x) => repo.savePastEntry(x));
   put("heatBlocks", d.heatBlocks, () => repo.listHeatBlocks(), (x) => repo.saveHeatBlock(x));
+  put("fitImports", d.fitImports, () => repo.listFitImports(), (x) => repo.saveFitImport(x));
 
   if (Array.isArray(d.dailyChecks)) {
     const cur = mode === "replace" ? [] : repo.listDailyChecks();
@@ -2896,21 +3141,6 @@ export function importBackup(
   if (Array.isArray(d.kv)) {
     for (const x of d.kv) repo.saveKv(x.key, x.value);
   }
-
-  if (file.version > BACKUP_VERSION) {
-    report.warnings.push(
-      `このファイルは新しい形式（v${file.version}）です。読めない項目がある可能性があります`
-    );
-  }
-  // 守ったことを黙っていると、取り込めなかったのか守られたのかが分からない
-  const keptSessions = report.kept.sessions ?? 0;
-  if (keptSessions > 0) {
-    report.warnings.push(
-      `この端末の練習 ${keptSessions}件（完了済み・本人が編集・固定枠・手動追加・遡り入力）は` +
-        `そのまま残しました。取り込んだ側の内容で置き換えたい場合は「クラウドを優先」を選んでください`
-    );
-  }
-  return report;
 }
 
 // ---------------------------------------------------------------------------

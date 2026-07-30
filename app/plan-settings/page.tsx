@@ -4,6 +4,7 @@ import {
   Card,
   CATEGORY_COLORS,
   ConfirmButton,
+  StatusText,
   UndoBar,
   ViolationList,
 } from "../components/ui";
@@ -415,7 +416,7 @@ function CustomMenuCard() {
       title="自作メニューの登録"
       right={
         <button
-          className="text-[11px] min-h-[36px] px-2"
+          className="text-[11px] min-h-[44px] px-2"
           style={{ color: "var(--volt)" }}
           onClick={() => setOpen((v) => !v)}
         >
@@ -552,13 +553,9 @@ function CustomMenuCard() {
                     {convertedText}
                   </div>
                   {converted.notes.map((n: string, i: number) => (
-                    <p
-                      key={i}
-                      className="text-[11px] leading-relaxed mt-1"
-                      style={{ color: "var(--amber)" }}
-                    >
+                    <StatusText key={i} kind="warning" className="text-[11px] leading-relaxed mt-1">
                       {n}
-                    </p>
+                    </StatusText>
                   ))}
                   <p className="text-[10.5px] leading-relaxed mt-1.5" style={{ color: "var(--text-3)" }}>
                     換算値は実測ではありません。1回やってみて合わなければ動かしてください。

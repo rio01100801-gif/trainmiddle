@@ -22,6 +22,7 @@ import type { ChangeLogEntry, Store } from "../src/lib/db/store";
 import type { SyncRecord } from "../src/lib/core/healthImport";
 import type { PastEntry } from "../src/lib/core/backfill";
 import type { PhraseRule } from "../src/lib/core/bulkImport";
+import type { FitImportRecord } from "../src/lib/core/fitToSession";
 import type { CustomMenu, WeekTemplate } from "../src/lib/core/weekTemplate";
 
 export interface AppState {
@@ -42,6 +43,7 @@ export interface AppState {
   customMenus: CustomMenu[];
   pastEntries: PastEntry[];
   phrases: PhraseRule[];
+  fitImports: FitImportRecord[];
   kv: { key: string; value: unknown }[];
   changeLog: ChangeLogEntry[];
   version: 1;
@@ -62,6 +64,7 @@ export function emptyState(): AppState {
     customMenus: [],
     pastEntries: [],
     phrases: [],
+    fitImports: [],
     kv: [],
     changeLog: [],
     version: 1,
@@ -309,6 +312,20 @@ export class MemoryStore implements Store {
     return [...this.state.syncs].reverse().slice(0, limit);
   }
 
+  // ---- FIT取込（Phase 4: 3層データモデル） ----
+  saveFitImport(r: FitImportRecord): void {
+    if (!this.state.fitImports) this.state.fitImports = [];
+    const i = this.state.fitImports.findIndex((x) => x.id === r.id);
+    if (i >= 0) this.state.fitImports[i] = r;
+    else this.state.fitImports.push(r);
+    this.touch();
+  }
+  listFitImports(): FitImportRecord[] {
+    return [...(this.state.fitImports ?? [])].sort((a, b) =>
+      b.importedAtUtc.localeCompare(a.importedAtUtc)
+    );
+  }
+
   // ---- 故障ログ（2-3） ----
   saveInjury(i: InjuryLog): void {
     const idx = this.state.injuries.findIndex((x) => x.id === i.id);
@@ -364,6 +381,27 @@ export class MemoryStore implements Store {
     this.state = emptyState();
     this.touch();
   }
+
+  /**
+   * JSは単一スレッドなので、`fn` の実行中に他の処理が割り込むことはない。
+   * これを利用して、実行前の状態をスナップショットしておき、例外が起きたら
+   * 差し戻す。SQLite側の実トランザクション（Repo.transaction）と同じ役割。
+   *
+   * `fn` の中の save系メソッドは呼ばれるたびに `touch()`（＝永続化のデバウンス
+   * 予約）を実行する。差し戻した後にもう一度 `touch()` を呼ばないと、
+   * 差し戻し前の（壊れた）状態を指したままの予約がそのままIndexedDBへ
+   * 書き込まれてしまう。かならず差し戻し後に `touch()` を呼ぶ。
+   */
+  transaction<T>(fn: () => T): T {
+    const snapshot = structuredClone(this.state);
+    try {
+      return fn();
+    } catch (error) {
+      this.state = snapshot;
+      this.touch();
+      throw error;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -411,27 +449,141 @@ export async function loadState(): Promise<AppState> {
   return emptyState();
 }
 
-let saveTimer: ReturnType<typeof setTimeout> | undefined;
+/**
+ * 永続化の結果。
+ *
+ * 以前は `persistState` が `void` を返し、IndexedDB・localStorageの両方が
+ * 失敗しても呼び出し側に何も伝わらなかった。画面は「保存した」つもりのまま、
+ * 実際は端末に何も残っていないことがありえた。
+ */
+export type PersistFailureReason = "quota" | "unavailable" | "unknown";
+export type PersistOutcome =
+  | { ok: true; via: "indexeddb" | "localstorage" }
+  | { ok: false; reason: PersistFailureReason; detail: string };
 
-/** デバウンス付き保存。書き込み頻度を抑えつつ取りこぼしを防ぐ */
-export function persistState(state: AppState): void {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
+/**
+ * 実際のIndexedDB書き込みへのアクセス。
+ *
+ * IndexedDB自体はテスト環境（Node/vitest）に存在しないため、
+ * `supabase.ts` の `fetchImpl` と同じ形で注入可能にし、
+ * 「成功」「失敗」を明示的に表現したフェイクで分岐を検証できるようにする。
+ */
+export interface StateIndexedDb {
+  put(key: string, value: AppState): Promise<void>;
+}
+export interface StateLocalStorage {
+  setItem(key: string, value: string): void;
+}
+export interface PersistDeps {
+  indexedDb?: StateIndexedDb;
+  localStorageImpl?: StateLocalStorage;
+}
+
+function defaultIndexedDb(): StateIndexedDb {
+  return {
+    put: (key, value) =>
+      openDb().then(
+        (db) =>
+          new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(STORE_NAME, "readwrite");
+            tx.objectStore(STORE_NAME).put(JSON.parse(JSON.stringify(value)), key);
+            tx.oncomplete = () => {
+              db.close();
+              resolve();
+            };
+            tx.onerror = () => {
+              db.close();
+              reject(tx.error);
+            };
+          })
+      ),
+  };
+}
+
+function defaultLocalStorage(): StateLocalStorage {
+  return { setItem: (key, value) => localStorage.setItem(key, value) };
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function classifyError(error: unknown): "quota" | "unavailable" | "unknown" {
+  const name =
+    error && typeof error === "object" && "name" in error ? String((error as { name: unknown }).name) : "";
+  if (name === "QuotaExceededError") return "quota";
+  if (name === "SecurityError" || name === "InvalidStateError") return "unavailable";
+  return "unknown";
+}
+
+async function writeState(state: AppState, deps: PersistDeps): Promise<PersistOutcome> {
+  const indexedDb = deps.indexedDb ?? defaultIndexedDb();
+  try {
+    await indexedDb.put(KEY, state);
+    return { ok: true, via: "indexeddb" };
+  } catch {
+    const localStorageImpl = deps.localStorageImpl ?? defaultLocalStorage();
     try {
-      const db = await openDb();
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, "readwrite");
-        tx.objectStore(STORE_NAME).put(JSON.parse(JSON.stringify(state)), KEY);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-      });
-      db.close();
-    } catch {
-      try {
-        localStorage.setItem(DB_NAME, JSON.stringify(state));
-      } catch {
-        /* 容量超過等 */
-      }
+      localStorageImpl.setItem(DB_NAME, JSON.stringify(state));
+      return { ok: true, via: "localstorage" };
+    } catch (localStorageError) {
+      return {
+        ok: false,
+        reason: classifyError(localStorageError),
+        detail: errorText(localStorageError),
+      };
     }
+  }
+}
+
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+let pendingState: AppState | undefined;
+let pendingDeps: PersistDeps = {};
+let pendingWaiters: Array<(outcome: PersistOutcome) => void> = [];
+
+function settlePending(outcome: PersistOutcome): void {
+  const waiters = pendingWaiters;
+  pendingWaiters = [];
+  for (const resolve of waiters) resolve(outcome);
+}
+
+/**
+ * デバウンス付き保存。書き込み頻度を抑えつつ取りこぼしを防ぐ。
+ *
+ * 戻り値のPromiseは、実際に書き込みが走った時点（デバウンス後、または
+ * `flushPendingState` による即時実行時）に解決する。呼び出し側は
+ * これを見て「本当に永続化できたか」を確認できる。
+ */
+export function persistState(state: AppState, deps: PersistDeps = {}): Promise<PersistOutcome> {
+  pendingState = state;
+  pendingDeps = deps;
+  clearTimeout(saveTimer);
+  const promise = new Promise<PersistOutcome>((resolve) => pendingWaiters.push(resolve));
+  saveTimer = setTimeout(() => {
+    const s = pendingState;
+    const d = pendingDeps;
+    pendingState = undefined;
+    if (s === undefined) return;
+    void writeState(s, d).then(settlePending);
   }, 250);
+  return promise;
+}
+
+/**
+ * 保留中の保存をデバウンスを待たず即座に実行する。
+ *
+ * `pagehide` / `visibilitychange`（バックグラウンド移行）で呼ぶ。
+ * アプリ終了直前の更新がデバウンスの250ms待ちで失われることを防ぐ。
+ * 保留中の変更が無ければ何もしない。
+ */
+export function flushPendingState(): Promise<PersistOutcome | undefined> {
+  const s = pendingState;
+  const d = pendingDeps;
+  if (s === undefined) return Promise.resolve(undefined);
+  clearTimeout(saveTimer);
+  pendingState = undefined;
+  return writeState(s, d).then((outcome) => {
+    settlePending(outcome);
+    return outcome;
+  });
 }

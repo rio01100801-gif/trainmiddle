@@ -122,9 +122,461 @@ verify      typecheck && test && build:all && e2e && e2e:update
 
 ## 作業中
 
-**なし。** NEXT-002 は Phase 2-1〜2-4 まで commit・push・配信（`forge-v35`）済みで、
-実機での最終同期確認も完了（本人確認・2026-07-30）。**NEXT-002 は完全に完了。**
-次のNEXTは未着手。
+**NEXT-003（対象1＋対象2）・NEXT-004（FIT取込 Phase 1〜6・全項目）・
+NEXT-005（UI/UX 1〜5・全項目）実装・検証済み・未コミット。**
+VERSION・commit・push・配信は指示により未実施。FIT/Garmin取込は
+Phase 6（既存予定との紐付け）まで完了し、優先順位メモの次項目
+「統合監査」に進める状態。
+
+---
+
+## NEXT-005（UI/UX・iPhone操作性・アクセシビリティ改善 1〜5）✅ 実装・検証済み・未コミット
+
+**優先順位メモ**の3番目（FIT/Garminの後、統合監査の前）。NEXT-004でFIT/Garmin
+Phase 1〜4が完了した時点で、Phase 5・6（二重登録防止・既存予定との紐付け）の
+計画を提示したが、「先に優先順位メモの次項目（UI/UX）に進む」という指示で
+Phase 5・6は保留し、こちらへ着手。
+
+`docs/FORGE_BACKLOG.md`の「9. アイコン・ロード画面・アプリ内UI」「10. iPhone・
+アクセシビリティ」を調査し、実機無しで対応・検証できる項目から着手する計画を
+提示 →「いいよ」で1〜3を承認、続けて4〜5も「これ」で承認を得て実施。
+
+### 1. 320px幅（iPhone SE相当）での横スクロール検証
+
+既存のE2E横はみ出しチェックは390px幅でしか回っていなかった。同じチェックを
+320px幅でも実行するようにした（`pwa/e2e.mjs`）。実装変更は無し、検証範囲を
+広げただけ——結果、既存コードのまま320px幅でも横スクロールは発生しないことを
+確認できた。
+
+### 2. タップ領域44×44の統一
+
+`.seg button`（40px→44px）、`app/results/page.tsx`故障ログの「+記録する」
+トグル（32px→44px）、`app/plan-settings/page.tsx`自作メニューの「+登録する」
+トグル（36px→44px）、カレンダー期間送り矢印（高さ44pxはあったが幅が不足→
+`min-w-[44px]`追加、`aria-label`も付与）。FIT取込lap一覧の`<select>`（32px）は
+密なレビュー用リストのため対象外にした（README参照）。
+
+E2Eにセグメントタブの高さ・期間送りボタンの幅の実測チェックを追加。**T-4で
+両方の数値を戻して赤に戻ることを確認して復元。**
+
+### 3. ConfirmDialogのアクセシビリティ
+
+`role="dialog"`/`aria-modal="true"`/`aria-labelledby`、開いた瞬間のフォーカス
+移動、Escapeで閉じる、Tabキーのフォーカストラップ（ダイアログの外へ抜けない）、
+閉じたときに呼び出し元へフォーカスを戻す——を`ConfirmDialog`
+（`app/components/ui.tsx`）に追加。`ConfirmButton`はこれを内部で使うため
+自動的に反映される。
+
+`onCancel`はほとんどの呼び出し元がインライン関数で渡すため、`useEffect`の
+依存配列にそのまま入れると親の再描画のたびにフォーカスが先頭ボタンへ
+引き戻されるバグになる。最新の関数はrefで保持し、effectの依存は`open`だけにした。
+
+**検証**: このプロジェクトには単体テストでReactコンポーネントを描画する土台
+（jsdom・testing-library）が無く、既存の方針（コアロジックは単体テスト・画面は
+E2E）に合わせ、E2E（自作メニュー削除の確認ダイアログを流用）で
+role/aria-modal・Escape・フォーカス復帰・フォーカストラップの4点をキーボード
+操作で確認。**T-4でrole/aria-modal属性の削除、Tabのラップアラウンド処理の
+無効化をそれぞれ行い、両方とも赤に戻ることを確認して復元。**
+
+### 4. iOSキーボード対策（interactive-widget=resizes-content）
+
+編集フォーム（`SessionEditSheet`・カレンダー追加シート）を調べると、保存
+ボタンは`position: fixed`ではなく通常のフローにあり、ネイティブのフォーカス
+スクロールで足りる作りだった——固定位置の保存ボタンが隠れる問題は無かった。
+一方、下部タブバー・FABは`position: fixed`で、iOSはキーボード表示中も
+レイアウトビューポートを縮めないため裏に取り残される可能性がある。独自の
+`visualViewport`監視JSではなく、標準の**`interactive-widget=resizes-content`**
+をviewport metaに追加（`pwa/index.html`・`app/layout.tsx`。後者は
+`viewportFit: "cover"`も無かったため併せて追加——既存の抜けだった）。
+
+検証: E2Eでmetaタグの内容を確認。**実機での最終確認は別途必要**（Chromiumは
+キーボードによるビューポート縮小を再現しない）。
+
+### 5. 状態表現を色だけに頼らない（StatusText）
+
+色だけで警告・エラーを示していた箇所24個のうち21個（同じ`<p style={{color:
+"var(--red|amber)"}}>`という形）を共通コンポーネント`StatusText`
+（`app/components/ui.tsx`。既存の`ViolationList`のアイコン・色の組み合わせに
+揃え、`role="alert"/"status"`を付与）へ機械的に置き換え。残り3個は太字という
+色以外の視覚的区別が既にあるため対象外、`Notices`（ホームの1行通知）は項目に
+よって色の意味が違う（片方は警告色でなくニュートラル）ため、警告色の項目
+だけに条件付きでアイコン・roleを追加。
+
+検証: E2E（S-6の他選手メニュー換算。PBの差を10秒超にして`converted.notes`が
+実際に出るケースに変更）で`StatusText`がrole/アイコンつきで描画されることを
+確認——1箇所の実装なので、ここで確認できれば他20箇所の呼び出しも同じ実装を
+経由していることの裏付けになる。**T-4でrole/アイコンの出力を削り、赤に戻る
+ことを確認して復元。**
+
+`npm run verify`緑（**875件 60ファイル** / `ALL E2E PASS` / `UPDATE E2E PASS`）。
+`bundle.js`は892,757バイト（Phase 4の891,467バイトから+1,290バイトのみ）。
+VERSIONは`forge-v35`のまま。
+
+### 残っていること
+
+- 実機確認待ちの既存項目（アプリアイコン・起動画面・Safe Area・iOSキーボード
+  対策の最終確認）はそのまま
+- 色だけに頼っていた24箇所のうち21箇所は`StatusText`へ置き換え済み。残り3箇所
+  （太字による区別が既にある箇所）と`Notices`の一部は意図的に対象外（README参照）
+
+---
+
+## NEXT-004（FIT/Garmin取込 Phase 1〜6・全項目完了）✅ 実装・検証済み・未コミット
+
+**優先順位メモ**（P0監査 → FIT/Garmin → UI/UX → 統合監査 → トレーニングロジック監査 →
+セキュリティ監査 → 運用整備 → 配信実行 → 実機受入試験 → データ分析）の2番目に着手。
+9 Phaseの全量は一度にやらず、**Phase 1（ファイル選択と安全な受信）だけ**実装。
+
+### 事前調査で判明した重要な事実（実装方針を決めた根拠）
+
+- **Garmin Connect のiPhoneアプリにはFITを書き出す・共有する機能が無い。** 個別
+  アクティビティの書き出しは **Garmin ConnectのWeb版でのみ**可能
+  （[Garmin Forums](https://forums.garmin.com/apps-software/mobile-apps-web/f/garmin-connect-web/421060/exporting-individual-activity-raw-data)）
+- **iOS SafariはWeb Share Target API未対応**で、PWAを共有先に登録できない
+  （[MDN](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Manifest/Reference/share_target)）
+- 上記2点により **`share_target`は実装しない**（実現できない共有方式を動くように
+  見せない、という指示に従った）。導線は「Safariで connect.garmin.com を開く →
+  Web版でFIT書き出し（ファイルアプリに保存）→ FORGEで通常のファイル選択」
+
+### やったこと
+
+`validateFitBytes`（`src/lib/core/fitImport.ts`、新規）を追加。拡張子ではなく
+FITプロトコルのヘッダー（`.FIT`シグネチャ、`header_size`が12/14、宣言された
+`data_size`と実ファイルサイズの整合）で判定する。サイズ上限5MB（800m練習の
+FITは通常数十〜数百KBという用途上の根拠、コメントに残した）。CRC値そのものの
+検証はPhase 2（`fit-file-parser`導入時）に委ねる。
+
+`pwa/entry.tsx` に `FitImportCard`（Apple Healthカードと同じ場所・パターン）を追加。
+ファイル選択→検証結果表示のみで、**解析・保存はまだしない**（Phase 2以降）。
+ファイル名はReactの自動エスケープで描画（HTML化しない）。ファイル内容はログに
+出さない。二重送信は`busy`ガードで防止。
+
+Web Workerは今回のファイルサイズ想定（同期処理で数十ms以内）では見送り、
+サイズ上限チェックを読み込み前に置くことで画面の固まりを防ぐ。
+
+### 見つけたテストの落とし穴（アプリのバグではない）
+
+E2Eで「拡張子だけ.fitの非FITファイル」を模したフィクスチャの1バイト目が
+たまたま`header_size`として不正な値になり、狙っていた`bad_signature`ではなく
+`bad_header`で拒否されていた。アプリ側は正しく動作しており、フィクスチャの
+作り方を直した（`header_size`は正しいがシグネチャだけ不正、という形に変更）。
+
+### 検証
+
+先に赤を確認（10件）→ 実装 → 緑。**署名チェックを無効化すると1件赤に戻ることを
+確認して復元**（T-4）。`npm run verify` 緑（**845件 56ファイル** / `ALL E2E PASS` /
+`UPDATE E2E PASS`）。VERSIONは`forge-v35`のまま。
+
+### 変更ファイル（Phase 1）
+
+新規: `src/lib/core/fitImport.ts` / `tests/fitImport.test.ts`（10件）。
+変更: `pwa/entry.tsx`（`FitImportCard`）/ `pwa/e2e.mjs`（1経路）/ `README.md`。
+
+### Phase 2: FIT解析（file_id / session / lap / record / event を区別）✅
+
+**採用ライブラリ**: `fit-file-parser`（MIT、`npm install`で追加）。理由と選定過程は
+README参照。**bundle.jsが約873KB→約1307KB（+約434KB）に増加**——Garmin公式の
+FIT SDKプロファイル定義を丸ごと含むため。今回は許容したが、次のPhaseに
+進む前に一度立ち止まって確認したい点として残す（下記「相談したいこと」）。
+
+`parseFitFile`（`src/lib/core/fitParse.ts`、新規）が session/lap/record/event/
+file_idを区別して抽出し、FORGEの単位（km・秒/km・UTC ISO文字列）へ変換する。
+NaN・Infinity・負数・ゼロ除算は推測で埋めず`undefined`にする。
+
+**重要な発見**: FITのfield番号は**メッセージ種別ごとに異なる**（例:
+`avg_heart_rate`はsessionがfield 16、lapはfield 15）。これは実際に
+`FitEncoder`で組み立てて`FitParser`でデコードし、ライブラリ本体のプロファイル
+定義ファイルと突き合わせて確認した（当初の想定は誤りだった）。テスト用
+フィクスチャ（`tests/fixtures/fitEncoder.ts`）はこの確認済みの番号を使っている。
+
+**タイムゾーン**: `activity`メッセージの`timestamp`（UTC）と`local_timestamp`
+（デバイスのローカル時刻）の差からUTCオフセットを求める。`local_timestamp`が
+無ければ推測せず未確定のまま（iPhoneの現在タイムゾーンでは代用しない）。
+
+`pwa/entry.tsx`の`FitImportCard`をPhase 2まで拡張し、構造検証に続けて実際に
+解析し、種目・距離・時間・平均心拍・lap/record件数・タイムゾーンを表示する。
+
+検証: 先に赤を確認（11件、うち1件は自分のテストの計算ミスで修正）→ 緑。
+E2Eに本物のFITメッセージ（`FitEncoder`で組み立て）を使った解析確認を追加。
+**sport抽出を壊すと1件赤に戻ることを確認して復元**（T-4）。`npm run verify`緑
+（**856件 57ファイル** / `ALL E2E PASS` / `UPDATE E2E PASS`）。`npm audit`の
+脆弱性件数は7件のまま変化なし（`fit-file-parser`由来の新規脆弱性なし）。
+
+### 変更ファイル（Phase 2）
+
+新規: `src/lib/core/fitParse.ts` / `tests/fitParse.test.ts`（11件）/
+`tests/fixtures/fitEncoder.ts`（テスト用FIT組み立て）。
+変更: `package.json`・`package-lock.json`（`fit-file-parser`追加）/
+`pwa/entry.tsx` / `pwa/e2e.mjs` / `README.md`。
+
+### Phase 2.5: コード分割によるbundleサイズ対策 ✅
+
+Phase 2完了時点の+434KBについて(a)許容/(b)動的import分割の2択を提示 →
+「おすすめで」の指示により(b)を実施。
+
+`scripts/build-pwa.mjs`を`format: "esm"` / `splitting: true`に変更し、
+`pwa/entry.tsx`の`FitImportCard`から`fitImport.ts`・`fitParse.ts`の読み込みを
+`await import(...)`による動的importに変更。`pwa/index.html`の`<script>`は
+`type="module"`が必須になったため変更。生成されるchunkはファイル名に
+ハッシュが入るため（`chunk-[hash].js`）、`pwa/sw.js`の`isAppShell()`
+（network-first対象）には含めていない——ハッシュ付きファイル名は「同じ名前
+なのに中身が古い」が原理的に起きないため、cache-first（既定の分岐）で問題ない。
+
+**結果**: `bundle.js`は約1307KB→**880,189バイト**（元の873KB相当＝
+`872,693バイト`とほぼ同水準、増分は約+7.5KBのみ）。FIT関連コードは
+`chunk-69sycd27.js`（425,121バイト）に分離され、FIT画面を開いた時だけ読み込む。
+
+**新たな制約**: 一度もFIT取込を開いていない状態でオフラインだとchunkが未
+キャッシュのため使えない（起動自体には影響しない）。一度オンラインで開けば
+以後はService Workerのキャッシュ経由でオフラインでも使える。
+
+**検証**: E2Eに新規経路を追加——「一度使えばオフラインでも解析できる
+（chunkがキャッシュ済み）」。`page.goto("about:blank")`→オフライン化→
+再度URLへ`goto`という**本物の文書再読み込み**で検証（ハッシュ変更だけの
+擬似ナビゲーションでは検証にならないため、途中で作り直した）。
+`npm run verify`緑（**856件 57ファイル** / `ALL E2E PASS` / `UPDATE E2E PASS`、
+うち3経路がFIT関連）。VERSIONは`forge-v35`のまま。`npm audit`の脆弱性件数
+（7件）は変化なし。
+
+### Phase 3: ラップ→区間の自動分類（ウォームアップ／メイン／リカバリー／レスト／クールダウン）✅
+
+着手前に単独の計画を提示 →「いいよ」で承認を得て実施。
+
+`classifyLaps`（`src/lib/core/intervalClassify.ts`、新規）がPhase 2で抽出した
+lap列をペース（`elapsedSec/distanceKm`）と列内の位置だけで分類する。**ルール
+ベースのみ・LLM不使用**。心拍は個人差・当日のコンディション由来の変動が
+大きいため判定に使わない。
+
+判定手順: ①距離0は「レスト」固定信頼度0.85 ②距離・時間欠落は推測せず「不明」
+信頼度0.15 ③残りの中央値より7%以上速い（`FAST_RATIO=0.93`。根拠はREADME）
+lapを「速い」とする ④「速い」lapが1つも無ければインターバル構成があると
+決めつけず全て「不明」（0.3・警告つき） ⑤「速い」lapが見つかれば、その前後で
+ウォームアップ／クールダウン、間の非「速い」lapはリカバリー、「速い」lap自体は
+メイン疾走。信頼度は中央値からのペース差で連続的に決まる。
+
+保存はまだしない（3層データモデルはPhase 4）。`pwa/entry.tsx`の
+`FitImportCard`に、lapごとの行（番号・ペース・種別プルダウン・信頼度%）を
+追加。プルダウンでの変更はこの画面上だけの一時的なもの（保存されない旨を
+明記）。`intervalClassify.ts`は重い依存を持たないため、Phase 2のような
+動的import化はしていない（静的importでも bundle への影響は無視できる小ささ）。
+
+**検証**: 先にユニットテスト（`tests/intervalClassify.test.ts`、6件）を書いて
+実装 → 緑。**fast/slow判定の不等号を反転させて赤に戻ることを確認して復元**
+（T-4）。E2Eに新規経路を追加——ウォームアップ→メイン→リカバリー→メイン→
+クールダウンの構成を持つ実際のFIT（`FitEncoder`で組み立て）を読み込ませ、
+5行の分類結果（`["warmup","main","recovery","main","cooldown"]`）・信頼度(%)
+表示・プルダウンでの手動修正が実際に反映されることを確認。**同経路をJSXの
+条件式を壊して(`laps.length > 999`)赤に戻ることを確認して復元**（T-4）。
+
+`npm run verify`緑（**862件 58ファイル** / `ALL E2E PASS` / `UPDATE E2E PASS`、
+うち4経路がFIT関連）。`bundle.js`は884,798バイト（Phase 2.5の880,189バイトから
++4,609バイトのみ）。VERSIONは`forge-v35`のまま。
+
+### Phase 4: 3層データモデルでの保存 ✅
+
+着手前に単独の計画を提示。生バイトを保存するか（(a)保存する／(b)しない）を
+確認 →「a」で承認を得て実施。
+
+**3層**: ①元ファイル（生バイト・base64）②自動解析（`FitParseResult` +
+自動判定`IntervalClassifyResult`）③確認済み（本人が画面上で直した後の
+`confirmedKinds`）。①②は`FitImportRecord`（新規:
+`src/lib/core/fitToSession.ts`）としてそのまま保存。③だけから
+`Session`/`SessionResult`を導く純粋関数`fitToSessionAndResult`は
+`PastEntry`の`toSessionAndResult`と同じ考え方（確認済み層だけから機械的に
+決まり、何度re-runしても同じ結果）。再導出用に`rebuildFitDerived`も用意。
+
+メイン疾走→本、その直後から次の「メイン」または「クールダウン」の**手前まで**
+を合算してリカバリー（`restAfterSec`/`restAfterDistanceM`）にする——
+**クールダウンまで含めてしまうバグを一度作り、単体テストの想定値
+（最後の本のrestAfterはundefinedのはず）が420秒になって発覚、直した**。
+カテゴリはCFEがあれば実測ペースとGRP比較（`categoryFromTarget`。一括入力と
+同じ関数を再利用）、無ければ距離だけの暫定値＋警告。日付はlapの開始時刻＋
+`utcOffsetSec`、無ければUTC基準＋警告。`backfilled: true`を立てる
+（過去データ遡り入力と同じ扱いで、ルールエンジン評価・自動生成上書き・
+バックアップmerge保護の対象外になる。`isOwnedByAthlete`が`backfilled`を
+見ているため追加コード不要）。
+
+保存はAPI経由で新規追加（`app/api/fit-import/route.ts` /
+`pwa/api-shim.ts`の両方）。**クライアントで解析・分類済みのデータをそのまま
+POSTし、サーバー側では再解析しない**（本人が確認した内容と保存内容を一致
+させるため。重いfit-file-parserをサーバーに持ち込む必要もない）。
+`Store`に`saveFitImport`/`listFitImports`を追加（SQLite: `fit_imports`
+テーブル、IndexedDB: `fitImports`配列）。バックアップの書き出し・復元
+（M-12・`ID_KEYED_COLLECTIONS`）にも対応。
+
+UIは`FitImportCard`に「この内容で登録する」ボタン。登録後はボタンを引っ込め
+連打による重複だけは防ぐ（二重登録の検知そのものはPhase 5）。
+
+**検証**: `fitToSessionAndResult`の単体テスト7件（`tests/fitToSession.test.ts`）
+——**restAfterの境界バグをT-4で検出**（クールダウンも含める版に戻すと
+420秒 vs undefinedの期待値で赤）。サービス層テスト6件
+（`tests/fitImportService.test.ts`）——`saveResult`だけを失敗させるProxyで
+「保存の途中で失敗したら先に書き込んだ分（元ファイル・Session）もロール
+バックされる」ことを確認（対象2と同じ`repo.transaction()`の保護）。
+**トランザクションを外すと実際に赤へ戻ることを確認して復元**（T-4）。
+E2Eに新経路2件——「登録する→記録画面（練習結果タブ）に実際に反映される」。
+
+`npm run verify`緑（**875件 60ファイル** / `ALL E2E PASS` / `UPDATE E2E PASS`、
+うち6経路がFIT関連）。`bundle.js`は891,467バイト（Phase 3の884,798バイトから
++6,669バイトのみ）。VERSIONは`forge-v35`のまま。`npm audit`の脆弱性件数
+（7件）は変化なし。
+
+### Phase 5: 二重登録防止 ✅
+
+NEXT-005（UI/UX）完了後、優先順位メモに従い保留していたこちらへ復帰
+（「保留中のFIT/Garmin Phase 5・6に戻る」の指示）。
+
+同じFITをもう一度登録すると、Phase 4までは`FitImportRecord.id`が
+`fit-${Date.now()}`で毎回新規生成されるため**完全に別の記録として二重登録**
+されていた。**元ファイル（`rawBytesBase64`）が既存の取込と完全一致すれば
+同じidを再利用する**方式にした——`saveFitImport`/`saveSession`/`saveResult`
+はどれも同じidへの`INSERT...ON CONFLICT DO UPDATE`（IndexedDBも同id上書き）
+なので、再登録は新規の二重登録ではなく上書きになる。一括入力（`pe-bulk-*`）
+やApple Health（`ah-*`）が内容から決まるidで自然に二重登録を防いでいるのと
+同じ考え方。ハッシュ関数は使わず生バイト列の完全一致で判定（完全一致以外は
+別記録として扱う。推測しない）。
+
+**副次的に見つけた問題**: `id`が`Date.now()`だけだったため、短時間に別の
+FITを続けて取り込むとミリ秒が衝突し無関係な記録を上書きしうる状態だった。
+乱数を足して修正（`fit-${Date.now()}-${ランダム6文字}`）。
+
+`importFitFile`の戻り値に`duplicate: boolean`を追加。`FitImportCard`は
+duplicateに応じてメッセージを出し分ける。
+
+**検証**: 単体テスト3件追加（同じ生バイト→id再利用・件数不変、分類を直して
+再登録→内容が実際に更新される、生バイトが違えば別記録）。E2Eで実際のUI
+操作から確認——同じファイルを選び直しても`input`の`change`が発火しないことが
+分かり、`about:blank`経由の文書再読み込みを挟む形に修正。**T-4で一致判定を
+無効化し、単体テスト2件・E2E2経路すべてが赤に戻ることを確認して復元。**
+
+`npm run verify`緑（**878件 60ファイル** / `ALL E2E PASS` / `UPDATE E2E PASS`、
+うち8経路がFIT関連）。`bundle.js`は893,128バイト（Phase 4の891,467バイトから
++1,661バイトのみ）。VERSIONは`forge-v35`のまま。
+
+### Phase 6: 既存の計画済みセッションとの紐付け ✅
+
+着手前に単独の計画を提示 →「いいよ」で承認を得て実施。
+
+先に通常の記録経路`processResult`を調査——単なる保存ではなく、`status`を
+`planned`→`completed`にし、**CFE更新・ルールエンジン・以降の予定への波及**
+まで行うことを確認。FIT取込Phase 1〜5（`backfilled: true`）はこれらを意図的に
+スキップしていたが、**計画済みセッションに紐付ける場合は、手入力で記録した
+場合と同じ扱いにすべき**と判断（「今日やる予定だった練習を、手入力の代わりに
+FITで正確に記録する」ことと同じため）。
+
+`src/lib/core/fitToSession.ts`を分割: `deriveFitActuals`（lap列から実測データ
+だけを導く純粋関数）／`buildBackfilledSessionAndResult`（従来の新規backfilled
+セッション）／`buildLinkedResult`（既存セッションのSessionResultだけを作る。
+`backfilled`は立てない）。`fitToSessionAndResult`はこの2つの組み合わせとして
+後方互換のまま維持（既存テスト・`rebuildFitDerived`は無改修で通った）。
+
+`importFitFile`に`linkToSessionId`を追加。省略時（1回目）はその日の
+`status: "planned"`セッションを探し、あれば保存せず`needsConfirmation`＋
+候補一覧を返す。2回目に文字列（紐付け先）か`null`（新規登録）を渡すと確定。
+APIルートは`body`をそのまま渡す実装だったため、フィールド追加だけで
+Next.js・PWA両方に対応できた（新規エンドポイント不要）。
+
+計画とFITの実測内容が食い違っていても検知しない——**手入力の既存経路
+（`ResultForm`）も同様に検知していない**ことを確認済みなので、ここだけ
+新しく厳しくしない。RPE・主観的しんどさはFITから取れないため、backfilledと
+同じ既定値を使う（後で記録画面から直せる）。
+
+**検証**: 単体テスト5件（計画済みが無ければ従来通り／あれば確認だけで
+何も保存しない／複数候補を全部返す／紐付けで`processResult`が実際に走り
+`backfilled`は立たない／新規登録を選ぶと計画済みセッションはそのまま残る）。
+E2Eで実際に計画済みセッションを作り、同日のFIT取込→確認画面→紐付け選択→
+`status`が`completed`になることまで確認（テスト専用に足したセッションは
+後続の間隔違反テストへの影響を避けるため終了時に削除）。**T-4で計画済み
+セッションの検出処理、`processResult`経由の保存をそれぞれ無効化し、両方とも
+赤に戻ることを確認して復元。**
+
+E2E構築時の落とし穴2件: ①IndexedDBの保存は250msデバウンスされており、
+`fetch`直後に文書を読み直すと直前の書き込みが消えることがある（待ち時間を
+追加）。②同じFITファイルを選び直す再現には文書ごとの再読み込みが要る
+（Phase 5と同じ問題）。
+
+`npm run verify`緑（**883件 60ファイル** / `ALL E2E PASS` / `UPDATE E2E PASS`、
+うち9経路がFIT関連）。`bundle.js`は896,020バイト（Phase 5の893,128バイトから
++2,892バイトのみ）。VERSIONは`forge-v35`のまま。`npm audit`の脆弱性件数
+（7件）は変化なし。
+
+これでFIT/Garmin取込（Phase 1〜6）が完了。
+
+### 完了条件
+
+- [x] 先に赤、実装後に緑（Phase 1〜6とも）
+- [x] `npm run verify` 緑
+- [x] Garmin共有仕様を実際に確認した上で実装方針を決定
+- [x] FIT field番号を実際にエンコード・デコードして確認（推測に頼らない）
+- [x] bundleサイズ対策（動的import・コード分割）
+- [x] ラップ→区間の自動分類（ルールベース・信頼度・手動修正表示）
+- [x] 3層データモデルでの保存（元ファイル・自動解析・確認済み）
+- [x] 二重登録防止（生バイト列の完全一致でid再利用）
+- [x] 既存の計画済みセッションとの紐付け（通常の記録経路を再利用）
+- [x] README更新
+- [ ] commit・push・配信（指示により保留）
+
+---
+
+## NEXT-003（対象1: PWA保存保証／対象2: 安全なバックアップ復元）✅ 実装・検証済み・未コミット
+
+第三者P0監査の7対象のうち、外部設定に依存しない2つに着手（対象4・5はNEXT-002で対応済み）。
+
+### 対象1: PWAの保存保証
+
+`persistState`（`pwa/memory-store.ts`）が `void` を返し、IndexedDB・localStorage
+両方の失敗が呼び出し側に伝わらなかった。`Promise<PersistOutcome>` 化し、失敗理由
+（`quota`/`unavailable`/`unknown`）を返す。IndexedDBアクセスは注入可能にして
+（新規テストライブラリなし）テストで分岐を検証。`pwa/entry.tsx` に
+`PersistFailureBanner`（失敗時のみ表示、`role="alert"`）と、`pagehide`/
+`visibilitychange` での `flushPendingState()` 呼び出しを追加。
+
+### 対象2: 安全なバックアップ復元
+
+`isBackupFile` が `format`/`version`/`data` の存在しか見ておらず、`replace` は
+検証前に `resetAll()` していた。`validateBackup`（`src/lib/core/backup.ts`）を
+新規追加し、各コレクションが配列か・idが文字列かを `resetAll()` より前に確認。
+さらに `Store.transaction()`（新規、SQLiteは実BEGIN/COMMIT/ROLLBACK、
+MemoryStoreはスナップショット差し戻し）で実際の書き込みを包み、検証をすり抜けた
+想定外のデータで途中失敗しても開始前の状態へ完全に戻す。
+
+**実際に確認した効果**: `validateBackup` を外すと、IndexedDB側は壊れたセッション
+（idが数値）を**例外すら出さずそのままpushしてしまう**（配列pushに型チェックが
+無いため）。検証を先に置くことがIndexedDB経路では唯一の防御と確認できた。
+
+### 変更ファイル
+
+`src/lib/db/store.ts`（`transaction`追加）/ `src/lib/db/repo.ts`（実装）/
+`pwa/memory-store.ts`（`persistState`・`flushPendingState`・`transaction`）/
+`pwa/entry.tsx`（バナー・flush配線）/ `src/lib/core/backup.ts`（`validateBackup`）/
+`src/lib/service.ts`（`importBackup`の並べ替え）/ `README.md`。
+新規テスト: `tests/pwaPersist.test.ts`（7件）/ `tests/storeTransaction.test.ts`（6件）/
+`tests/backupAtomicity.test.ts`（11件）。
+
+### 検証
+
+先に赤を確認 → 実装 → 緑。**`validateBackup`を外すと2件赤に戻ることを確認して復元**（T-4）。
+`npm run verify` 緑（**835件 55ファイル** / `ALL E2E PASS` / `UPDATE E2E PASS`）。
+`npm audit`: 既存の脆弱性（Next.js/PostCSS連鎖、メジャー更新が必要）のみで、
+今回の変更とは無関係・対象7（依存関係）の範囲。VERSIONは`forge-v35`のまま。
+
+### 残っていること（P0監査の対象3・6・7）
+
+| 対象 | 内容 | 状態 |
+| --- | --- | --- |
+| 3 | Next.js APIの認証・認可 | ⬜ 未着手 |
+| 6 | 危険なトレーニング提案の防止 | ⬜ 未着手 |
+| 7 | 依存関係と基本セキュリティ | ⬜ 未着手（`npm audit`で確認済みの脆弱性あり） |
+
+### 完了条件
+
+- [x] T1〜T7相当のテストが先に赤、実装後に緑
+- [x] `npm run verify` 緑
+- [x] 両方失敗する状況で画面に保存失敗が出る
+- [x] 不正バックアップのreplace後、既存データが残っている
+- [x] 既存の正常バックアップが読める（回帰テストで固定）
+- [x] README更新
+- [ ] commit・push・配信（指示により保留）
 
 ---
 

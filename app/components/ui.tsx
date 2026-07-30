@@ -1,6 +1,6 @@
 "use client";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { RuleViolation, SessionCategory, SessionChange } from "@/lib/core/types";
 
 // ---------------------------------------------------------------------------
@@ -317,6 +317,37 @@ const LEVEL: Record<string, { color: string; icon: string }> = {
   INFO: { color: "var(--cat-race-economy)", icon: "ℹ" },
 };
 
+const STATUS_STYLE: Record<
+  "error" | "warning" | "success",
+  { color: string; icon: string; role: "alert" | "status" }
+> = {
+  error: { color: "var(--red)", icon: "⛔", role: "alert" },
+  warning: { color: "var(--amber)", icon: "⚠", role: "status" },
+  success: { color: "var(--volt)", icon: "✓", role: "status" },
+};
+
+/**
+ * 警告・エラー・成功メッセージを色だけに頼らず示す（アイコン＋role）。
+ * 色の違いだけでは伝わらない場合があるため、`ViolationList` と同じ
+ * アイコン（⛔/⚠）＋色の組み合わせに揃え、role="alert"/"status"も付ける。
+ */
+export function StatusText({
+  kind,
+  children,
+  className = "text-[12px]",
+}: {
+  kind: "error" | "warning" | "success";
+  children: ReactNode;
+  className?: string;
+}) {
+  const s = STATUS_STYLE[kind];
+  return (
+    <p className={className} role={s.role} style={{ color: s.color }}>
+      <span aria-hidden="true">{s.icon}</span> {children}
+    </p>
+  );
+}
+
 export function ViolationList({
   violations,
   compact = false,
@@ -493,7 +524,7 @@ export function SignalPill({
         {s.t}
       </span>
       {escalated ? (
-        <span className="text-[10px]" style={{ color: "var(--red)" }}>
+        <span className="text-[10px]" role="status" style={{ color: "var(--red)" }}>
           黄連続
         </span>
       ) : null}
@@ -540,6 +571,48 @@ export function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previouslyFocused = useRef<HTMLElement | null>(null);
+  // 呼び出し側は onCancel をインライン関数で渡すことが多く、依存配列に入れると
+  // 親の再描画のたびにこのeffectが走り直し、開いている間もフォーカスが
+  // 先頭ボタンへ引き戻されてしまう。最新の関数はrefで参照する。
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+
+  useEffect(() => {
+    if (!open) return;
+    previouslyFocused.current = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    const focusable = dialog?.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    focusable?.[0]?.focus();
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCancelRef.current();
+        return;
+      }
+      if (e.key !== "Tab" || !focusable || focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      previouslyFocused.current?.focus?.();
+    };
+  }, [open]);
+
   if (!open) return null;
   return (
     /*
@@ -551,11 +624,15 @@ export function ConfirmDialog({
     <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center" onClick={onCancel}>
       <div className="absolute inset-0 bg-black/70" />
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         className="relative w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl border p-5 pb-8 sm:pb-5"
         style={{ background: "var(--surface)", borderColor: "var(--border-2)" }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-[15px] font-bold mb-2">{title}</h3>
+        <h3 id={titleId} className="text-[15px] font-bold mb-2">{title}</h3>
         {message ? (
           <div className="text-[12.5px] leading-relaxed mb-4" style={{ color: "var(--text-2)" }}>
             {message}

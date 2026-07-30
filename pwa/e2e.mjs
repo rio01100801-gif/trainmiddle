@@ -9,6 +9,7 @@ import http from "http";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { FitBaseType, FitEncoder } from "fit-file-parser";
 
 
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png", ".webmanifest": "application/manifest+json" };
@@ -61,6 +62,18 @@ await page
   .catch(() => fail("初回画面のセットアップ導線が表示されない"));
 step("初回起動OK（未設定ガイダンス表示）");
 await shot("00_first_launch");
+
+/*
+ * iOSキーボード対策: interactive-widget=resizes-content が無いと、
+ * キーボード表示中もレイアウトビューポートが縮まず、position: fixed の
+ * タブバー・FABがキーボードの裏に固定されたままになる。
+ * 実機でしか最終確認できないが、metaタグ自体が消えていないかは機械で見張れる。
+ */
+const viewportMeta = await page.locator('meta[name="viewport"]').getAttribute("content");
+if (!viewportMeta?.includes("interactive-widget=resizes-content")) {
+  fail(`viewport metaにinteractive-widget=resizes-contentが無い: ${viewportMeta}`);
+}
+step("viewport meta: interactive-widget=resizes-contentOK");
 
 // ---- 2. セットアップ ----
 await page.goto("http://localhost:8791/#/setup");
@@ -570,6 +583,321 @@ if (!healthText.includes("LTへは自動反映していません")) {
 step("Apple Health取り込みOK（用途不明ランはLT除外 / 睡眠・安静時HR→疲労シグナル）");
 await shot("14_health_import");
 
+/*
+ * FIT取込 Phase 1: 拡張子ではなく中身（.FITシグネチャ）で確認する。
+ * 正常なヘッダーを持つ最小限のFITと、FIT以外（拡張子だけ.fitに変えたテキスト）
+ * の両方を確認し、後者が明確な理由付きで拒否されることを見る。
+ */
+function buildFitFixture(opts = {}) {
+  const headerSize = 12;
+  const bodyLength = 16;
+  const header = Buffer.alloc(headerSize);
+  header.writeUInt8(headerSize, 0);
+  header.writeUInt8(16, 1);
+  header.writeUInt16LE(100, 2);
+  header.writeUInt32LE(bodyLength, 4);
+  header.write(opts.signature ?? ".FIT", 8, "ascii");
+  const body = Buffer.alloc(bodyLength, 0xab);
+  const crc = Buffer.alloc(2);
+  return Buffer.concat([header, body, crc]);
+}
+const validFitPath = path.join(os.tmpdir(), "sample.fit");
+fs.writeFileSync(validFitPath, buildFitFixture());
+// header_sizeは正しい(12)が、シグネチャが".FIT"でない＝拡張子だけ.fitに変えたファイルを想定
+const fakeFitPath = path.join(os.tmpdir(), "fake.fit");
+fs.writeFileSync(fakeFitPath, buildFitFixture({ signature: "NOPE" }));
+
+/*
+ * Phase 2の解析確認用: 本物のFITメッセージ（file_id + session + record）を
+ * fit-file-parser自身のFitEncoderで組み立てる。手書きバイトでは
+ * message定義まで再現できないため、実際にデコードできるものを使う。
+ */
+function buildRealFitFixture() {
+  const enc = new FitEncoder();
+  const ts = (iso) => FitEncoder.toFitTimestamp(new Date(iso));
+  enc.writeMessage(0, [
+    { number: 0, size: 1, baseType: FitBaseType.Enum, value: 4 },
+    { number: 1, size: 2, baseType: FitBaseType.Uint16, value: 1 },
+  ]);
+  enc.writeMessage(
+    18,
+    [
+      { number: 253, size: 4, baseType: FitBaseType.Uint32, value: ts("2026-07-20T10:05:00Z") },
+      { number: 2, size: 4, baseType: FitBaseType.Uint32, value: ts("2026-07-20T10:00:00Z") },
+      { number: 5, size: 1, baseType: FitBaseType.Enum, value: 1 }, // sport: running
+      { number: 9, size: 4, baseType: FitBaseType.Uint32, value: 200000 }, // total_distance: 2km
+      { number: 16, size: 1, baseType: FitBaseType.Uint8, value: 150 }, // avg_heart_rate
+    ],
+    2
+  );
+  enc.writeMessage(
+    20,
+    [{ number: 253, size: 4, baseType: FitBaseType.Uint32, value: ts("2026-07-20T10:00:10Z") }],
+    4
+  );
+  return Buffer.from(enc.close());
+}
+const realFitPath = path.join(os.tmpdir(), "real-sample.fit");
+fs.writeFileSync(realFitPath, buildRealFitFixture());
+
+await page.goto("http://localhost:8791/#/data");
+await page.waitForTimeout(600);
+const fitInput = page.locator('input[type="file"][accept*="fit"]');
+await fitInput.setInputFiles(validFitPath);
+await page.waitForTimeout(1000);
+let fitText = await page.textContent("body");
+if (!fitText.includes("FITファイルとして確認できました")) {
+  fail("正常なFITヘッダーが受理されない: " + fitText.slice(0, 300));
+}
+await fitInput.setInputFiles(fakeFitPath);
+await page.waitForTimeout(1000);
+fitText = await page.textContent("body");
+if (!fitText.includes("署名（.FIT）が見つかりません")) {
+  fail("拡張子だけ.fitの非FITファイルが拒否されない: " + fitText.slice(0, 300));
+}
+step("FIT取込Phase1OK（拡張子でなく中身で判定・非FITを理由つきで拒否）");
+
+await fitInput.setInputFiles(realFitPath);
+await page.waitForTimeout(1000);
+fitText = await page.textContent("body");
+if (!fitText.includes("running") || !fitText.includes("2km")) {
+  fail("実際のFIT解析結果（種目・距離）が表示されない: " + fitText.slice(0, 400));
+}
+if (!fitText.includes("record 1件")) {
+  fail("recordの件数が表示されない: " + fitText.slice(0, 400));
+}
+step("FIT取込Phase2OK（session/lap/recordを実際に解析して概要表示）");
+
+/*
+ * FIT解析コードは動的import（別chunk、対象1・2とは無関係のbundleサイズ対策）。
+ * 一度オンラインで開けばService Workerがchunkをキャッシュするはずなので、
+ * その後オフラインになってもFIT取込が動くことを確認する
+ * （逆に言えば、一度も開いたことが無い状態でオフラインだと使えない、という
+ * 制約が新たに生まれている。ここでは「一度使えば以後オフラインでも使える」
+ * ことだけを保証する）。
+ */
+await ctx.setOffline(true);
+// ページを丸ごと読み直し、動的importが本当にService Workerのキャッシュから
+// 解決されることを確認する（同一ページ内の再遷移だとJSの生存モジュールを
+// 再利用するだけになり、キャッシュを試したことにならないため）。
+await page.goto("about:blank");
+await page.goto("http://localhost:8791/#/data");
+await page
+  .waitForFunction(() => !document.getElementById("splash"), { timeout: 15000 })
+  .catch(() => fail("オフラインでの再読み込みで起動できない"));
+await page.waitForTimeout(600);
+await page.locator('input[type="file"][accept*="fit"]').setInputFiles(realFitPath);
+await page.waitForTimeout(1000);
+const offlineFitText = await page.textContent("body");
+if (!offlineFitText.includes("running") || !offlineFitText.includes("2km")) {
+  fail("オフラインで、一度使ったFIT解析chunkが使えない: " + offlineFitText.slice(0, 300));
+}
+await ctx.setOffline(false);
+step("FIT取込: 一度使えばオフラインでも解析できるOK（chunkがキャッシュ済み）");
+
+/*
+ * FIT取込 Phase 3: ラップ→区間の自動分類（ルールベース、LLM不使用）。
+ * ウォームアップ(遅)→メイン(速)→リカバリー(遅)→メイン(速)→クールダウン(遅)
+ * という構成のFITを組み立て、自動判定が実際に一致することを確認する。
+ * fixture側でも同じ計算（中央値・FAST_RATIO=0.93）が成り立つよう
+ * ペース差を明確に取っている（本体ロジックは src/lib/core/intervalClassify.ts）。
+ */
+function buildIntervalFitFixture(dateStr = "2026-07-20") {
+  const enc = new FitEncoder();
+  const ts = (iso) => FitEncoder.toFitTimestamp(new Date(iso));
+  enc.writeMessage(0, [
+    { number: 0, size: 1, baseType: FitBaseType.Enum, value: 4 },
+    { number: 1, size: 2, baseType: FitBaseType.Uint16, value: 1 },
+  ]);
+  const laps = [
+    { start: `${dateStr}T10:00:00Z`, end: `${dateStr}T10:05:00Z`, elapsedSec: 300, distanceM: 800 }, // warmup, pace 375
+    { start: `${dateStr}T10:05:00Z`, end: `${dateStr}T10:05:50Z`, elapsedSec: 50, distanceM: 300 }, // main, pace 166.7
+    { start: `${dateStr}T10:05:50Z`, end: `${dateStr}T10:07:10Z`, elapsedSec: 80, distanceM: 200 }, // recovery, pace 400
+    { start: `${dateStr}T10:07:10Z`, end: `${dateStr}T10:08:01Z`, elapsedSec: 51, distanceM: 300 }, // main, pace 170
+    { start: `${dateStr}T10:08:01Z`, end: `${dateStr}T10:13:21Z`, elapsedSec: 320, distanceM: 800 }, // cooldown, pace 400
+  ];
+  for (const l of laps) {
+    enc.writeMessage(
+      19,
+      [
+        { number: 253, size: 4, baseType: FitBaseType.Uint32, value: ts(l.end) },
+        { number: 2, size: 4, baseType: FitBaseType.Uint32, value: ts(l.start) },
+        { number: 7, size: 4, baseType: FitBaseType.Uint32, value: Math.round(l.elapsedSec * 1000) },
+        { number: 9, size: 4, baseType: FitBaseType.Uint32, value: Math.round(l.distanceM * 100) },
+      ],
+      3
+    );
+  }
+  return Buffer.from(enc.close());
+}
+const intervalFitPath = path.join(os.tmpdir(), "interval-sample.fit");
+fs.writeFileSync(intervalFitPath, buildIntervalFitFixture());
+
+await fitInput.setInputFiles(intervalFitPath);
+await page.waitForTimeout(1000);
+const kindSelects = page.locator('select[aria-label*="区間種別"]');
+const kindCount = await kindSelects.count();
+if (kindCount !== 5) fail(`区間分類の行数が想定と違う（5件のはず）: ${kindCount}件`);
+const kindValues = [];
+for (let i = 0; i < kindCount; i++) {
+  kindValues.push(await kindSelects.nth(i).inputValue());
+}
+const expectedKinds = ["warmup", "main", "recovery", "main", "cooldown"];
+if (JSON.stringify(kindValues) !== JSON.stringify(expectedKinds)) {
+  fail(`区間の自動判定が想定と違う: ${JSON.stringify(kindValues)}（期待: ${JSON.stringify(expectedKinds)}）`);
+}
+const intervalText = await page.textContent("body");
+if (!intervalText.includes("区間の自動判定")) fail("区間分類のUIが表示されない");
+if (!/\d+%/.test(intervalText)) fail("信頼度（%）が表示されない");
+// 手動修正が実際にUIへ反映されること（保存はしない。この場限りの表示）
+await kindSelects.first().selectOption("unknown");
+const changedValue = await kindSelects.first().inputValue();
+if (changedValue !== "unknown") fail("区間種別を手動で修正できない");
+step("FIT取込Phase3OK（ラップ→区間の自動分類・信頼度表示・手動修正が反映される）");
+
+/*
+ * FIT取込 Phase 4: 3層データモデルでの保存。
+ * 「この内容で登録する」を押すと、確認済み種別（直前でlap1を手動でunknownに
+ * 直した状態のまま）からSession/SessionResultが実際に作られ、IndexedDBに
+ * 保存されることを確認する（api-shim経由。/api/fit-import）。
+ */
+await page.getByRole("button", { name: "この内容で登録する" }).click();
+await page.waitForTimeout(1000);
+const registerText = await page.textContent("body");
+if (!registerText.includes("登録しました") || !registerText.includes("2026-07-20")) {
+  fail("FIT取込の登録が完了しない: " + registerText.slice(0, 400));
+}
+// 二重登録を招かないよう、登録後はボタンが引っ込むこと
+if (await page.getByRole("button", { name: "この内容で登録する" }).count()) {
+  fail("登録後もボタンが残っており、連打で二重登録できてしまう");
+}
+step("FIT取込Phase4OK（3層データモデルで保存・記録として登録される）");
+
+/*
+ * FIT取込 Phase 5: 二重登録防止。
+ * 全く同じFITファイルをもう一度選び直しても、新規の記録が増えるのではなく
+ * 既存の記録が上書きされることを確認する（生バイト列の完全一致で判定）。
+ *
+ * 同じパスのファイルを input[type=file] へ再度 setInputFiles しても、
+ * ブラウザは値が変わらないため change イベントを発火しないことがある。
+ * 文書ごと読み直してinputの値を空に戻してから選び直す
+ * （ハッシュ変更だけの遷移だとinputが再マウントされないことがあるため）。
+ */
+await page.goto("about:blank");
+await page.goto("http://localhost:8791/#/data");
+await page.waitForTimeout(600);
+const fitInputAgain = page.locator('input[type="file"][accept*="fit"]');
+await fitInputAgain.setInputFiles(intervalFitPath);
+await page.waitForTimeout(1000);
+await page.getByRole("button", { name: "この内容で登録する" }).click();
+await page.waitForTimeout(1000);
+const reRegisterText = await page.textContent("body");
+if (!reRegisterText.includes("既に取り込み済み") || !reRegisterText.includes("更新しました")) {
+  fail("同じFITの再登録が上書きとして扱われない: " + reRegisterText.slice(0, 400));
+}
+step("FIT取込Phase5OK（同じ元ファイルの再登録は新規ではなく上書き）");
+
+/*
+ * FIT取込 Phase 6: 既存の計画済みセッションとの紐付け。
+ * 別の日付（他のFITテストと被らない過去日）に計画済みセッションを直接作り、
+ * 同じ日付のFITを取り込んで「この予定に記録する」を選ぶと、
+ * 新規セッションではなくその計画済みセッションが完了扱いになることを確認する。
+ */
+const LINK_DATE = "2026-05-01";
+const plannedAdd = await page.evaluate(async (date) => {
+  const res = await fetch("/api/plan-edit", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      action: "add",
+      session: {
+        date,
+        category: "high_lactate",
+        name: "300m×5 計画",
+        prescription: "300m×5 r3分",
+      },
+    }),
+  });
+  return res.json();
+}, LINK_DATE);
+if (!plannedAdd?.session?.id) fail("Phase6: 計画済みセッションを直接作れない");
+const plannedId = plannedAdd.session.id;
+// IndexedDBへの保存は250msデバウンスされている。文書ごと読み直す前に
+// 書き込みが終わるのを待つ（でないと直前に足した予定が読み込み後に消える）。
+await page.waitForTimeout(500);
+
+const linkFitPath = path.join(os.tmpdir(), "interval-link-sample.fit");
+fs.writeFileSync(linkFitPath, buildIntervalFitFixture(LINK_DATE));
+await page.goto("about:blank");
+await page.goto("http://localhost:8791/#/data");
+await page
+  .waitForFunction(() => !document.getElementById("splash"), { timeout: 15000 })
+  .catch(() => fail("Phase6: 文書再読み込み後に起動できない"));
+await page.waitForTimeout(600);
+await page.locator('input[type="file"][accept*="fit"]').setInputFiles(linkFitPath);
+await page
+  .waitForFunction(() => (document.body.textContent ?? "").includes("区間の自動判定"), {
+    timeout: 10000,
+  })
+  .catch(() => fail("Phase6: 文書再読み込み後、FIT解析・分類が終わらない"));
+await page.getByRole("button", { name: "この内容で登録する" }).click();
+await page.waitForTimeout(1000);
+const confirmText = await page.textContent("body");
+if (!confirmText.includes(LINK_DATE) || !confirmText.includes("計画済みの練習があります")) {
+  fail("Phase6: 計画済みセッションがあるのに確認が出ない: " + confirmText.slice(0, 300));
+}
+if (!confirmText.includes("300m×5 計画")) {
+  fail("Phase6: 確認画面に計画済みセッション名が出ない: " + confirmText.slice(0, 300));
+}
+await page.getByRole("button", { name: /300m×5 計画/ }).click();
+await page.waitForTimeout(1000);
+const linkedText = await page.textContent("body");
+if (!linkedText.includes("計画済みの練習に記録として反映しました")) {
+  fail("Phase6: 紐付け後の登録メッセージが出ない: " + linkedText.slice(0, 300));
+}
+const plannedAfter = await page.evaluate(async (id) => {
+  const d = await fetch("/api/sessions?from=2000-01-01&to=2099-12-31").then((r) => r.json());
+  return d.sessions?.find((s) => s.id === id);
+}, plannedId);
+if (plannedAfter?.status !== "completed") {
+  fail(`Phase6: 紐付け後もセッションのstatusがcompletedにならない: ${plannedAfter?.status}`);
+}
+step("FIT取込Phase6OK（計画済みセッションへの紐付け・通常の記録経路でstatusが更新される）");
+/*
+ * このテスト専用に足したセッション（2026-05-01・high_lactate）は、
+ * 後続のM-5（間隔違反の代替日提案）が「最初の2件のhigh_lactate」を
+ * 拾って使うため、残したままだと日付が全く違う代替日探索に化けて
+ * 無関係のテストを壊す。ここで消して元の状態に戻す。
+ */
+await page.evaluate(
+  async ({ id, date }) => {
+    await fetch(`/api/plan-edit?sessionId=${id}&date=${date}`, { method: "DELETE" });
+  },
+  { id: plannedId, date: LINK_DATE }
+);
+
+// 実際に記録として保存され、その日の記録画面から見えることを確認する
+// （session.name がそのまま一覧に表示される既存の実装を利用。既定タブは
+// 「コンディション」なので「練習結果」タブへ切り替える必要がある）
+await page.goto("http://localhost:8791/#/results?date=2026-07-20");
+await page.waitForTimeout(800);
+await page.getByRole("button", { name: "練習結果" }).click();
+await page.waitForTimeout(500);
+const resultsTextAfterFit = await page.textContent("body");
+if (!resultsTextAfterFit.includes("FIT取込")) {
+  fail("FIT取込で登録した練習が記録画面に見当たらない: " + resultsTextAfterFit.slice(0, 300));
+}
+step("FIT取込Phase4: 記録画面に反映OK");
+
+// 二重登録されていれば、同じ日にFIT取込のセッションが2件表示されるはず
+const fitSessionButtons = await page.evaluate(
+  () => [...document.querySelectorAll("button")].filter((b) => b.textContent?.includes("インターバル（FIT取込）")).length
+);
+if (fitSessionButtons !== 1) {
+  fail(`同じFITを2回登録したのに記録が${fitSessionButtons}件になっている（二重登録防止が効いていない）`);
+}
+step("FIT取込Phase5: 記録画面でも1件のまま（二重登録されていない）OK");
+
 // ---- 8c. F-2: 実際の練習日誌をそのまま貼り付ける ----
 await page.goto("http://localhost:8791/#/past");
 await page.waitForTimeout(800);
@@ -869,6 +1197,11 @@ for (const label of ["RECOVERY", "RACE", "PERFORMANCE"]) {
   if (sel !== "true") fail(`セグメントタブ ${label} が選択状態にならない（A-6）`);
 }
 step("ホームの3セクション切り替えOK（タップで到達できる）");
+// B-1: セグメントタブのタップ領域が44px以上であること（旧: 40pxで不足していた）
+const segTabBox = await page.getByRole("tab", { name: "RACE" }).boundingBox();
+if (!segTabBox || segTabBox.height < 44) {
+  fail(`セグメントタブのタップ領域が44px未満: ${segTabBox?.height}px`);
+}
 await shot("16_home_forge");
 
 // ---- 10c. フェーズB: ハンバーガー廃止と設定画面 ----
@@ -1397,6 +1730,11 @@ await page.goto("http://localhost:8791/#/calendar");
 await page.waitForTimeout(800);
 const calT = await page.textContent("body");
 if (!calT.includes("長押し")) fail("長押しの案内が無い（C-1）");
+// B-1: 期間送りの矢印ボタンが44px以上の幅を持つこと（1文字だけの見た目に対し、実際の当たり判定が狭い）
+const prevPeriodBox = await page.getByRole("button", { name: "前の期間" }).boundingBox();
+if (!prevPeriodBox || prevPeriodBox.width < 44) {
+  fail(`期間送りボタンのタップ領域が44px未満: ${prevPeriodBox?.width}px`);
+}
 // C-1: 日付行の「記録」から、その日付が入った記録画面へ入れること
 // サイドバー（PC幅では非表示）の「記録」リンクと区別するため、日付行の中から探す
 await page.locator('a[href^="#/results?date="]').first().click();
@@ -1694,15 +2032,22 @@ if (gearBox && (gearBox.width < 44 || gearBox.height < 44)) {
 }
 
 // ---- 12. 横はみ出しチェック ----
-for (const p of ["/", "/setup", "/goal", "/calendar", "/results", "/analysis", "/race", "/meet", "/heat", "/past", "/plan-settings", "/data", "/settings", "/warnings", "/session"]) {
-  await page.goto(`http://localhost:8791/#${p}`);
-  await page.waitForTimeout(450);
-  const overflow = await page.evaluate(
-    () => document.documentElement.scrollWidth - document.documentElement.clientWidth
-  );
-  if (overflow > 2) fail(`横はみ出し ${p}: ${overflow}px`);
+// 390px（iPhone 12〜14相当）に加えて、iPhone SE相当の320px幅も見る
+// （バックログ「320px幅での横スクロール」。ここまで細い幅は普段のE2Eでは通らない）
+const OVERFLOW_ROUTES = ["/", "/setup", "/goal", "/calendar", "/results", "/analysis", "/race", "/meet", "/heat", "/past", "/plan-settings", "/data", "/settings", "/warnings", "/session"];
+for (const width of [390, 320]) {
+  await page.setViewportSize({ width, height: 844 });
+  for (const p of OVERFLOW_ROUTES) {
+    await page.goto(`http://localhost:8791/#${p}`);
+    await page.waitForTimeout(450);
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    );
+    if (overflow > 2) fail(`横はみ出し ${p}（${width}px幅）: ${overflow}px`);
+  }
 }
-step("横はみ出しゼロ");
+await page.setViewportSize({ width: 390, height: 844 });
+step("横はみ出しゼロ（390px・320px幅）");
 
 // ---- 13. P-4: 最下部の要素が下部タブバー・FABの裏に隠れていないこと ----
 /*
@@ -1853,13 +2198,29 @@ else {
     await otherToggle.click();
     await page.waitForTimeout(300);
     await menuBody.fill("300m×5 @39.0秒 r5分");
-    await page.locator('label:has-text("その選手の800m PB") input').fill("1:46.0");
+    // PBの差を10秒超に取り、notes（StatusTextの表示）が実際に出るケースにする
+    await page.locator('label:has-text("その選手の800m PB") input').fill("1:30.0");
     await page.waitForTimeout(1200);
     const convText = await page.textContent("body");
     if (!/自分の設定に換算すると/.test(convText)) fail("S-6: 換算結果が出ない");
     if (!/相手 39\.0秒/.test(convText)) fail("S-6: 相手の設定が併記されていない");
     // 換算結果が実測ではないことを必ず出す
     if (!/換算値は実測ではありません/.test(convText)) fail("S-6: 換算値であることが書かれていない");
+    // PBの差が大きいことの注記（converted.notes）が出ていること
+    if (!/PBの差が.*秒あります/.test(convText)) fail("S-6: PBの差についての注記が出ない");
+    /*
+     * 状態表現を色だけに頼らないための共通コンポーネント（StatusText）が
+     * ここで実際に使われていること（role属性＋アイコン）を確認する。
+     * StatusTextは1箇所の実装なので、ここで確認できれば他の呼び出し元
+     * （21箇所）も同じ実装を経由していることの裏付けになる。
+     */
+    const statusTextOk = await page.evaluate(() => {
+      const el = [...document.querySelectorAll('[role="status"]')].find((e) =>
+        (e.textContent ?? "").includes("PBの差が")
+      );
+      return !!el && (el.textContent ?? "").includes("⚠");
+    });
+    if (!statusTextOk) fail("S-6: 状態表現がrole/アイコン付きで出ていない（StatusText）");
     // 自分のCFEは相手より遅いので、設定は相手より遅くなるはず
     const conv = await page.evaluate(async () => {
       const d = await fetch("/api/convert-menu", {
@@ -1892,6 +2253,38 @@ else {
   await page.waitForTimeout(400);
   const dialog = page.locator("h3", { hasText: "このメニューを削除しますか？" }).first();
   if ((await dialog.count()) === 0) fail("S-5: 削除の確認ダイアログが出ない");
+
+  // ---- ConfirmDialogのアクセシビリティ（role・Escape・フォーカストラップ・復帰） ----
+  const dialogRole = await page.evaluate(() => {
+    const el = document.querySelector('[role="dialog"]');
+    return el ? { role: el.getAttribute("role"), modal: el.getAttribute("aria-modal") } : null;
+  });
+  if (!dialogRole || dialogRole.modal !== "true") {
+    fail("ConfirmDialog: role=dialog / aria-modal=trueが付いていない");
+  }
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+  if ((await dialog.count()) !== 0) fail("ConfirmDialog: Escapeで閉じない");
+  const focusReturnedToTrigger = await delBtn.evaluate((el) => el === document.activeElement);
+  if (!focusReturnedToTrigger) fail("ConfirmDialog: Escapeで閉じた後、フォーカスが呼び出し元へ戻らない");
+
+  await delBtn.click();
+  await page.waitForTimeout(400);
+  if ((await dialog.count()) === 0) fail("ConfirmDialog: 再度開けない");
+  const activeAfterOpen = await page.evaluate(() => document.activeElement?.textContent?.trim());
+  if (activeAfterOpen !== "実行する") {
+    fail(`ConfirmDialog: 開いた直後にフォーカスが確認ボタンへ移らない: ${activeAfterOpen}`);
+  }
+  await page.keyboard.press("Tab");
+  const afterTab1 = await page.evaluate(() => document.activeElement?.textContent?.trim());
+  if (afterTab1 !== "キャンセル") fail(`ConfirmDialog: Tabでキャンセルボタンへ移らない: ${afterTab1}`);
+  await page.keyboard.press("Tab");
+  const afterTab2 = await page.evaluate(() => document.activeElement?.textContent?.trim());
+  if (afterTab2 !== "実行する") {
+    fail(`ConfirmDialog: フォーカストラップが効いておらず、Tabでダイアログの外へ抜ける: ${afterTab2}`);
+  }
+  step("ConfirmDialogのアクセシビリティOK（role/aria-modal・Escapeで閉じる・フォーカス復帰・トラップ）");
+
   const runBtn = page.getByRole("button", { name: "実行する", exact: true }).first();
   /*
    * 見るべきは「ボタンが覆われているか」ではなく「FABがモーダルより前に出ていないか」。

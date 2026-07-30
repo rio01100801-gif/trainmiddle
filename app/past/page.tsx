@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Card, ConfirmButton, UndoBar, ViolationList, fmtSec } from "../components/ui";
+import { Card, ConfirmButton, StatusText, UndoBar, ViolationList, fmtSec } from "../components/ui";
 import {
   PAST_KIND_LABELS,
   BACKFILL_WINDOW_WEEKS,
@@ -636,9 +636,9 @@ function PastEntryForm({
       </p>
 
       {err && (
-        <p className="text-[12px] mt-2" style={{ color: "var(--red)" }}>
+        <StatusText kind="error" className="text-[12px] mt-2">
           {err}
-        </p>
+        </StatusText>
       )}
       <div className="mt-3">
         <button className="btn-volt justify-center w-full sm:w-auto" onClick={submit}>

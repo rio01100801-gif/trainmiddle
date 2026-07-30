@@ -59,6 +59,7 @@ import {
   backupStatus,
   interpretPrescription,
   saveGoalAndRaces,
+  importFitFile,
 } from "../src/lib/service";
 import { parseContactCsv } from "../src/lib/core/contactTime";
 import type { PastEntry } from "../src/lib/core/backfill";
@@ -598,6 +599,21 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
     POST: (repo, body) => {
       if (!body?.xml) return { error: "ファイルの中身が空です" };
       return importAppleHealth(repo, body.xml, localToday(), { days: body.days ?? 120 });
+    },
+  },
+
+  // ---- FIT取込 Phase 4: 3層データモデルでの保存 ----
+  "/api/fit-import": {
+    GET: (repo) => ({ imports: repo.listFitImports() }),
+    POST: (repo, body) => {
+      if (!body?.fileName || !body?.rawBytesBase64 || !body?.parse || !body?.autoClassification || !body?.confirmedKinds) {
+        return { error: "取込内容が不足しています" };
+      }
+      try {
+        return { ok: true, ...importFitFile(repo, body) };
+      } catch (e) {
+        return { error: (e as Error).message };
+      }
     },
   },
 
