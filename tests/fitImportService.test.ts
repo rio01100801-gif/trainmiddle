@@ -372,4 +372,62 @@ describe("rebuildFitDerived", () => {
     expect(rebuilt).toBe(1);
     expect(repo.getSession(session.id)?.category).not.toBe("off");
   });
+
+  /*
+   * 統合監査で発覚したバグの回帰テスト: 紐付け済み（Phase 6）のFIT取込を
+   * 単純にfitToSessionAndResultで作り直すと、常に新規backfilledセッション
+   * （fit-s-*）が作られ、元の計画済みセッションから孤立していた。
+   */
+  it("紐付け済みのFIT取込を作り直しても、新規セッションを作らず元のセッションのまま更新する", () => {
+    const repo = memRepo();
+    repo.saveAthlete(testAthlete());
+    repo.saveCfe({ estimated800mSec: 108.9, confidence: 0.8, lastUpdated: "2026-07-01", history: [] });
+    const planned = makeSession("2026-07-20", "high_lactate", { id: "planned-1" });
+    repo.saveSession(planned);
+
+    const first = importFitFile(repo, {
+      fileName: "sample.fit",
+      rawBytesBase64: "AAAA",
+      parse: parseWithLaps(LAPS),
+      autoClassification: autoClassification(),
+      confirmedKinds: KINDS,
+      linkToSessionId: "planned-1",
+    });
+    expect("linked" in first && first.linked).toBe(true);
+    const sessionCountBefore = repo.listSessions().length;
+
+    const { imports, rebuilt, orphaned } = rebuildFitDerived(repo);
+    expect(imports).toBe(1);
+    expect(rebuilt).toBe(1);
+    expect(orphaned).toBe(0);
+    // 新規のfit-s-*セッションが増えていない。元のplanned-1のままcompleted
+    expect(repo.listSessions()).toHaveLength(sessionCountBefore);
+    expect(repo.getSession("planned-1")?.status).toBe("completed");
+    expect(repo.getSession(`fit-s-${(first as any).record.id}`)).toBeUndefined();
+  });
+
+  it("紐付け先のセッションが削除されていたら、新規作成に化けさせず件数だけ報告する", () => {
+    const repo = memRepo();
+    repo.saveAthlete(testAthlete());
+    repo.saveCfe({ estimated800mSec: 108.9, confidence: 0.8, lastUpdated: "2026-07-01", history: [] });
+    const planned = makeSession("2026-07-20", "high_lactate", { id: "planned-1" });
+    repo.saveSession(planned);
+    importFitFile(repo, {
+      fileName: "sample.fit",
+      rawBytesBase64: "AAAA",
+      parse: parseWithLaps(LAPS),
+      autoClassification: autoClassification(),
+      confirmedKinds: KINDS,
+      linkToSessionId: "planned-1",
+    });
+    repo.deleteSession("planned-1");
+
+    const sessionCountBefore = repo.listSessions().length;
+    const { imports, rebuilt, orphaned } = rebuildFitDerived(repo);
+    expect(imports).toBe(1);
+    expect(rebuilt).toBe(0);
+    expect(orphaned).toBe(1);
+    // 何も新規に作られていない
+    expect(repo.listSessions()).toHaveLength(sessionCountBefore);
+  });
 });

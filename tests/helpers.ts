@@ -106,8 +106,12 @@ export function makeResult(
 }
 
 export function ctx(overrides: Partial<RuleContext> = {}): RuleContext {
+  const sessions = overrides.sessions ?? [];
   return {
-    sessions: [],
+    sessions,
+    // backfilledを区別したいテストだけ明示的に上書きする。それ以外は
+    // sessionsと同じにしておく（allSessions未設定によるランタイムエラー防止）。
+    allSessions: overrides.allSessions ?? sessions,
     strengthSessions: [],
     races: [],
     athlete: testAthlete(),

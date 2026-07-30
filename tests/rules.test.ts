@@ -657,4 +657,23 @@ describe("週次サマリー", () => {
     const s = weeklySummary(c, "2026-04-06");
     expect(s.categoryCounts.high_lactate).toBe(0);
   });
+
+  /*
+   * 統合監査で発覚: ルール評価対象から外した過去データ（backfilled。
+   * 一括入力・FIT取込）が、週次サマリーからも一緒に落ちていた。
+   * ACWR・週次レビュー・カバレッジ確認は未フィルタの全セッションを
+   * 使っており、ここだけ食い違っていた。
+   */
+  it("backfilled（過去データ・FIT取込）のセッションも週次サマリーに数える", () => {
+    const c = ctx({
+      sessions: [makeSession("2026-04-06", "high_lactate", { transfer800m: 5, durationMin: 60 })],
+      allSessions: [
+        makeSession("2026-04-06", "high_lactate", { transfer800m: 5, durationMin: 60 }),
+        makeSession("2026-04-07", "aerobic", { transfer800m: 2, durationMin: 40, backfilled: true }),
+      ],
+    });
+    const s = weeklySummary(c, "2026-04-06");
+    expect(s.categoryCounts.high_lactate).toBe(1);
+    expect(s.categoryCounts.aerobic).toBe(1);
+  });
 });

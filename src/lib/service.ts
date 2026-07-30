@@ -256,6 +256,7 @@ export function buildRuleContext(repo: Store, evaluationDate: string): RuleConte
   );
   return {
     sessions,
+    allSessions,
     strengthSessions: repo.listStrengths(),
     races: repo.listRaces(),
     goal: repo.getGoal(),
@@ -1558,23 +1559,53 @@ export function importFitFile(repo: Store, input: ImportFitFileInput): ImportFit
  * 反映されない。`FitImportRecord`（元ファイル＋自動解析＋確認済み種別）が
  * 唯一の元データで、`fit-s-*`/`fit-r-*` はそこから機械的に決まる。
  */
-export function rebuildFitDerived(repo: Store): { imports: number; rebuilt: number } {
+/**
+ * 統合監査で発覚: 紐付け済み（Phase 6でplanned セッションへ紐付けた）FIT取込を
+ * 単純に`fitToSessionAndResult`で作り直すと、常に新規backfilledセッション
+ * （`fit-s-${record.id}`）を作ってしまい、元の計画済みセッションから
+ * 結果が外れて孤立したセッションが増える。`record.sessionId`が
+ * `fit-s-${record.id}`と一致するか（＝backfilledとして作られたか）で
+ * 分岐し、紐付け済みなら同じ経路（`buildLinkedResult` + `processResult`）で
+ * 作り直す。紐付け先が消えていた場合は新規作成に化けさせず、件数だけ報告する。
+ */
+export function rebuildFitDerived(
+  repo: Store
+): { imports: number; rebuilt: number; orphaned: number } {
   const imports = repo.listFitImports();
   const cfe = repo.getCfe();
+  const grpSecPerM = cfe ? cfe.estimated800mSec / 800 : undefined;
   let rebuilt = 0;
+  let orphaned = 0;
   for (const record of imports) {
+    const wasBackfilled = record.sessionId === `fit-s-${record.id}`;
+    if (!wasBackfilled) {
+      const target = repo.getSession(record.sessionId);
+      if (!target) {
+        orphaned++;
+        continue;
+      }
+      const derived = deriveFitActuals({
+        parse: record.parse,
+        confirmedKinds: record.confirmedKinds,
+        grpSecPerM,
+      });
+      const result = buildLinkedResult(derived, target.id, record.resultId, record.fileName);
+      processResult(repo, result);
+      rebuilt++;
+      continue;
+    }
     const { session, result } = fitToSessionAndResult({
       sourceId: record.id,
       fileName: record.fileName,
       parse: record.parse,
       confirmedKinds: record.confirmedKinds,
-      grpSecPerM: cfe ? cfe.estimated800mSec / 800 : undefined,
+      grpSecPerM,
     });
     repo.saveSession(session);
     repo.saveResult(result);
     rebuilt++;
   }
-  return { imports: imports.length, rebuilt };
+  return { imports: imports.length, rebuilt, orphaned };
 }
 
 export interface AssessFitnessOutput extends FitnessAssessment {

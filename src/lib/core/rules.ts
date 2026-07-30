@@ -59,6 +59,16 @@ export const isHlEquiv = (c: SessionCategory) => hasDeepGlycolyticCostCategory(c
 
 export interface RuleContext {
   sessions: Session[];
+  /**
+   * ルール評価対象から外した過去データ（backfilled）も含む全セッション。
+   * 統合監査で発覚: `weeklySummary`は当初`sessions`を使っていたが、
+   * それはルール評価用に過去データを除いた集計であり、
+   * 「その週に実際に何をやったか」の集計としては過小評価になっていた
+   * （ACWR・週次レビュー・カバレッジ確認は元々このフィールドと同じ
+   * 未フィルタのセッション一覧を使っており、`weeklySummary`だけが
+   * 食い違っていた）。
+   */
+  allSessions: Session[];
   strengthSessions: StrengthSession[];
   races: Race[];
   goal?: Goal;
@@ -1158,7 +1168,13 @@ export function weeklySummary(
   weekStartDate: string
 ): WeeklySummary {
   const weekEnd = addDays(weekStartDate, 6);
-  const inWeek = ctx.sessions.filter(
+  /*
+   * 統合監査で発覚: ここは「その週に実際に何をやったか」の集計なので、
+   * ルール評価用に過去データ（backfilled）を除いた`ctx.sessions`ではなく、
+   * ACWR・週次レビュー・カバレッジ確認と同じ未フィルタの`ctx.allSessions`を
+   * 使う。過去データの遡り入力・FIT取込の実測が週間統計から抜け落ちていた。
+   */
+  const inWeek = ctx.allSessions.filter(
     (s) => s.date >= weekStartDate && s.date <= weekEnd && s.status !== "skipped"
   );
 
