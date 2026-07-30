@@ -71,6 +71,12 @@ const I = {
       <path d="M12 9.5v4.5M12 17.2v.3" />
     </>
   ),
+  info: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v6M12 7.5v.3" />
+    </>
+  ),
 };
 
 const ico = (p: JSX.Element) => (
@@ -99,6 +105,7 @@ export const SETTINGS_ITEMS: Item[] = [
   { href: "/past", label: "過去データの一括入力", icon: ico(I.history) },
   { href: "/data", label: "データ管理", icon: ico(I.db) },
   { href: "/sync", label: "同期（他の端末と）", icon: ico(I.db) },
+  { href: "/diagnostics", label: "診断情報", icon: ico(I.info) },
 ];
 
 /** 設定以外の到達先（PC左サイドバーにだけ並べる） */
@@ -121,6 +128,7 @@ export const SCREEN_TITLES: Record<string, string> = {
   "/past": "過去データ",
   "/data": "データ管理",
   "/sync": "同期",
+  "/diagnostics": "診断情報",
   "/warnings": "警告一覧",
   "/race": "レース分析",
   "/meet": "大会モード",

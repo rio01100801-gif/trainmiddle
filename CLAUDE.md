@@ -4,6 +4,7 @@
 判断に迷ったら **「1:48台に必要か」** で決める。
 
 詳しい設計判断は `README.md` に全部書いてある。ここには作業のときに必要なことだけ。
+障害対応・リリース手順・ロールバック・runbookは `OPERATIONS.md` を参照。
 
 ---
 
@@ -157,6 +158,8 @@ function Form() {
 ### 締め（毎回やる）
 
 タスクが完了して `npm run verify` が通ったら、**確認を取ったうえで**ここまでやる。
+`npm run release:check` を先に実行すると、VERSIONの上げ忘れ・pwa-distの差分・
+これから行う操作をdry-runで確認できる（commit/pushは行わない。詳細はOPERATIONS.md）。
 
 1. `pwa/sw.js` の `VERSION` を上げる
 2. `npm run build:all`

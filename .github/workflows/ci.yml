@@ -1,0 +1,105 @@
+name: CI
+
+# 運用整備（2026-07-31）で追加。
+#
+# 本番Supabase・実際のGoogle OAuth・実際のGitHub Pagesには一切接続しない。
+# ここで使う秘密情報は無い（このリポジトリのSecretsは未設定・不要）。
+# フォークからのPRでも安全に実行できる（本番資格情報を渡さない）。
+# ここではmainへの自動配信は一切行わない（gh-pagesへのpushは今回スコープ外）。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    # E2Eを含む一式で数分かかる。無制限待ちを避けるための上限（実測に余裕を持たせた値）。
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Node/bunのバージョンをここで固定する。ローカル開発環境（Node 24）と揃える。
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      # lockfileを尊重する（npm installではなくnpm ci）。再現可能な依存導入。
+      - name: Install dependencies (respects lockfile)
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # 秘密情報の埋め込み・API/shim対応漏れ・@ts-ignore等の禁止パターンを見る。
+      # Store interface（Repo/MemoryStore）の実装漏れは `implements Store` により
+      # 上のtypecheckステップ自体が検出する（TypeScriptの機能でそのまま担保される
+      # ため、ここでは重複したチェックを作らない）。
+      - name: Repo-wide checks (secrets / forbidden patterns / API-shim parity)
+        run: npm run ci:checks
+
+      # unit test（CFE・coverage・golden cases・property/boundary・backup往復・
+      # migration(mergeベース)・apiAuth・VERSION整合性 等、既存574件超を含む）
+      - name: Unit tests
+        run: npm test
+
+      # PWAビルド（アトミック: 失敗時はpwa-dist/に一切影響しない）
+      - name: Build PWA (atomic)
+        run: npm run build:all
+
+      # 配信物サイズの予算確認（現在値+20%からの退行検出）
+      - name: Performance budget
+        run: npm run ci:perf-budget
+
+      # コミットされているpwa-distが、今ビルドし直したものと一致するかを見る。
+      # 一致しなければ「VERSIONやapp/を変更したのにビルドし直さずcommitした」証拠。
+      # mainブランチの状態（=配信の元）と実際のビルド結果がズレていないことの
+      # 最終確認（pwa-distはこのリポジトリでGit管理された配信物のため）。
+      - name: pwa-dist matches source (detect forgotten rebuild)
+        run: |
+          git status --porcelain -- pwa-dist | tee /tmp/pwa-dist-diff.txt
+          if [ -s /tmp/pwa-dist-diff.txt ]; then
+            echo "::error::pwa-dist/ がコミット済みの内容と一致しません。npm run build:all を実行してからcommitしてください。"
+            git diff --stat -- pwa-dist
+            exit 1
+          fi
+
+      - name: E2E (offline PWA behavior)
+        run: npm run e2e
+
+      - name: E2E (update path)
+        run: npm run e2e:update
+
+      # 失敗時のみ、E2Eが生成したスクリーンショットを確認できるようにする。
+      # 実データではなく合成テストデータのみを使うため、健康情報・トークンは含まれない。
+      - name: Upload E2E artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-shots
+          path: shots/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # 既知の残存脆弱性（next@14系・vitest devDependency）はREADMEで判断済み・
+      # 対応を先送りにしているため、ここではビルドを止めない。ただし記録は残す。
+      - name: npm audit (report only, does not fail the build)
+        if: always()
+        run: npm audit || true

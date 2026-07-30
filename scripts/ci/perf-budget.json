@@ -1,0 +1,12 @@
+{
+  "_note": "運用整備（2026-07-31）で、その時点の実測値に20%の余裕を持たせて設定した予算。根拠のない厳しい値ではなく、実測からの退行検出が目的。bundle.jsが実際に大きくなった場合はここを更新すること（scripts/ci/check-perf-budget.mjs --update-baseline）。",
+  "measuredAt": "2026-07-31",
+  "measured": {
+    "pwa-dist/bundle.js": 898077,
+    "pwa-dist/styles.css": 27426
+  },
+  "budgets": {
+    "pwa-dist/bundle.js": 1077692,
+    "pwa-dist/styles.css": 32911
+  }
+}

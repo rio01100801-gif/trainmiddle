@@ -27,12 +27,13 @@
 | 項目 | 値 |
 | --- | --- |
 | branch | `main` |
-| HEAD | `dba5f56`（`fix: トレーニングロジック統合監査で見つかった3件のバグを修正`） |
-| `origin/main` との差 | **0 / 0**（完全一致・push済み・forge-v36としてgh-pages配信済み） |
+| HEAD | `80bbcc1`（`fix: セキュリティ・プライバシー監査で見つかった問題を修正`） |
+| `origin/main` との差 | **0 / 0**（完全一致・push済み・forge-v37としてgh-pages配信済み） |
 
 直近コミット:
 
 ```
+80bbcc1 fix: セキュリティ・プライバシー監査で見つかった問題を修正
 dba5f56 fix: トレーニングロジック統合監査で見つかった3件のバグを修正
 e654778 fix: 統合監査で見つけた既存バグ2件を修正
 a9ec349 feat: P0監査の残り3項目（依存関係・危険な提案防止・API認証）に対応
@@ -42,40 +43,47 @@ a9ec349 feat: P0監査の残り3項目（依存関係・危険な提案防止・
 d997ddb fix: Supabase Storageの初回push未検出を修正
 479e894 docs: forge-v34配信後の状態とRLS適用結果を反映
 4364d1e fix: Supabase Storageの保存先を利用者ごとに分離
-bf0e7db docs: 実機確認結果(BUG-02〜04・症状2とも再現なし)を反映
 ```
+
+**本番Supabaseへの対応（2026-07-31・リポジトリ外の作業）**: `forge`バケットの
+RLSを本人と一緒に手動で確認・整理済み。旧設計の緩いポリシー3つ
+（`forge_select_own_snapshot`/`forge_insert_own_snapshot`/`forge_update_own_snapshot`。
+特にINSERTに`owner_id`条件が無かった）を削除し、`forge_own_folder_*`
+（uid別パスで正しく分離済み）の4つだけが残る状態にした。bucketも
+private・50MB・`application/json`限定に設定済み。
 
 ## 未コミット変更
 
-**あり（2026-07-31・セキュリティ・プライバシー監査）。** `npm run verify`
-（typecheck/test 933件/build:all/e2e/e2e:update）は全てPASS済み。加えて
-`next build`→`npm run start`で実機起動し、`FORGE_API_TOKEN`未設定/誤り/一致の
-3パターンをcurlで確認済み（401/401/通過）。**VERSION更新・commit・push・
-gh-pages配信はまだ行っていない**（本人の標準運用に従い許可待ち）。
+**あり（2026-07-31・運用整備）。** `npm run release:check`
+（typecheck/test 939件/build:all/e2e/e2e:update を含む）が最後まで通ることを
+確認済み。**VERSION更新・commit・push・gh-pages配信はまだ行っていない**
+（本人の標準運用に従い許可待ち）。
 
-変更点の詳細は README.md の「セキュリティ・プライバシー監査」セクションを参照。
-要約:
-- `middleware.ts` / `src/lib/core/apiAuth.ts`（新規）: Next.js APIが
-  `FORGE_API_TOKEN`未設定時、`NODE_ENV=production`なら全API を401で閉じる
-  よう変更（fail closed）。`npm run dev`のローカル開発体験は変わらない。
-- `supabase/migrations/0001_forge_storage_rls.sql`（新規）: Supabase Storage
-  の`forge`バケットを利用者ごと（`auth.uid()`とパスの一致）に分離するRLS。
-  **リポジトリからは自動適用していない**。本番Supabaseへの適用はSQL Editorで
-  手動実行が必要（ファイル内に確認・テスト・ロールバック手順あり）。
-- `README.md`「S-11 同期」節: RLS設定手順の実装との不一致を修正、
-  Apple ヘルスケアのiOSショートカット連携が未実装（死んだ手順）だったことを
-  明記して手順を撤回。
-- `.env.example`（新規）: `FORGE_API_TOKEN`のみ記載。
-- `tests/apiAuth.test.ts`（新規・6件）
+変更点の詳細は README.md および新規 `OPERATIONS.md` を参照。要約:
+- `.github/workflows/ci.yml`（新規）: push/PRで自動検証。本番Supabase・
+  実OAuthには接続しない
+- `scripts/build-all-atomic.mjs`（新規）: `build:all`をアトミック化。失敗時
+  `pwa-dist/`に触れない（T-4検証済み。Windows特有のEBUSYにリトライで対応）
+- `scripts/release-check.mjs`（新規）: リリース前のdry-run確認。
+  commit/pushは行わない
+- `scripts/smoke-test.mjs`（新規）: 配信後の非破壊スモークテスト
+  （`npm run smoke`）。実際の公開URLに対して実行し動作確認済み
+- `scripts/ci/*`（新規）: 秘密情報の簡易走査・禁止パターン・API/shim対応・
+  性能予算のチェックスクリプト
+- `app/diagnostics/`（新規）: 設定→診断情報。バージョン・SW状態・同期状態を
+  表示（トークン・鍵・健康データは含まない）
+- `pwa-dist/build-info.json`（ビルド生成）: 配信物のバージョン・ソース
+  コミット・ビルド時刻を記録
+- `tests/buildVersionConsistency.test.ts` / `tests/ciChecks.test.ts`（新規）
+- `OPERATIONS.md`（新規）: バージョン管理・CI・migration方針・ロールバック・
+  障害対応runbook18件
 
 次に取りかかる担当（または本人）がやること:
 1. VERSION更新・commit・push・配信の許可を判断する
-2. 本番Supabaseへ`supabase/migrations/0001_forge_storage_rls.sql`を手動適用
-   するかどうかを判断する（適用にはSupabaseダッシュボードのSQL Editorが必要。
-   適用前に「既存ポリシーを確認するSELECT」を必ず先に実行すること）
-3. README.mdの同セクション末尾「指摘したが今回直していないこと」に4件ある
-   ので、次の作業候補として扱ってよい（クラウドスナップショット削除機能の
-   欠如、Supabase implicit flowの平文トークン保存など）
+2. README.mdの「セキュリティ・プライバシー監査」節末尾「指摘したが今回直して
+   いないこと」（クラウドスナップショット削除機能の欠如、Supabase implicit
+   flowの平文トークン保存など）、および`OPERATIONS.md`にある未着手項目を、
+   次の作業候補として扱ってよい
 
 ---
 

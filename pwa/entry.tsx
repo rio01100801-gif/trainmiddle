@@ -24,6 +24,7 @@ import SessionDetail from "../app/session/page";
 import SharedDataPage from "../app/data/page";
 import RunPage from "../app/run/page";
 import SyncPage from "../app/sync/page";
+import DiagnosticsPage from "../app/diagnostics/page";
 
 import type { FitParseResult } from "../src/lib/core/fitParse";
 import { validateHealthXmlSize } from "../src/lib/core/healthImport";
@@ -662,6 +663,7 @@ const PAGES: Record<string, React.ComponentType> = {
   "/data": DataPage,
   "/run": RunPage,
   "/sync": SyncPage,
+  "/diagnostics": DiagnosticsPage,
 };
 
 function usePath(): string {

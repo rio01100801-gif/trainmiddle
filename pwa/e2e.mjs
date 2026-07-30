@@ -2001,12 +2001,23 @@ if (!/ERROR|WARN/.test(warnText)) fail("警告一覧画面が表示されない�
 step("警告一覧画面OK");
 
 // ---- 11. 他画面の疎通 ----
-for (const [p, name] of [["/analysis", "08_analysis"], ["/race", "09_race"], ["/meet", "10_meet"], ["/heat", "11_heat"], ["/data", "12_data"], ["/session", "19_session"]]) {
+for (const [p, name] of [["/analysis", "08_analysis"], ["/race", "09_race"], ["/meet", "10_meet"], ["/heat", "11_heat"], ["/data", "12_data"], ["/session", "19_session"], ["/diagnostics", "20_diagnostics"]]) {
   await page.goto(`http://localhost:8791/#${p}`);
   await page.waitForTimeout(600);
   await shot(name);
 }
 step("全画面疎通OK");
+
+// ---- 11a. 診断情報画面（運用整備） ----
+await page.goto("http://localhost:8791/#/diagnostics");
+await page.waitForTimeout(600);
+const diagPageText = await page.textContent("body");
+if (!diagPageText.includes("診断情報")) fail("診断情報画面が表示されない");
+if (!diagPageText.includes("アプリバージョン")) fail("診断情報にアプリバージョンが出ていない");
+if (diagPageText.includes("eyJ") || diagPageText.includes("sb_publishable_") || diagPageText.includes("sb_secret_")) {
+  fail("診断情報にトークン・キーらしき文字列が出ている");
+}
+step("診断情報画面OK（バージョン表示・秘密情報を含まない）");
 
 // ---- 11b. セーフエリア（iPhoneのステータスバーにメニューが隠れないか） ----
 // ホーム画面から起動すると standalone 表示になり、時刻・電波・バッテリーの下に

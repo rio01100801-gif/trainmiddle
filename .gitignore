@@ -15,3 +15,5 @@ harness/node_modules/
 tsconfig.tsbuildinfo
 shots/
 .claude/settings.local.json
+/.pwa-dist-staging/
+/.pwa-dist-backup/

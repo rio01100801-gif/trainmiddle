@@ -11,10 +11,17 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { execSync } from "child_process";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const from = path.join(root, "pwa");
-const to = path.join(root, "pwa-dist");
+/*
+ * 運用整備で追加: build:all をアトミック化する scripts/build-all-atomic.mjs から
+ * 一時ディレクトリへ書き出させるための上書き先。未設定なら従来どおり pwa-dist。
+ */
+const to = process.env.FORGE_PWA_DIST
+  ? path.resolve(root, process.env.FORGE_PWA_DIST)
+  : path.join(root, "pwa-dist");
 
 const FILES = [
   "sw.js",
@@ -63,6 +70,29 @@ fs.writeFileSync(
   fs
     .readFileSync(manifestPath, "utf8")
     .replace(/("src": "\.\/icon-[\w-]+\.png)"/g, `$1?v=${v}"`)
+);
+
+/*
+ * 運用整備で追加: 配信物がどのソースコミットから作られたかを追跡できるようにする。
+ * 秘密情報は含まない（version・commit・生成時刻のみ）。診断画面（app/settings）が
+ * これを読んで表示する。commitが取れない環境（gitが無い等）でも失敗させない。
+ */
+function currentCommit() {
+  try {
+    const dirty = execSync("git status --porcelain", { cwd: root }).toString().trim().length > 0;
+    const hash = execSync("git rev-parse --short HEAD", { cwd: root }).toString().trim();
+    return dirty ? `${hash}-dirty` : hash;
+  } catch {
+    return "unknown";
+  }
+}
+fs.writeFileSync(
+  path.join(to, "build-info.json"),
+  JSON.stringify(
+    { version: v, commit: currentCommit(), builtAt: new Date().toISOString() },
+    null,
+    2
+  )
 );
 
 console.log(`静的ファイルを配りました（Service Worker: ${v} / アイコンURLに ?v=${v} を付与）`);

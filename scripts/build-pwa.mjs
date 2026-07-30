@@ -14,6 +14,7 @@
  * 実行:  bun scripts/build-pwa.mjs
  */
 import path from "path";
+import fs from "fs";
 
 if (typeof Bun === "undefined") {
   console.error(
@@ -30,7 +31,34 @@ if (typeof Bun === "undefined") {
 }
 
 const root = path.resolve(import.meta.dir, "..");
-const outfile = path.join(root, "pwa-dist", "bundle.js");
+/*
+ * 運用整備で追加: build:all をアトミック化する scripts/build-all-atomic.mjs から
+ * 一時ディレクトリへ書き出させるための上書き先。未設定なら従来どおり pwa-dist。
+ */
+const distDir = process.env.FORGE_PWA_DIST
+  ? path.resolve(root, process.env.FORGE_PWA_DIST)
+  : path.join(root, "pwa-dist");
+const outfile = path.join(distDir, "bundle.js");
+fs.mkdirSync(distDir, { recursive: true });
+
+/*
+ * chunkのファイル名にはハッシュが入る（下のBun.buildのnaming参照）ため、
+ * 内容が変わるたびに新しいファイル名になり、Bun.buildは古いchunkを消してくれない。
+ * 消さずに積み上げていくと、二度と読まれない古いchunkが配信物に残り続ける。
+ * ビルドのたびに一度全部消してから作り直す（stale chunk掃除）。
+ */
+function tryReaddir(dir) {
+  try {
+    return fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+for (const name of tryReaddir(distDir)) {
+  if (/^chunk-.*\.js$/.test(name)) {
+    fs.rmSync(path.join(distDir, name), { force: true });
+  }
+}
 
 /** next/* を PWA 用の実装に差し替える */
 const nextShim = {
@@ -62,7 +90,7 @@ const nextShim = {
  */
 const result = await Bun.build({
   entrypoints: [path.join(root, "pwa", "entry.tsx")],
-  outdir: path.join(root, "pwa-dist"),
+  outdir: distDir,
   naming: {
     entry: "bundle.js",
     chunk: "chunk-[hash].js",
