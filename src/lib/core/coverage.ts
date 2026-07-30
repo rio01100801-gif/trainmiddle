@@ -22,6 +22,7 @@ import { addDays, diffDays } from "./dates";
 import { categoryCountsPerFourWeeks } from "./periodization";
 import { categoryWeights, type Limiter, LIMITER_LABELS } from "./limiter";
 import { buildFourWeekBalance, type FourWeekBalance } from "./trainingBalance";
+import { isLongRun as isLongRunCanonical } from "./trainingClassification";
 
 /** 見る期間（週）。4週より短いと隔週要素が入らず、長いと今の状態から離れる */
 export const COVERAGE_WEEKS = 4;
@@ -147,10 +148,17 @@ function findCandidates(
       s.category === "aerobic"
   );
 
-  // ロングランかどうかは距離で見る。週内で最も長いジョグを土台とみなす
+  /*
+   * 統合監査で発覚: ここだけ独自のisLongRunを定義しており、trainingClassification.ts
+   * の正式な isLongRun（distanceKm>=12 or durationMin>=60）と基準がずれていた
+   * （durationMin基準が抜けていた）。同じセッションが画面によって「ロングラン」
+   * だったり無かったりする状態だったため、正式な判定に合わせる。
+   * 「週内で最も長いジョグは土台とみなす」の部分は、他に候補が無いときの
+   * 代替候補を必ず出すための、このファイル固有の意図的な追加基準なので残す。
+   */
   const longest = Math.max(0, ...inRange.map((s) => s.distanceKm ?? 0));
   const isLongRun = (s: Session) =>
-    (s.distanceKm ?? 0) >= 12 || ((s.distanceKm ?? 0) > 0 && (s.distanceKm ?? 0) === longest);
+    isLongRunCanonical(s) || ((s.distanceKm ?? 0) > 0 && (s.distanceKm ?? 0) === longest);
 
   const ordinary = inRange.filter((s) => !isLongRun(s));
   const longRuns = inRange.filter(isLongRun);

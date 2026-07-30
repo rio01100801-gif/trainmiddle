@@ -123,6 +123,36 @@ describe("足りていないとき", () => {
     expect(endurance.wanted).toBeGreaterThan(base.wanted);
     expect(endurance.basis).toContain("後半の維持");
   });
+
+  it("統合監査で修正: 距離は短いが60分以上のジョグもロングラン扱いになる（trainingClassification.isLongRunと基準を統一）", () => {
+    // 65分・5kmの「時間は長いが距離は短い」ジョグと、15kmの明確なロングラン。
+    // 修正前はここだけ独自のisLongRun（距離基準のみ、時間を見ない）を持っており、
+    // 65分ジョグが「ロングランではない普通のジョグ」として警告なしに置き換え候補へ出ていた。
+    const longByDuration = makeSession(addDays(TODAY, 3), "aerobic", {
+      status: "planned",
+      name: "ジョグ",
+      distanceKm: 5,
+      durationMin: 65,
+    });
+    const longByDistance = makeSession(addDays(TODAY, 6), "aerobic", {
+      status: "planned",
+      name: "ジョグ",
+      distanceKm: 15,
+      durationMin: 90,
+    });
+    const r = reviewCoverage({
+      sessions: [...done("high_lactate", 4), longByDuration, longByDistance],
+      today: TODAY,
+      phase: "Specific",
+      limiter: "balanced",
+    });
+    const p = r.proposals.find((x) => x.category === "race_economy");
+    expect(p).toBeDefined();
+    // 通常のジョグ候補が無い（両方ロングラン扱い）ため、両方に代償の注記が付く
+    const byDuration = p!.candidates.find((c) => c.sessionId === longByDuration.id);
+    expect(byDuration?.cost).toBeDefined();
+    expect(byDuration?.cost).toContain("ロングラン");
+  });
 });
 
 describe("置き換え候補の選び方", () => {

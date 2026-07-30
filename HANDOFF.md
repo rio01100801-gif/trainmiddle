@@ -47,7 +47,27 @@ f304ab8 fix: Supabase初回同期の未作成応答を処理
 
 ## 未コミット変更
 
-**なし。** NEXT-001 と NEXT-002（Phase 2-1〜2-4）は `d997ddb` までコミット・push・
+**あり（2026-07-31・トレーニングロジック統合監査）。** 本人の指示により
+「監査・最小修正・テストまでで、VERSION更新・commit・push・gh-pages配信は
+明示的な許可を待って停止」の状態。`npm run verify`（typecheck/test 927件/
+build:all/e2e/e2e:update）は全てPASS済み。配信物（`pwa-dist/`）は
+`build:all`実行済みだが`VERSION`（`forge-v35`のまま）は上げていない。
+
+変更点の詳細は README.md の「トレーニングロジック統合監査」セクションを参照。
+要約:
+- `src/lib/core/cfe.ts` / `src/lib/service.ts`: 目標タイムのCFE混入除去、
+  暑熱/疲労ガードレールの対称化（2件のバグ修正）
+- `src/lib/core/coverage.ts`: ロングラン判定を正式な`isLongRun`に統一
+- `tests/cfe.test.ts` 更新、`tests/coverage.test.ts`に回帰テスト追加、
+  `tests/goldenCases.test.ts` / `tests/propertyBoundary.test.ts` 新規追加
+
+次に取りかかる担当は、まず本人にVERSION更新・commit・push・配信の許可を
+取ってから進めること。README.mdの同セクション末尾に「指摘したが直していない
+こと」が5件あるので、次の作業候補として扱ってよい。
+
+---
+
+NEXT-001 と NEXT-002（Phase 2-1〜2-4）は `d997ddb` までコミット・push・
 gh-pages配信済み（2026-07-30・`forge-v35`）。内容は下の「NEXT-001 の完了記録」「NEXT-002」を参照。
 
 > 過去に、同じディレクトリで複数のエージェントが並行編集し、

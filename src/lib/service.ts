@@ -714,6 +714,8 @@ export function processResult(
     heavyLegsStreak: heavyStreak,
     isRace: opts.isRace,
     raceTimeSec: opts.raceTimeSec,
+    // 統合監査で追加: 未達幅の基準から目標タイムの混入を取り除くために渡す
+    goalTargetTimeSec: repo.getGoal()?.targetTimeSec,
   });
   cfe = update.cfe;
   repo.saveCfe(cfe);

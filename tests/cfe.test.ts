@@ -80,25 +80,76 @@ describe("4-5-1 CFE", () => {
     }
   });
 
-  it("ガードレール: 気温28℃以上では改善方向を反映しない", () => {
+  it("ガードレール: 気温28℃以上では改善・悪化どちらの方向も反映しない", () => {
     const cfe = initCfe(109.51, "2026-04-01");
     const s = makeSession("2026-08-01", "high_lactate", { targetPaces: [tp600] });
     const r = makeResult(s, { rpe: 5, achievement: "achieved" }); // Δ-3 → 改善方向
     const u = updateCfeFromResult(cfe, s, r, { tempC: 30 });
     expect(u.applied).toBe(false);
-    // 悪化方向は反映する
+    // 統合監査で修正: 悪化方向（暑熱下の未達）も能力低下として反映しない
     const rBad = makeResult(s, { rpe: 10, achievement: "achieved" });
     const u2 = updateCfeFromResult(cfe, s, rBad, { tempC: 30 });
-    expect(u2.applied).toBe(true);
-    expect(u2.deltaSec).toBeGreaterThan(0);
+    expect(u2.applied).toBe(false);
+    expect(u2.deltaSec).toBe(0);
   });
 
-  it("ガードレール: 脚が重い2連続でも改善方向を反映しない", () => {
+  it("ガードレール: 脚が重い2連続でも改善・悪化どちらの方向も反映しない", () => {
     const cfe = initCfe(109.51, "2026-04-01");
     const s = makeSession("2026-04-02", "high_lactate", { targetPaces: [tp600] });
     const r = makeResult(s, { rpe: 5, achievement: "achieved" });
     const u = updateCfeFromResult(cfe, s, r, { heavyLegsStreak: 2 });
     expect(u.applied).toBe(false);
+    const rBad = makeResult(s, { rpe: 10, achievement: "achieved" });
+    const u2 = updateCfeFromResult(cfe, s, rBad, { heavyLegsStreak: 2 });
+    expect(u2.applied).toBe(false);
+    expect(u2.deltaSec).toBe(0);
+  });
+
+  it("統合監査で修正: 目標タイムの混入により同じ実測でCFEの動きが変わらない", () => {
+    // periodization.tsの生成と同じ手順（targetPaces = baseTime(CFE,目標,phase)由来）を
+    // 再現する。目標が緩い場合と厳しい場合とでtargetPacesの値自体は異なるが、
+    // goalTargetTimeSecを渡せば基準がCFEのみに正規化され、同じ実測に対して
+    // 同じCFEの動きになるべき（=目標を厳しく設定しただけで能力が下がった扱いに
+    // ならない）。
+    const cfe = initCfe(109.51, "2026-04-01"); // 111.01
+    const cur = cfe.estimated800mSec;
+    const phase = "Specific";
+    const distanceM = 600;
+    const looseGoal = 111.0;
+    const strictGoal = 95.0;
+    const looseBlended = baseTime(cur, looseGoal, phase);
+    const strictBlended = baseTime(cur, strictGoal, phase);
+    const mkTp = (blended: number): TargetPace => {
+      const sec = (blended / 800) * distanceM;
+      return { distanceM, targetSecFast: sec, targetSecSlow: sec };
+    };
+    const sLoose = makeSession("2026-04-02", "high_lactate", {
+      phase,
+      targetPaces: [mkTp(looseBlended)],
+    });
+    const sStrict = makeSession("2026-04-02", "high_lactate", {
+      phase,
+      targetPaces: [mkTp(strictBlended)],
+    });
+    // 同じ実測: 600mを87秒×3（±1.5秒の上限にかからない程度の小さな未達に留める。
+    // 未達幅が大きすぎるとどちらもガードレール上限に張り付いてしまい、
+    // 混入除去の効果がテストで見えなくなるため）
+    const rLoose = makeResult(sLoose, {
+      rpe: 8,
+      achievement: "partial",
+      actualLapsSec: [87, 87, 87],
+      lapDistancesM: [600, 600, 600],
+    });
+    const rStrict = makeResult(sStrict, {
+      rpe: 8,
+      achievement: "partial",
+      actualLapsSec: [87, 87, 87],
+      lapDistancesM: [600, 600, 600],
+    });
+    const loose = updateCfeFromResult(cfe, sLoose, rLoose, { goalTargetTimeSec: looseGoal });
+    const strict = updateCfeFromResult(cfe, sStrict, rStrict, { goalTargetTimeSec: strictGoal });
+    expect(strict.deltaSec).toBeCloseTo(loose.deltaSec, 6);
+    expect(strict.cfe.estimated800mSec).toBeCloseTo(loose.cfe.estimated800mSec, 6);
   });
 
   it("レース結果: 信頼度1.0だが1回で3秒以上は動かさない", () => {

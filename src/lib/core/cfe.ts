@@ -66,11 +66,26 @@ export function initCfe(
 // ---------------------------------------------------------------------------
 
 export interface CfeUpdateContext {
-  /** 気温28℃以上、または next_day_legs="heavy" が既に2連続 → 改善方向を反映しない */
+  /** 気温28℃以上、または next_day_legs="heavy" が既に2連続 → 改善・悪化どちらの方向も反映しない */
   tempC?: number;
   heavyLegsStreak?: number;
   isRace?: boolean;
   raceTimeSec?: number; // レースの場合の実測タイム
+  /**
+   * 目標タイム（統合監査で追加）。
+   *
+   * `session.targetPaces` は `baseTime(CFE, 目標, フェーズ)` から作られており、
+   * Build以降のフェーズでは目標タイムの重みが混ざっている（4-5-2）。
+   * これを未達幅の基準にそのまま使うと、「同じ実測でも目標を速く設定した
+   * ほうがCFEが悪化する」——目標タイムから現在能力を逆算するのと実質同じ
+   * ことになってしまう（統合監査で実測して確認）。
+   *
+   * ここに目標タイムを渡すと、未達幅の基準を「CFEだけならこうだったはず」
+   * のペースに戻してから計算する。GRP比率表・未達幅の式そのものは変えない
+   * ——目標由来のスケールだけを打ち消す。省略時は打ち消さない
+   * （呼び出し側が目標を渡さない限り、この修正は効かない）。
+   */
+  goalTargetTimeSec?: number;
 }
 
 export interface CfeUpdateResult {
@@ -146,7 +161,12 @@ export function updateCfeFromResult(
     if (totalM > 0) {
       const actualPerM = totalSec / totalM;
       const tp = session.targetPaces[0];
-      const targetPerM = ((tp.targetSecFast + tp.targetSecSlow) / 2) / tp.distanceM;
+      let targetPerM = ((tp.targetSecFast + tp.targetSecSlow) / 2) / tp.distanceM;
+      // 目標タイムの混入を取り除く（上のCfeUpdateContext.goalTargetTimeSecの説明を参照）
+      if (ctx.goalTargetTimeSec !== undefined) {
+        const blended = baseTime(cur, ctx.goalTargetTimeSec, session.phase);
+        if (blended > 0) targetPerM *= cur / blended;
+      }
       shortfall = Math.max(0, (actualPerM - targetPerM) * 800);
     }
   }
@@ -179,12 +199,25 @@ export function updateCfeFromResult(
     notes.push("ガードレール: 1回の更新は±1.5秒まで");
   }
 
-  // ガードレール: 気温28℃以上 or 脚が重い2連続 → 悪化方向のみ反映
+  /*
+   * ガードレール: 気温28℃以上 or 脚が重い2連続 → 改善・悪化どちらの方向も反映しない。
+   *
+   * 統合監査で発覚: 従来は改善方向（delta < 0）だけを止めており、暑熱・疲労
+   * 環境下の未達はそのまま能力低下としてCFEに反映されていた
+   * （CLAUDE.mdの「実行できなかったこと（暑さ・寝不足・設定が高すぎた）は
+   * 能力低下ではないので、設定だけを動かしてCFEは触らない」に反する）。
+   * 環境要因による未達も、環境要因による好走と同じ扱いにする——
+   * どちらも「その日たまたま出せた／出せなかった値」であり、
+   * 能力の変化ではないため。実行できなかったことへの対応は
+   * 設定側（M-2の翌日調整）が担う。
+   */
   const hotOrFatigued =
     (ctx.tempC !== undefined && ctx.tempC >= 28) || (ctx.heavyLegsStreak ?? 0) >= 2;
-  if (hotOrFatigued && delta < 0) {
+  if (hotOrFatigued && delta !== 0) {
     notes.push(
-      "ガードレール: 暑熱/疲労環境下のため改善方向は反映しない（環境要因を実力と誤認しない）"
+      delta < 0
+        ? "ガードレール: 暑熱/疲労環境下のため改善方向は反映しない（環境要因を実力と誤認しない）"
+        : "ガードレール: 暑熱/疲労環境下のため悪化方向も反映しない（実行できなかったことは能力低下ではない）"
     );
     return { cfe, applied: false, deltaSec: 0, impliedSec: implied, guardrailNotes: notes };
   }
