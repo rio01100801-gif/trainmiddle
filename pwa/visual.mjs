@@ -74,6 +74,19 @@ const SCREENS = [
       return id ? `#/session?id=${encodeURIComponent(id)}` : undefined;
     },
   },
+  {
+    name: "summary",
+    hash: async (page) => {
+      // 本ごとのタイムが出るインターバルの記録を優先する
+      const id = await page.evaluate(async () => {
+        const rs = await fetch("/api/results").then((r) => r.json());
+        const list = rs.results ?? [];
+        const withReps = list.find((r) => (r.interval?.results ?? []).length > 0);
+        return (withReps ?? list[0])?.sessionId;
+      });
+      return id ? `#/summary?sessionId=${encodeURIComponent(id)}` : undefined;
+    },
+  },
 ];
 
 const WIDTHS = ALL_WIDTHS
@@ -168,6 +181,48 @@ async function seed(page) {
         if (s.date >= today || s.category === "off") continue;
         const durationMin = s.durationMin ?? 40;
         const distanceKm = s.distanceKm ?? 8;
+        const tp = s.targetPaces?.[0];
+
+        /*
+         * 設定タイムがあるセッションは本ごとのタイムを入れる。
+         * 全部を持続走で埋めると、記録サマリーの「本ごとのタイム」や
+         * 同一処方比較のような、本数を前提にした表示を確認できない。
+         * 設定の中央値から少しずつ落ちる形にして、最速が最終本にならないようにする。
+         */
+        const body =
+          tp && s.category !== "aerobic"
+            ? (() => {
+                const reps = 4;
+                const base = (tp.targetSecFast + tp.targetSecSlow) / 2;
+                const times = [base + 0.3, base - 0.4, base + 0.1, base + 0.8].map(
+                  (v) => Math.round(v * 10) / 10
+                );
+                return {
+                  actualLapsSec: times,
+                  lapDistancesM: times.map(() => tp.distanceM),
+                  interval: {
+                    reps,
+                    distanceM: tp.distanceM,
+                    restType: "jog",
+                    restSec: 300,
+                    results: times.map((actualSec, i) => ({
+                      index: i,
+                      distanceM: tp.distanceM,
+                      targetSec: Math.round(base * 10) / 10,
+                      actualSec,
+                    })),
+                  },
+                };
+              })()
+            : {
+                actualLapsSec: [Math.round(durationMin * 60)],
+                continuous: {
+                  distanceKm,
+                  durationMin,
+                  avgPaceSecPerKm: Math.round((durationMin * 60) / distanceKm),
+                },
+              };
+
         const r = await fetch("/api/results", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -175,15 +230,11 @@ async function seed(page) {
             id: `res-visual-${s.id}`,
             sessionId: s.id,
             date: s.date,
-            actualLapsSec: [Math.round(durationMin * 60)],
-            continuous: {
-              distanceKm,
-              durationMin,
-              avgPaceSecPerKm: Math.round((durationMin * 60) / distanceKm),
-            },
+            ...body,
             achievement: "achieved",
             rpe: s.category === "aerobic" ? 3 : 8,
             subjective: s.category === "aerobic" ? "easy" : "hard",
+            note: s.category === "aerobic" ? undefined : "調子良く、最後まで安定して走れた。",
           }),
         });
         if (r.ok) recorded++;

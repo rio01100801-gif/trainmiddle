@@ -157,6 +157,7 @@ export const SCREEN_TITLES: Record<string, string> = {
   "/race": "レース分析",
   "/meet": "大会モード",
   "/session": "メニューの根拠",
+  "/summary": "SESSION SUMMARY",
   "/run": "セッション中の入力",
 };
 

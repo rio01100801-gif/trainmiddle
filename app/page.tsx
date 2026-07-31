@@ -659,7 +659,16 @@ function Today({ d, today, onChanged }: { d: any; today: string; onChanged: () =
         : result.achievement === "partial"
         ? "一部達成"
         : "未達";
-    action = { label: `記録済み ／ ${ach}`, href: "/results", kind: "done" };
+    /*
+     * 記録済みの日は、入力画面ではなく振り返り（サマリー）へ送る。
+     * もう入れ終わっているのに入力欄が出ると、見に来ただけのつもりで
+     * 値を触ってしまう。直したいときはサマリーから記録画面へ行ける。
+     */
+    action = {
+      label: `記録済み ／ ${ach}`,
+      href: withQuery("/summary", { sessionId: s.id }),
+      kind: "done",
+    };
   } else {
     action = { label: "記録する", href: "/results", kind: "secondary" };
   }

@@ -23,6 +23,7 @@ import Warnings from "../app/warnings/page";
 import SessionDetail from "../app/session/page";
 import SharedDataPage from "../app/data/page";
 import RunPage from "../app/run/page";
+import SummaryPage from "../app/summary/page";
 import SyncPage from "../app/sync/page";
 import DiagnosticsPage from "../app/diagnostics/page";
 
@@ -678,6 +679,7 @@ const PAGES: Record<string, React.ComponentType> = {
   "/session": SessionDetail,
   "/data": DataPage,
   "/run": RunPage,
+  "/summary": SummaryPage,
   "/sync": SyncPage,
   "/diagnostics": DiagnosticsPage,
 };
