@@ -29,7 +29,10 @@
     "ci:perf-budget": "node scripts/ci/check-perf-budget.mjs",
     "ci:checks": "npm run ci:secrets && npm run ci:forbidden && npm run ci:api-parity",
     "release:check": "node scripts/release-check.mjs",
-    "smoke": "node scripts/smoke-test.mjs"
+    "smoke": "node scripts/smoke-test.mjs",
+    "visual": "node pwa/visual.mjs --all-widths --check",
+    "visual:shots": "node pwa/visual.mjs",
+    "visual:update": "node pwa/visual.mjs --all-widths --update"
   },
   "dependencies": {
     "fit-file-parser": "^4.1.0",

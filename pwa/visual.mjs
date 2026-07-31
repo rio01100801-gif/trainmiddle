@@ -21,14 +21,18 @@
  */
 import http from "http";
 import fs from "fs";
+import crypto from "crypto";
 import path from "path";
 import { loadChromium, launchOptions, ROOT, DIST } from "./e2e-env.mjs";
 
 const args = process.argv.slice(2);
 const ALL_WIDTHS = args.includes("--all-widths");
+const CHECK = args.includes("--check");
+const UPDATE = args.includes("--update");
 const ONLY = args.find((a) => a.startsWith("--only="))?.slice("--only=".length);
 
 const OUT_DIR = path.join(ROOT, "visual", "current");
+const BASE_DIR = path.join(ROOT, "visual", "baseline");
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
 /*
@@ -53,6 +57,12 @@ const PLAN_START = "2026-06-01";
  * （セッションIDのように、生成しないと決まらない遷移先があるため）。
  */
 const SCREENS = [
+  /*
+   * スプラッシュはReactがマウントすると自分で消えるので、bundle.js を読ませずに撮る。
+   * 起動時に出る値（レースまでの日数）は前回起動時に localStorage へ置かれたものを
+   * 読むので、ここでも同じ形で入れておく。
+   */
+  { name: "splash", blockBundle: true, hash: "#/", waitMs: 4200 },
   { name: "today", hash: "#/" },
   { name: "calendar", hash: "#/calendar" },
   { name: "analytics", hash: "#/analysis" },
@@ -298,6 +308,35 @@ for (const { w, h } of WIDTHS) {
 
   for (const s of SCREENS) {
     if (ONLY && s.name !== ONLY) continue;
+
+    if (s.blockBundle) {
+      const sp = await context.newPage();
+      await sp.route("**/bundle.js", (route) => route.abort());
+      await sp.addInitScript(
+        (v) => localStorage.setItem("forge:splash", v),
+        JSON.stringify({ raceDate: RACE_DATE, gapText: "目標 1:48.50 まで −5.7秒" })
+      );
+      await sp.goto(`http://localhost:8793/${s.hash}`);
+      await sp.waitForTimeout(s.waitMs ?? 4200);
+      /*
+       * 「アプリを準備しています」は無限に点滅する。止めないと撮るたびに
+       * 不透明度が変わり、毎回違うPNGになって回帰判定に使えない。
+       * ここで全アニメーションを止めると、入場アニメ（forwards で
+       * 最終状態を保持している）まで初期状態に戻ってしまうので、
+       * 点滅している要素だけを止める。
+       */
+      await sp.addStyleTag({
+        content: "#splash .wait{animation:none!important;opacity:.7!important}",
+      });
+      await sp.waitForTimeout(80);
+      const file = path.join(OUT_DIR, `${s.name}-${w}.png`);
+      await sp.screenshot({ path: file });
+      await sp.close();
+      shots++;
+      console.log(`  ${path.relative(ROOT, file)}`);
+      continue;
+    }
+
     const hash = typeof s.hash === "function" ? await s.hash(page) : s.hash;
     if (!hash) {
       console.log(`  (${s.name}: 遷移先を決められないので飛ばした)`);
@@ -324,3 +363,49 @@ for (const { w, h } of WIDTHS) {
 await browser.close();
 server.close();
 console.log(`\n${shots}枚を visual/current/ に保存しました（基準日 ${FROZEN_NOW.slice(0, 10)}）`);
+
+/*
+ * 回帰の判定。
+ *
+ * 時刻・データ・アニメーションを固定してあるので、同じ実装からは
+ * バイト単位で同じPNGが出る（実測済み）。だからハッシュ比較で足りる。
+ * pixelmatch のような画像差分ライブラリを足していないのはこのため——
+ * 「どこが変わったか」は current と baseline を並べて目で見るほうが速い。
+ *
+ * これは「前と変わっていないか」の判定であって、
+ * 「リファレンス画像に近いか」の判定ではない（後者は自動化できない）。
+ */
+const digest = (p) => crypto.createHash("sha1").update(fs.readFileSync(p)).digest("hex");
+
+if (UPDATE) {
+  fs.mkdirSync(BASE_DIR, { recursive: true });
+  let n = 0;
+  for (const f of fs.readdirSync(OUT_DIR)) {
+    fs.copyFileSync(path.join(OUT_DIR, f), path.join(BASE_DIR, f));
+    n++;
+  }
+  console.log(`baseline を ${n}枚 更新しました`);
+} else if (CHECK) {
+  const captured = fs.readdirSync(OUT_DIR).filter((f) => f.endsWith(".png"));
+  const changed = [];
+  const added = [];
+  for (const f of captured) {
+    const base = path.join(BASE_DIR, f);
+    if (!fs.existsSync(base)) {
+      added.push(f);
+      continue;
+    }
+    if (digest(path.join(OUT_DIR, f)) !== digest(base)) changed.push(f);
+  }
+  if (added.length) console.log(`\nbaseline に無い画面: ${added.join(", ")}`);
+  if (changed.length) {
+    console.error(`\n見た目が変わった画面（${changed.length}件）:`);
+    for (const f of changed) console.error(`  ${f}`);
+    console.error(
+      "\nvisual/current/ と visual/baseline/ を並べて確認してください。" +
+        "\n意図した変更なら: npm run visual:update"
+    );
+    process.exit(1);
+  }
+  console.log("baseline と一致しました（見た目の回帰なし）");
+}
