@@ -10,9 +10,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="FORGE">
 <link rel="manifest" href="./manifest.webmanifest">
-<link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png?v=forge-v43">
-<link rel="icon" type="image/png" sizes="32x32" href="./icon-32.png?v=forge-v43">
-<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png?v=forge-v43">
+<link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png?v=forge-v45">
+<link rel="icon" type="image/png" sizes="32x32" href="./icon-32.png?v=forge-v45">
+<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png?v=forge-v45">
 <link rel="stylesheet" href="./styles.css">
 <style>
   :root { --forge: #b6ff00; --muted: #6b7280; --muted-2: #9ca3af; }
@@ -41,18 +41,54 @@
     animation: splash-draw 1.45s cubic-bezier(.5,.05,.2,1) .18s forwards;
   }
   #splash .lane-delay { animation-delay: .52s; }
-  #splash .finish {
-    fill: #fff; opacity: 0; filter: url("#splash-glow");
-    animation: splash-finish 420ms ease-out 1.68s forwards;
+  /* 発光層。芯より太く・薄く・強くぼかす */
+  #splash .lane-halo {
+    stroke-width: 14; opacity: .28; filter: url("#splash-soft");
   }
+  /*
+   * ゴールのフレア。白黄のコア・緑の中間・広く薄い外周の3層で作る。
+   * 単色の円1つだと「点が光った」だけで、勝負の瞬間には見えない。
+   */
+  #splash .finish {
+    opacity: 0;
+    animation: splash-finish 420ms ease-out 1.68s forwards;
+    transform-origin: 648px 172px;
+  }
+  #splash .flare-outer { fill: rgba(182,255,0,.20); filter: url("#splash-soft"); }
+  #splash .flare-mid   { fill: rgba(210,255,90,.72); filter: url("#splash-glow"); }
+  #splash .flare-core  { fill: #fdffe8; }
+  /* 4方向へ伸びる光条。フレアらしさはこれで出る */
+  #splash .flare-ray {
+    stroke: rgba(232,255,160,.85); stroke-linecap: round; filter: url("#splash-glow");
+  }
+  /*
+   * リファレンスでは軌跡がワードマークの後ろを通る。
+   * 上下に並べただけだと「輪っかの下に文字を置いた」図版に見えるので、
+   * 負マージンで重ねる。文字は前面（z-index）に置いて読めるようにする。
+   */
   #splash .brand {
-    margin-top: -30px; display: flex; flex-direction: column; align-items: center;
+    margin-top: -44px; position: relative; z-index: 1;
+    display: flex; flex-direction: column; align-items: center;
     opacity: 0; transform: translateY(12px);
     animation: splash-rise 460ms ease-out 1.78s forwards;
   }
-  #splash .brand b {
-    display: inline-block; color: #fff; font-size: clamp(34px,10vw,58px);
-    line-height: .9; letter-spacing: -.035em; font-weight: 950; transform: skewX(-9deg);
+  /*
+   * ワードマークは画像をマスクとして使う。
+   * 斜体をかけた普通のテキストでは、リファレンスの幅広・角落としの字形にならない。
+   * url() は index.html と同じ場所を基準に解決される（brand-wordmark.png は
+   * build-static.mjs が pwa-dist へコピーし、sw.js の ASSETS にも入れてある）。
+   */
+  /* 目には見せないが、読み上げとテキストとしては残す */
+  #splash .sr-only {
+    position: absolute; width: 1px; height: 1px; margin: -1px;
+    padding: 0; overflow: hidden; white-space: nowrap; border: 0;
+    clip-path: inset(50%);
+  }
+  #splash .wm {
+    display: block; width: min(74vw, 430px); aspect-ratio: 1120 / 205;
+    background: #fff;
+    -webkit-mask: url("./brand-wordmark.png") no-repeat center / contain;
+    mask: url("./brand-wordmark.png") no-repeat center / contain;
   }
   #splash .tag {
     margin-top: 12px; color: var(--muted-2); font-size: clamp(8px,2.5vw,11px);
@@ -111,15 +147,37 @@
           <feGaussianBlur stdDeviation="8" result="blur"/>
           <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
         </filter>
+        <!-- 外周のにじみ用。合成せずぼかしたものだけを出す -->
+        <filter id="splash-soft" x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur stdDeviation="22"/>
+        </filter>
       </defs>
       <path class="lane lane-muted" d="M72 172C72 72 648 72 648 172S72 272 72 172Z"/>
       <path class="lane lane-muted" d="M110 172C110 102 610 102 610 172S110 242 110 172Z"/>
+      <!-- 発光層: 同じ軌跡を太くぼかして下に敷く -->
+      <path class="lane lane-live lane-halo" d="M72 172C72 72 648 72 648 172S72 272 72 172Z"/>
+      <path class="lane lane-live lane-halo lane-delay" d="M110 172C110 102 610 102 610 172S110 242 110 172Z"/>
       <path class="lane lane-live" d="M72 172C72 72 648 72 648 172S72 272 72 172Z"/>
       <path class="lane lane-live lane-delay" d="M110 172C110 102 610 102 610 172S110 242 110 172Z"/>
-      <circle class="finish" cx="648" cy="172" r="8"/>
+      <g class="finish">
+        <circle class="flare-outer" cx="648" cy="172" r="54"/>
+        <g class="flare-ray">
+          <path d="M648 138 V206" stroke-width="2"/>
+          <path d="M614 172 H682" stroke-width="2"/>
+          <path d="M628 152 L668 192" stroke-width="1.2"/>
+          <path d="M668 152 L628 192" stroke-width="1.2"/>
+        </g>
+        <circle class="flare-mid" cx="648" cy="172" r="13"/>
+        <circle class="flare-core" cx="648" cy="172" r="4.5"/>
+      </g>
     </svg>
     <div class="brand">
-      <b>FORGE</b>
+      <span class="wm" aria-hidden="true"></span>
+      <!--
+        画像にした結果、文字としての「FORGE」が画面から消える。
+        読み上げと自動確認のために本物のテキストを残す。
+      -->
+      <span class="sr-only">FORGE</span>
       <span class="tag">800M PERFORMANCE</span>
     </div>
     <div class="info" id="splash-info">
