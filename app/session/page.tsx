@@ -49,34 +49,89 @@ export default function SessionPage() {
 
   return (
     <div className="session-screen flex flex-col gap-3">
+      {/*
+        リファレンス（reference-ui/crops/ai-menu.jpeg）の構成。
+        緑の小ラベル＋内容を積み重ね、最後に緑枠の開始ボタンを置く。
+        中身は既存のデータをそのまま並べ替えただけで、生成ロジックには触っていない。
+      */}
       <Card variant="hero" className="session-hero">
-        <div className="metric-label mb-2">{session.date}</div>
-        <h2 className="text-[19px] font-extrabold leading-tight mb-1.5">{session.name}</h2>
-        <p className="text-[13px] leading-relaxed" style={{ color: "var(--text-2)" }}>
-          {session.prescription}
-        </p>
+        <div className="flex items-center justify-between gap-2 mb-2.5">
+          <span className="forge-label" style={{ color: "var(--forge)" }}>
+            TODAY&apos;S FORGE
+          </span>
+          <span className="text-[11px] num" style={{ color: "var(--text-3)" }}>
+            {session.date}
+          </span>
+        </div>
 
-        {session.targetPaces?.length > 0 ? (
-          <div className="mt-3 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
-            <div className="metric-label mb-1.5">設定タイム</div>
-            {session.targetPaces.map((p: any, i: number) => (
-              <div key={i} className="text-[13px] num">
-                {p.distanceM}m{" "}
-                <b>
-                  {fmtSec(p.targetSecFast)} 〜 {fmtSec(p.targetSecSlow)}
-                </b>
-              </div>
-            ))}
+        <div className="flex items-center gap-2 flex-wrap mb-4">
+          <h2
+            className="font-extrabold leading-none"
+            style={{ fontSize: "var(--num-lg)", letterSpacing: "-.02em" }}
+          >
+            {session.name}
+          </h2>
+          {session.generation?.repeatedForComparison ? null : (
+            <span
+              className="text-[10px] font-bold px-2 py-0.5 rounded"
+              style={{ border: "1px solid var(--volt-line)", color: "var(--forge)" }}
+            >
+              推奨
+            </span>
+          )}
+        </div>
+
+        {/* REASON: 生成がこの形式を選んだ理由（既存の selectionReasons） */}
+        {session.generation?.selectionReasons?.length ? (
+          <div className="mb-4">
+            <p className="forge-label" style={{ color: "var(--forge)" }}>
+              REASON
+            </p>
+            <p className="text-[12.5px] leading-relaxed mt-1.5" style={{ color: "var(--text-2)" }}>
+              {session.generation.selectionReasons[0]}
+            </p>
           </div>
         ) : null}
 
-        <div className="flex gap-2 mt-3.5 flex-col sm:flex-row">
+        <div className="mb-4">
+          <p className="forge-label" style={{ color: "var(--forge)" }}>
+            MAIN SET
+          </p>
+          <p className="text-[13px] leading-relaxed mt-1.5">{session.prescription}</p>
+          {session.targetPaces?.length > 0 ? (
+            <div className="mt-1.5">
+              {session.targetPaces.map((p: any, i: number) => (
+                <div key={i} className="text-[12.5px] num" style={{ color: "var(--text-2)" }}>
+                  {p.distanceM}m{" "}
+                  <b style={{ color: "var(--text)" }}>
+                    {fmtSec(p.targetSecFast)} 〜 {fmtSec(p.targetSecSlow)}
+                  </b>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        {/* FOCUS: この練習の目的（既存の rationale.purpose） */}
+        {r?.purpose ? (
+          <div className="mb-4">
+            <p className="forge-label" style={{ color: "var(--forge)" }}>
+              FOCUS
+            </p>
+            <p className="text-[12.5px] leading-relaxed mt-1.5" style={{ color: "var(--text-2)" }}>
+              {r.purpose}
+            </p>
+          </div>
+        ) : null}
+
+        <div className="flex gap-2 flex-col sm:flex-row">
           {session.targetPaces?.length > 0 ? (
             <Link
               href={withQuery("/run", { sessionId: session.id })}
-              className="btn-volt justify-center flex-1"
+              className="btn-ghost justify-center flex-1"
+              style={{ borderColor: "var(--volt-line)", color: "var(--forge)" }}
             >
-              セッションを開始<span aria-hidden>→</span>
+              このメニューで開始<span aria-hidden>→</span>
             </Link>
           ) : null}
           <Link

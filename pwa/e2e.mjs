@@ -2256,18 +2256,32 @@ await page.evaluate(async () => {
 });
 await page.goto("http://localhost:8791/#/");
 await page.waitForTimeout(1100);
+/*
+ * TODAYに出るのは「その日の代表セッション」1件で、選ぶのは sessionPriority。
+ * 高乳酸と経済走は同点なので、同点のときは配列順＝生成が先に入っているほうが勝つ。
+ * つまり曜日によっては、上で足したテスト用セッションではなく
+ * 生成済みの固定セッション（チーム練習等）が代表になる。
+ * 固定枠は仕様上変更できないので、その日は「メニューを変更」が出なくて正しい。
+ * 曜日でテストが落ちないよう、代表が固定かどうかで期待値を分ける。
+ */
+const todayInfo = await page.evaluate(async () => {
+  const d = await fetch("/api/dashboard").then((r) => r.json());
+  return {
+    has: !!d.todaySession,
+    isFixed: !!d.todaySession?.isFixed,
+    name: d.todaySession?.name,
+    category: d.todaySession?.category,
+  };
+});
 const todayEditBtn = page.getByRole("button", { name: "メニューを変更", exact: true });
-if ((await todayEditBtn.count()) === 0) {
-  const info = await page.evaluate(async () => {
-    const d = await fetch("/api/dashboard").then((r) => r.json());
-    return {
-      has: !!d.todaySession,
-      isFixed: !!d.todaySession?.isFixed,
-      name: d.todaySession?.name,
-      category: d.todaySession?.category,
-    };
-  });
-  fail(`P-1: TODAYに「メニューを変更」が無い（${JSON.stringify(info)}）`);
+if (todayInfo.isFixed) {
+  // 固定枠が代表の日: 変更ボタンが出ないことこそが期待される挙動
+  if ((await todayEditBtn.count()) > 0) {
+    fail(`P-1: 固定セッションなのに「メニューを変更」が出ている（${JSON.stringify(todayInfo)}）`);
+  }
+  step(`P-1 固定セッションの日は変更ボタンを出さないOK（${todayInfo.name}）`);
+} else if ((await todayEditBtn.count()) === 0) {
+  fail(`P-1: TODAYに「メニューを変更」が無い（${JSON.stringify(todayInfo)}）`);
 } else {
   await todayEditBtn.first().click();
   await page.waitForTimeout(700);

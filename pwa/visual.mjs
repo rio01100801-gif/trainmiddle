@@ -47,12 +47,33 @@ const RACE_DATE = "2026-09-25";
  */
 const PLAN_START = "2026-06-01";
 
-/** 撮る画面。name はファイル名、hash は遷移先 */
+/**
+ * 撮る画面。name はファイル名、hash は遷移先。
+ * hash が関数のときは、シード後のデータからその場で組み立てる
+ * （セッションIDのように、生成しないと決まらない遷移先があるため）。
+ */
 const SCREENS = [
   { name: "today", hash: "#/" },
   { name: "calendar", hash: "#/calendar" },
   { name: "analytics", hash: "#/analysis" },
   { name: "results", hash: "#/results" },
+  {
+    name: "ai-menu",
+    hash: async (page) => {
+      const id = await page.evaluate(async (today) => {
+        // 生成理由（REASON）が付くセッションを優先して選ぶ。
+        // ジョグには理由が付かないので、それを撮ると REASON の表示を確認できない。
+        const to = new Date(new Date(today).getTime() + 13 * 86400000)
+          .toISOString()
+          .slice(0, 10);
+        const d = await fetch(`/api/sessions?from=${today}&to=${to}`).then((r) => r.json());
+        const list = d.sessions ?? [];
+        const withReason = list.find((s) => s.generation?.selectionReasons?.length);
+        return (withReason ?? list[0])?.id;
+      }, FROZEN_NOW.slice(0, 10));
+      return id ? `#/session?id=${encodeURIComponent(id)}` : undefined;
+    },
+  },
 ];
 
 const WIDTHS = ALL_WIDTHS
@@ -212,10 +233,15 @@ for (const { w, h } of WIDTHS) {
 
   for (const s of SCREENS) {
     if (ONLY && s.name !== ONLY) continue;
+    const hash = typeof s.hash === "function" ? await s.hash(page) : s.hash;
+    if (!hash) {
+      console.log(`  (${s.name}: 遷移先を決められないので飛ばした)`);
+      continue;
+    }
     // 同じハッシュへのgotoは再読み込みにならないので、一度別画面を経由する
     await page.goto("http://localhost:8793/#/__reset");
     await page.waitForTimeout(120);
-    await page.goto(`http://localhost:8793/${s.hash}`);
+    await page.goto(`http://localhost:8793/${hash}`);
     await page.waitForTimeout(1100);
     await page.addStyleTag({
       content: `*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}`,
