@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  detectMixedWorkoutKind,
   extractTimes,
   inferCategory,
   categoryFromTarget,
@@ -182,6 +183,33 @@ describe("練習名から主負荷を分類する", () => {
     expect(inferCategory("100mスプリント 6本", {}).category).toBe("neural");
     expect(inferCategory("VO2max 1000m×5", {}).category).toBe("cv");
     expect(inferCategory("スピード持久 300m×5", {}).category).toBe("high_lactate");
+  });
+});
+
+describe("不具合1: ジョグ＋坂ダッシュ等の複合メニューを検出する", () => {
+  it("ジョグと坂ダッシュが混ざった本文を検出する", () => {
+    expect(detectMixedWorkoutKind("ジョグ20分＋坂ダッシュ100m×6")).toBe(true);
+  });
+
+  it("ジョグだけ、坂ダッシュだけなら検出しない", () => {
+    expect(detectMixedWorkoutKind("ジョグ20分")).toBe(false);
+    expect(detectMixedWorkoutKind("坂ダッシュ100m×6")).toBe(false);
+  });
+
+  it("ジョグ＋体幹（補強）は混在扱いにしない（別ストアに保存されるため）", () => {
+    expect(detectMixedWorkoutKind("ジョグ40分＋体幹30分")).toBe(false);
+  });
+
+  it("parseRowが混在を検出するとissuesに理由つきで警告を積む（黙って片方を捨てない）", () => {
+    const row = parseRow("2026-04-02 ジョグ20分＋坂ダッシュ100m×6", 1, "2026-04-01");
+    expect(row.kind).toBe("interval"); // 坂ダッシュのルールが先に一致する
+    expect(row.issues.some((i) => i.includes("混ざっている"))).toBe(true);
+    expect(row.issues.some((i) => i.includes("インターバル側"))).toBe(true);
+  });
+
+  it("混在していない通常のインターバルにはこの警告を出さない", () => {
+    const row = parseRow("2026-04-02 300m×5 r5分", 1, "2026-04-01");
+    expect(row.issues.some((i) => i.includes("混ざっている"))).toBe(false);
   });
 });
 

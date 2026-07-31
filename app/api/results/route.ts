@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openRepo } from "@/lib/db/node";
-import { previousEntryFor, processResult } from "@/lib/service";
+import { deleteResult, previousEntryFor, processResult } from "@/lib/service";
 import type { SessionResult } from "@/lib/core/types";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +26,18 @@ export async function POST(req: NextRequest) {
       ...body,
     } as SessionResult);
     return NextResponse.json(out);
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 400 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  const repo = openRepo();
+  const id = req.nextUrl.searchParams.get("id");
+  if (!id) return NextResponse.json({ error: "id が必要です" }, { status: 400 });
+  try {
+    deleteResult(repo, id);
+    return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 400 });
   }

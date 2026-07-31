@@ -7,6 +7,7 @@ import type { Store } from "../src/lib/db/store";
 import {
   buildRuleContext,
   dashboard,
+  deleteResult,
   heatFlaggedDates,
   processDailyCheck,
   processRaceResult,
@@ -160,6 +161,12 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
     },
     POST: (repo, body) =>
       processResult(repo, { id: `res-${Date.now()}`, actualLapsSec: [], ...body } as SessionResult),
+    DELETE: (repo, _b, params) => {
+      const id = params.get("id");
+      if (!id) return { error: "id が必要です" };
+      deleteResult(repo, id);
+      return { ok: true };
+    },
   },
 
   "/api/skip": {

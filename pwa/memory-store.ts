@@ -193,6 +193,10 @@ export class MemoryStore implements Store {
       .filter((r) => r.sessionId === sessionId)
       .at(-1);
   }
+  deleteResult(id: string): void {
+    this.state.results = this.state.results.filter((x) => x.id !== id);
+    this.touch();
+  }
 
   // ---- DailyCheck ----
   saveDailyCheck(c: DailyCheck): void {

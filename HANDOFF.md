@@ -27,12 +27,14 @@
 | 項目 | 値 |
 | --- | --- |
 | branch | `main` |
-| HEAD | `80bbcc1`（`fix: セキュリティ・プライバシー監査で見つかった問題を修正`） |
-| `origin/main` との差 | **0 / 0**（完全一致・push済み・forge-v37としてgh-pages配信済み） |
+| HEAD | `10c1bf4`（`release: AGENTS.md/CLAUDE.mdの同期漏れを修正し forge-v39 を配信`） |
+| `origin/main` との差 | **0 / 0**（完全一致・push済み・forge-v39としてgh-pages配信済み） |
 
 直近コミット:
 
 ```
+10c1bf4 release: AGENTS.md/CLAUDE.mdの同期漏れを修正し forge-v39 を配信
+125aa05 feat: 運用整備（CI・アトミックビルド・診断画面・runbook）を追加
 80bbcc1 fix: セキュリティ・プライバシー監査で見つかった問題を修正
 dba5f56 fix: トレーニングロジック統合監査で見つかった3件のバグを修正
 e654778 fix: 統合監査で見つけた既存バグ2件を修正
@@ -41,8 +43,6 @@ a9ec349 feat: P0監査の残り3項目（依存関係・危険な提案防止・
 9d14ead docs: NEXT-002完了（forge-v35実機確認済み）を反映
 51ada24 docs: forge-v35配信後の状態を反映
 d997ddb fix: Supabase Storageの初回push未検出を修正
-479e894 docs: forge-v34配信後の状態とRLS適用結果を反映
-4364d1e fix: Supabase Storageの保存先を利用者ごとに分離
 ```
 
 **本番Supabaseへの対応（2026-07-31・リポジトリ外の作業）**: `forge`バケットの
@@ -52,31 +52,31 @@ RLSを本人と一緒に手動で確認・整理済み。旧設計の緩いポ�
 （uid別パスで正しく分離済み）の4つだけが残る状態にした。bucketも
 private・50MB・`application/json`限定に設定済み。
 
+**実機iPhone受入試験（2026-07-31）**: forge-v38を実機Safari・ホーム画面PWA
+両方で確認済み（4タブ表示・データ保持・Googleログイン/同期・オフライン起動・
+診断情報画面いずれもOK）。
+
 ## 未コミット変更
 
-**あり（2026-07-31・運用整備）。** `npm run release:check`
-（typecheck/test 939件/build:all/e2e/e2e:update を含む）が最後まで通ることを
-確認済み。**VERSION更新・commit・push・gh-pages配信はまだ行っていない**
-（本人の標準運用に従い許可待ち）。
+**あり（2026-07-31・実際の利用で見つかった不具合4件の修正）。**
+`npm run typecheck`・`npm test`（956件）・`npm run build:all`・`npm run e2e`・
+`npm run e2e:update`・`npm run ci:checks`が全て成功済み。**VERSION更新・
+commit・push・gh-pages配信はまだ行っていない**（本人の標準運用に従い許可待ち）。
 
-変更点の詳細は README.md および新規 `OPERATIONS.md` を参照。要約:
-- `.github/workflows/ci.yml`（新規）: push/PRで自動検証。本番Supabase・
-  実OAuthには接続しない
-- `scripts/build-all-atomic.mjs`（新規）: `build:all`をアトミック化。失敗時
-  `pwa-dist/`に触れない（T-4検証済み。Windows特有のEBUSYにリトライで対応）
-- `scripts/release-check.mjs`（新規）: リリース前のdry-run確認。
-  commit/pushは行わない
-- `scripts/smoke-test.mjs`（新規）: 配信後の非破壊スモークテスト
-  （`npm run smoke`）。実際の公開URLに対して実行し動作確認済み
-- `scripts/ci/*`（新規）: 秘密情報の簡易走査・禁止パターン・API/shim対応・
-  性能予算のチェックスクリプト
-- `app/diagnostics/`（新規）: 設定→診断情報。バージョン・SW状態・同期状態を
-  表示（トークン・鍵・健康データは含まない）
-- `pwa-dist/build-info.json`（ビルド生成）: 配信物のバージョン・ソース
-  コミット・ビルド時刻を記録
-- `tests/buildVersionConsistency.test.ts` / `tests/ciChecks.test.ts`（新規）
-- `OPERATIONS.md`（新規）: バージョン管理・CI・migration方針・ロールバック・
-  障害対応runbook18件
+変更点の詳細は会話ログ参照。要約:
+- 練習結果の削除機能が無かった問題 → `deleteResult`をService/Store両実装/
+  Next.js API/PWA shimに追加。誤記録の削除・CFE取り消しに対応
+  （`src/lib/service.ts`, `app/api/results/route.ts`, `pwa/api-shim.ts`,
+  `app/results/page.tsx`）
+- カレンダーの＋シートに「記録する」導線が無かった問題 →
+  `/results?date=X`への直接リンクを追加（`app/calendar/page.tsx`）
+- 予定と違う練習を記録してもカレンダーに予定のメニューが残る問題 →
+  実際の結果と予定の食い違いを検出して表示（新規
+  `src/lib/core/actualVsPlan.ts`、`app/calendar/page.tsx`）
+- ジョグ＋坂ダッシュ等の複合メニューが片方消える問題 → データモデルの
+  制約（1枠1種類）自体は変更せず、混在を検出して警告表示
+  （`src/lib/core/bulkImport.ts`の`detectMixedWorkoutKind`、
+  `app/components/prescription-fields.tsx`）
 
 次に取りかかる担当（または本人）がやること:
 1. VERSION更新・commit・push・配信の許可を判断する
@@ -84,6 +84,9 @@ private・50MB・`application/json`限定に設定済み。
    いないこと」（クラウドスナップショット削除機能の欠如、Supabase implicit
    flowの平文トークン保存など）、および`OPERATIONS.md`にある未着手項目を、
    次の作業候補として扱ってよい
+3. ジョグ＋坂ダッシュのような複合メニューを本当に1枠で記録したい場合、
+   データモデル（Session/SessionResultへのsegments概念の追加）の設計判断が
+   必要（今回は警告表示のみで対応し、モデル変更は見送った）
 
 ---
 

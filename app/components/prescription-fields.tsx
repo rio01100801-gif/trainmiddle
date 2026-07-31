@@ -266,6 +266,13 @@ export function PrescriptionFields({
           設定タイムが書かれていないためカテゴリが決まりません。選んでください
         </StatusText>
       ) : null}
+      {/* 不具合1対応: ジョグ＋坂ダッシュ等、複数種類が混ざった本文への警告。
+          1つの練習枠には1種類までしか記録できないため、黙って片方を捨てず理由を出す */}
+      {structure?.issues?.find((i) => i.includes("混ざっている")) ? (
+        <StatusText kind="warning" className="text-[10.5px] mb-1.5">
+          {structure.issues.find((i) => i.includes("混ざっている"))}
+        </StatusText>
+      ) : null}
       {structure && !structure.recognized ? (
         <p className="text-[10.5px] mb-1.5" style={{ color: "var(--text-3)" }}>
           {structure.issues?.[0] ?? "本文を読み取れませんでした"}（入力欄はそのままにしてあります）

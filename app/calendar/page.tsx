@@ -12,7 +12,8 @@ import {
 import { SessionEditSheet } from "../components/session-edit-sheet";
 import { localToday } from "@/lib/core/dates";
 import type { CoverageReview } from "@/lib/core/coverage";
-import type { Race, Session } from "@/lib/core/types";
+import type { Race, Session, SessionResult } from "@/lib/core/types";
+import { actualDiffersFromPlan, describeActualResult } from "@/lib/core/actualVsPlan";
 
 /**
  * カレンダー（改修指示書 フェーズC）
@@ -167,6 +168,9 @@ export default function CalendarPage() {
     if (!sessionsByDate.has(s.date)) sessionsByDate.set(s.date, []);
     sessionsByDate.get(s.date)!.push(s);
   }
+  const resultBySessionId = new Map<string, SessionResult>(
+    results.map((r: SessionResult) => [r.sessionId, r])
+  );
   const resultDates = new Set(results.map((r) => r.date));
   const injuryDates = new Set(injuries.map((i) => i.date));
   const heatDates = new Set(results.filter((r) => r.heatFlagged).map((r) => r.date));
@@ -374,6 +378,7 @@ export default function CalendarPage() {
             today={todayStr}
             sessions={sessionsByDate.get(date) ?? []}
             races={races.filter((race) => race.dateStart === date)}
+            resultBySessionId={resultBySessionId}
             state={stateOf(date)}
             warnCount={violationsByDate[date] ?? 0}
             moving={moving}
@@ -506,6 +511,7 @@ function DayRow({
   today,
   sessions,
   races,
+  resultBySessionId,
   state,
   warnCount,
   moving,
@@ -517,6 +523,7 @@ function DayRow({
   today: string;
   sessions: Session[];
   races: Race[];
+  resultBySessionId: Map<string, SessionResult>;
   state: DayState;
   warnCount: number;
   moving: any | null;
@@ -594,36 +601,53 @@ function DayRow({
                     <span style={{ color: "var(--text-2)" }}>{race.name}</span>
                   </span>
                 ))}
-                {sessions.map((s: Session) => (
-                <span
-                  key={s.id}
-                  className="block text-[12.5px] truncate"
-                  onPointerDown={() => start(s)}
-                  onPointerUp={cancel}
-                  onPointerCancel={cancel}
-                  onPointerLeave={cancel}
-                  onContextMenu={(e) => e.preventDefault()}
-                  style={{ WebkitTouchCallout: "none" } as any}
-                >
-                  <b style={{ color: CATEGORY_COLORS[s.category as keyof typeof CATEGORY_COLORS] }}>
-                    {CATEGORY_LABELS[s.category as keyof typeof CATEGORY_LABELS] ?? s.category}
-                  </b>{" "}
-                  <span style={{ color: "var(--text-2)" }}>{s.name}</span>
-                  {s.isFixed ? (
-                    <span className="text-[10px] ml-1" style={{ color: "var(--text-3)" }}>
-                      固定
-                    </span>
-                  ) : null}
-                  {s.prescription ? (
+                {sessions.map((s: Session) => {
+                  const result = resultBySessionId.get(s.id);
+                  const diverged = actualDiffersFromPlan(s, result);
+                  const actualText = diverged ? describeActualResult(result) : undefined;
+                  return (
                     <span
-                      className="block text-[10.5px] truncate"
-                      style={{ color: "var(--text-3)" }}
+                      key={s.id}
+                      className="block text-[12.5px] truncate"
+                      onPointerDown={() => start(s)}
+                      onPointerUp={cancel}
+                      onPointerCancel={cancel}
+                      onPointerLeave={cancel}
+                      onContextMenu={(e) => e.preventDefault()}
+                      style={{ WebkitTouchCallout: "none" } as any}
                     >
-                      {s.prescription}
+                      <b style={{ color: CATEGORY_COLORS[s.category as keyof typeof CATEGORY_COLORS] }}>
+                        {CATEGORY_LABELS[s.category as keyof typeof CATEGORY_LABELS] ?? s.category}
+                      </b>{" "}
+                      <span
+                        style={{ color: "var(--text-2)" }}
+                        className={diverged ? "line-through" : undefined}
+                      >
+                        {s.name}
+                      </span>
+                      {s.isFixed ? (
+                        <span className="text-[10px] ml-1" style={{ color: "var(--text-3)" }}>
+                          固定
+                        </span>
+                      ) : null}
+                      {diverged && actualText ? (
+                        <span
+                          className="block text-[10.5px] truncate"
+                          style={{ color: "var(--forge)" }}
+                        >
+                          実際: {actualText}
+                        </span>
+                      ) : s.prescription ? (
+                        <span
+                          className="block text-[10.5px] truncate"
+                          style={{ color: "var(--text-3)" }}
+                        >
+                          {s.prescription}
+                        </span>
+                      ) : null}
                     </span>
-                  ) : null}
-                </span>
-                ))}
+                  );
+                })}
               </>
             )}
           </span>
@@ -786,7 +810,7 @@ function AddSheet({
           <option value="pm">午後</option>
         </select>
       </label>
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         <button className="btn-volt" disabled={busy} onClick={add}>
           追加する
         </button>
@@ -794,6 +818,13 @@ function AddSheet({
           やめる
         </button>
       </div>
+      <p className="text-[11px] mt-3 mb-1.5" style={{ color: "var(--text-3)" }}>
+        新しい予定を足すのではなく、{date.slice(5).replace("-", "/")}
+        に既にやった練習の結果を記録したい場合はこちら。
+      </p>
+      <Link href={withQuery("/results", { date })} className="btn-ghost inline-block">
+        この日を記録する
+      </Link>
     </Card>
   );
 }

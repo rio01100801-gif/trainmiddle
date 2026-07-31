@@ -57,6 +57,7 @@ export interface Store {
   saveResult(r: SessionResult): void;
   listResults(): SessionResult[];
   resultForSession(sessionId: string): SessionResult | undefined;
+  deleteResult(id: string): void;
 
   saveDailyCheck(c: DailyCheck): void;
   listDailyChecks(): DailyCheck[];

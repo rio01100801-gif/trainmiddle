@@ -796,6 +796,39 @@ export function processResult(
   };
 }
 
+/**
+ * 誤って記録した結果を削除する（不具合4対応）。
+ *
+ * CFEへの寄与を`revertCfeForSession`で取り消してから結果を消す
+ * （M-1の上書き処理と同じ考え方——記録を消すなら、その記録が動かした
+ * CFEも一緒に取り消さないと、無かったはずの記録の影響が能力推定に残り続ける）。
+ *
+ * セッション自体は、backfilled（過去データ・FIT取込由来で対応する予定枠が
+ * 元から無い）なら一緒に削除する（結果を消したら空の枠だけ残る意味が無い）。
+ * 通常の予定セッションなら"planned"に戻す（予定そのものは消さない——
+ * 「本人が決めたものを黙って変えない」原則）。
+ */
+export function deleteResult(repo: Store, resultId: string): void {
+  const result = repo.listResults().find((r) => r.id === resultId);
+  if (!result) throw new Error("記録が見つかりません");
+
+  const cfe = repo.getCfe();
+  if (cfe) {
+    repo.saveCfe(revertCfeForSession(cfe, result.sessionId));
+  }
+
+  repo.deleteResult(resultId);
+
+  const session = repo.getSession(result.sessionId);
+  if (session) {
+    if (session.backfilled) {
+      repo.deleteSession(session.id);
+    } else {
+      repo.saveSession({ ...session, status: "planned" });
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // スキップ処理（4-5-4）
 // ---------------------------------------------------------------------------

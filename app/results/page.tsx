@@ -172,6 +172,10 @@ export default function ResultsPage() {
                     setOut(o);
                     load();
                   }}
+                  onDeleted={() => {
+                    setOut(null);
+                    load();
+                  }}
                 />
               ) : null}
             </>
@@ -903,10 +907,12 @@ function ResultForm({
   session,
   existing,
   onDone,
+  onDeleted,
 }: {
   session: any;
   existing?: any;
   onDone: (out: any) => void;
+  onDeleted?: () => void;
 }) {
   const aerobicDefault = ["aerobic"].includes(session.category);
   const [mode, setMode] = useState<Mode>(
@@ -1241,6 +1247,18 @@ function ResultForm({
         body: JSON.stringify(payload),
       });
       onDone(await res.json());
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 不具合4対応: 誤って登録した結果を削除する。CFEへの寄与もサービス層で取り消される */
+  const handleDelete = async () => {
+    if (!existing) return;
+    setBusy(true);
+    try {
+      await fetch(`/api/results?id=${encodeURIComponent(existing.id)}`, { method: "DELETE" });
+      onDeleted?.();
     } finally {
       setBusy(false);
     }
@@ -1710,6 +1728,17 @@ function ResultForm({
             message="「メニュー設定」の自作メニューに登録され、次回以降のプラン生成で優先して使われます。あとから一時停止・削除できます。"
             className="btn-ghost w-full text-center mt-2"
             onConfirm={saveAsMenu}
+          />
+        ) : null}
+        {existing ? (
+          <ConfirmButton
+            label="この記録を削除する"
+            title="この記録を削除しますか？"
+            message="この練習で動いたCFEの変化も取り消されます。予定枠自体は残ります（過去データ由来の枠は一緒に消えます）。この操作は取り消せません。"
+            danger
+            className="btn-ghost w-full text-center mt-2"
+            disabled={busy}
+            onConfirm={handleDelete}
           />
         ) : null}
         {savedMsg ? (

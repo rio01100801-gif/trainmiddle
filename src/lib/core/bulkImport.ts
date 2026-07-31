@@ -548,6 +548,32 @@ export function inferCategory(
   return { kind: "continuous", category: undefined, certain: false };
 }
 
+/**
+ * 不具合1対応: 本文に「有酸素（continuous、例: ジョグ）」と
+ * 「インターバル系（interval、例: 坂ダッシュ）」の両方の語が混ざっているかを見る。
+ *
+ * kind（interval/continuous）は1つの練習枠につき1つしか持てない
+ * （targetPaces と distanceKm/durationMin は排他的に保存される。
+ * prescription-fields.tsx の prescriptionPayload 参照）。
+ * 混ざっている本文は inferCategory が先に一致した方を選び、もう一方の内容
+ * （本数・距離・時間）は保存されないため、黙って捨てずに理由を出す。
+ * strength（補強）はSessionCategoryと別枠に保存されるためここでは扱わない
+ * （「ジョグ＋体幹」は正しく両方残る。走の語を優先する既存の並び順のとおり）。
+ */
+export function detectMixedWorkoutKind(rawContent: string): boolean {
+  const content = stripRestSpec(rawContent);
+  let hasContinuous = false;
+  let hasInterval = false;
+  for (const r of CATEGORY_RULES) {
+    if (r.kind !== "continuous" && r.kind !== "interval") continue;
+    if (r.words.some((w) => content.includes(w))) {
+      if (r.kind === "continuous") hasContinuous = true;
+      if (r.kind === "interval") hasInterval = true;
+    }
+  }
+  return hasContinuous && hasInterval;
+}
+
 // ---------------------------------------------------------------------------
 // 数値の抽出（距離・時間・心拍）
 // ---------------------------------------------------------------------------
@@ -672,6 +698,15 @@ export function parseRow(
   row.kind = cat.kind;
   row.category = cat.category;
   row.categoryUncertain = !cat.certain;
+
+  if (detectMixedWorkoutKind(content)) {
+    row.issues.push(
+      `本文に複数の種類の練習（ジョグ等の持続走＋坂ダッシュ等のインターバル）が` +
+        `混ざっているようです。この枠には「${
+          cat.kind === "interval" ? "インターバル側" : "持続走側"
+        }」だけが登録されます。もう一方は別の練習として日付・時間帯を分けて追加してください。`
+    );
+  }
 
   // 結果欄があればそちらを優先する（内容欄には予定が書かれるため）
   const { result: resultPart } = splitContentAndResult(content);

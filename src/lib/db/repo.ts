@@ -166,6 +166,9 @@ export class Repo implements Store {
       .get(sessionId) as { json: string } | undefined;
     return row ? (JSON.parse(row.json) as SessionResult) : undefined;
   }
+  deleteResult(id: string): void {
+    this.db.prepare("DELETE FROM session_results WHERE id = ?").run(id);
+  }
 
   // ---- DailyCheck ----
   saveDailyCheck(c: DailyCheck): void {

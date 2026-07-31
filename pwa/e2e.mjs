@@ -1868,13 +1868,21 @@ if (!calAddText.includes("に練習を足す")) fail("＋を押しても追加�
 const addBox = await page.locator("section.card", { hasText: "に練習を足す" }).first().boundingBox();
 if (!addBox) fail("追加シートの位置が取れない");
 else if (addBox.y > 844) fail(`追加シートが画面外に出ている（y=${Math.round(addBox.y)}px）`);
+// 不具合3対応: 追加シートから「記録する」で日付つきの記録画面へ行けること
+const recordLinkHref = await page
+  .locator('a:has-text("この日を記録する")')
+  .first()
+  .getAttribute("href");
+if (!recordLinkHref || !recordLinkHref.includes("/results?date=")) {
+  fail(`追加シートに「この日を記録する」が無い、または日付が付いていない（${recordLinkHref}）`);
+}
 // 実際に追加できること
 await page.locator('input[placeholder="名前（例: 朝ジョグ）"]').fill("朝ジョグ（テスト）");
 await page.getByRole("button", { name: "追加する" }).click();
 await page.waitForTimeout(900);
 calAddText = await page.textContent("body");
 if (!calAddText.includes("朝ジョグ（テスト）")) fail("＋から追加した練習がカレンダーに出ない");
-step("カレンダー: ＋から練習を足せるOK（シートが画面内に出る）");
+step("カレンダー: ＋から練習を足せるOK（シートが画面内に出る・記録するリンクあり）");
 
 // ✎ を押したら編集シートが開くこと
 await page.getByRole("button", { name: "このメニューを変更" }).first().click();
@@ -1899,6 +1907,64 @@ if ((await reflectedCalendarRow.count()) === 0) {
 }
 step("カレンダー: 編集保存→一覧・再取得への反映OK");
 await shot("26_calendar_edit");
+
+// ---- 不具合2: 予定と違う練習を記録すると、カレンダーに実際の内容が出る ----
+const divergedCheck = await page.evaluate(async () => {
+  // カレンダーの既定表示は今週+来週（2週間）だけなので、その範囲内のセッションを選ぶ
+  // （選ばないと、記録は成功してもカレンダーの初期表示に出てこず誤検知する）
+  const pad = (n) => String(n).padStart(2, "0");
+  const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const now = new Date();
+  const from = fmt(now);
+  const to = fmt(new Date(now.getTime() + 13 * 86400000));
+  const sessions = await fetch(`/api/sessions?from=${from}&to=${to}`).then((r) => r.json());
+  const aerobicSession = (sessions.sessions ?? []).find(
+    (s) => s.category === "aerobic" && !s.isFixed
+  );
+  if (!aerobicSession) return { ok: false, reason: "表示範囲内に有酸素セッションが見つからない" };
+  // 予定はジョグ（continuous）だが、坂ダッシュ（interval）をやったことにして記録する
+  const res = await fetch("/api/results", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id: `res-diverge-${Date.now()}`,
+      sessionId: aerobicSession.id,
+      date: aerobicSession.date,
+      interval: {
+        reps: 6,
+        distanceM: 100,
+        targetSec: 15,
+        restType: "jog",
+        restSec: 90,
+        results: Array.from({ length: 6 }, (_, i) => ({
+          index: i + 1,
+          distanceM: 100,
+          targetSec: 15,
+          actualSec: 14.8,
+        })),
+      },
+      actualLapsSec: [14.8, 14.8, 14.8, 14.8, 14.8, 14.8],
+      lapDistancesM: [100, 100, 100, 100, 100, 100],
+      achievement: "achieved",
+      rpe: 8,
+      subjective: "hard",
+    }),
+  });
+  if (!res.ok) return { ok: false, reason: `POST失敗 ${res.status}` };
+  return { ok: true, date: aerobicSession.date };
+});
+if (!divergedCheck.ok) fail(`不具合2の検証準備に失敗: ${divergedCheck.reason}`);
+// 同じハッシュへのgotoは再読み込みにならない（既存の注意点どおり）。
+// 一度別画面を経由してから戻り、確実に再取得させる。
+await page.goto("http://localhost:8791/#/");
+await page.waitForTimeout(400);
+await page.goto("http://localhost:8791/#/calendar");
+await page.waitForTimeout(900);
+const divergedText = await page.textContent("body");
+if (!divergedText.includes("実際: 6本 100m")) {
+  fail("不具合2: 予定と違う結果を記録してもカレンダーに実際の内容が出ない");
+}
+step("カレンダー: 予定と違う結果を記録すると「実際:」が表示されるOK（不具合2対応）");
 
 // ---- 10d-3. N-2: 「練習を足す」でも本文に合わせて欄が組み変わる ----
 // 編集シートと同じ実装（PrescriptionFields）を使っているので、
