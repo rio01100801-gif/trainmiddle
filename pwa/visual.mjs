@@ -75,6 +75,20 @@ const SCREENS = [
     },
   },
   {
+    name: "session-run",
+    hash: async (page) => {
+      // 設定タイムのあるセッション（＝1本ずつ入れる画面が出るもの）を選ぶ
+      const id = await page.evaluate(async (today) => {
+        const to = new Date(new Date(today).getTime() + 20 * 86400000)
+          .toISOString()
+          .slice(0, 10);
+        const d = await fetch(`/api/sessions?from=${today}&to=${to}`).then((r) => r.json());
+        return (d.sessions ?? []).find((s) => (s.targetPaces ?? []).length > 0)?.id;
+      }, FROZEN_NOW.slice(0, 10));
+      return id ? `#/run?sessionId=${encodeURIComponent(id)}` : undefined;
+    },
+  },
+  {
     name: "summary",
     hash: async (page) => {
       // 本ごとのタイムが出るインターバルの記録を優先する

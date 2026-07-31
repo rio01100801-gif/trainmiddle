@@ -1536,13 +1536,13 @@ const runTarget2 = await page.evaluate(async (id) => {
   return d.progress.targetSec;
 }, runTarget);
 await page.locator('input[inputmode="decimal"]').first().fill(String(runTarget2.toFixed(1)));
-await page.getByRole("button", { name: "入れる" }).click();
+await page.getByRole("button", { name: "LAP", exact: true }).click();
 await page.waitForTimeout(600);
 runText = await page.textContent("body");
 if (!/残り\d+本/.test(runText)) fail("M-4: 続行の判定が出ない");
 // 大きく外れた1本 → 中止
 await page.locator('input[inputmode="decimal"]').first().fill(String((runTarget2 + 3).toFixed(1)));
-await page.getByRole("button", { name: "入れる" }).click();
+await page.getByRole("button", { name: "LAP", exact: true }).click();
 await page.waitForTimeout(600);
 runText = await page.textContent("body");
 if (!runText.includes("打ち切ってください")) fail("M-4: 中止の判定が出ない");

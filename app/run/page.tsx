@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card, ConfirmButton } from "../components/ui";
 import { useQueryParam, withQuery } from "../components/route-query";
+import { ForgeTrack } from "../components/brand/forge-track";
 import { localToday } from "@/lib/core/dates";
 
 /**
@@ -133,32 +134,63 @@ export default function RunPage() {
 
   return (
     <div className="run-screen flex flex-col gap-3">
-      <Card title={session?.name ?? "セッション"} variant="hero" className="run-session-head">
-        <div className="text-[11.5px] num mb-2" style={{ color: "var(--text-2)" }}>
-          {progress.distanceM}m × {progress.plannedReps} ／ 設定 {fmt(progress.targetSec)}
-        </div>
-        <div
-          className="text-[11.5px] rounded-lg p-2.5"
-          style={{ background: "var(--surface-2)", color: "var(--text-2)" }}
-        >
-          {criteria.text}
-        </div>
-      </Card>
+      {/*
+        リファレンス（reference-ui/crops/session-run.jpeg）の構成。
+        走りながら見る画面なので、直近の1本を最大の数字で置き、設定を直下に添える。
+        リファレンスにある NEXT REST は出していない——レスト時間は
+        SessionProgress に持っていない。持っていない値を画面に作らない。
+        タイマーも作っていない（自分の時計で測って入れる、という既存の使い方のまま）。
+      */}
+      <Card variant="hero" className="run-session-head">
+        <div className="text-center">
+          <p className="text-[12px] num" style={{ color: "var(--text-2)" }}>
+            {progress.distanceM}m × {progress.plannedReps}
+          </p>
 
-      {/* 出すのは3つだけ */}
-      <Card className="run-live-card">
-        <div className="metric-label">直近の1本</div>
-        <div className="run-time num" style={{ color }}>
-          {evaluation.lastSec !== undefined ? fmt(evaluation.lastSec) : "—"}
+          <p
+            className="forge-label inline-block mt-3 pb-1.5"
+            style={{ borderBottom: "2px solid var(--forge)" }}
+          >
+            SET {Math.min(reps.length + 1, progress.plannedReps)} / {progress.plannedReps}
+          </p>
+
+          <p
+            className="num font-extrabold leading-none mt-4"
+            style={{ fontSize: 54, letterSpacing: "-.03em", color }}
+          >
+            {/*
+              未入力のときにダッシュ1本を巨大に出すと、白い棒が浮いて見えて
+              「壊れている」ように読める。桁の形を保った空欄にする。
+            */}
+            {evaluation.lastSec !== undefined ? (
+              fmt(evaluation.lastSec)
+            ) : (
+              <span style={{ color: "var(--text-3)" }}>--.-</span>
+            )}
+          </p>
+
+          <p className="forge-label mt-3.5">TARGET</p>
+          <p
+            className="num font-bold leading-none mt-1"
+            style={{ fontSize: 18, color: "var(--forge)" }}
+          >
+            {fmt(progress.targetSec)}
+          </p>
         </div>
-        <div className="text-[13px] mt-1 num" style={{ color: "var(--text-2)" }}>
+
+        <div className="today-track-band mt-4">
+          <ForgeTrack />
+        </div>
+
+        <p className="text-[13px] mt-1 num text-center" style={{ color: "var(--text-2)" }}>
           {evaluation.lastDeviationSec !== undefined
             ? `設定との差 ${evaluation.lastDeviationSec >= 0 ? "+" : ""}${evaluation.lastDeviationSec.toFixed(1)}秒`
             : "まだ入力がありません"}
           {evaluation.fadeSec !== undefined && reps.length >= 2
             ? ` ／ 垂れ幅 ${evaluation.fadeSec >= 0 ? "+" : ""}${evaluation.fadeSec.toFixed(1)}秒`
             : ""}
-        </div>
+        </p>
+
         <div
           className="mt-2.5 rounded-lg p-2.5 text-[12.5px] leading-relaxed"
           style={{
@@ -169,6 +201,15 @@ export default function RunPage() {
         >
           {evaluation.message}
         </div>
+
+        <details className="mt-2.5">
+          <summary className="text-[11px] cursor-pointer" style={{ color: "var(--text-3)" }}>
+            中止の基準
+          </summary>
+          <p className="text-[11.5px] leading-relaxed mt-1.5" style={{ color: "var(--text-2)" }}>
+            {criteria.text}
+          </p>
+        </details>
       </Card>
 
       <Card title={`${reps.length} / ${progress.plannedReps} 本`}>
@@ -198,12 +239,17 @@ export default function RunPage() {
               if (e.key === "Enter") push();
             }}
           />
+          {/*
+            リファレンスの LAP にあたる主操作。タイマーが無いので
+            「打ち込んで入れる」だが、押す場所と見た目は LAP と同じ扱いにする。
+          */}
           <button
-            className="btn-volt run-add-button flex-shrink-0 whitespace-nowrap"
+            className="btn-ghost run-add-button flex-shrink-0 whitespace-nowrap"
+            style={{ borderColor: "var(--volt-line)", color: "var(--forge)", letterSpacing: ".1em" }}
             onClick={push}
             disabled={busy || !input.trim()}
           >
-            入れる
+            LAP
           </button>
           {reps.length > 0 ? (
             <button className="btn-ghost run-undo-button flex-shrink-0 whitespace-nowrap" onClick={undo}>
