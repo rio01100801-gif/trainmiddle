@@ -76,6 +76,21 @@ describe("G 同一処方の経時比較", () => {
     expect(g[0].occurrences[0].heatFlagged).toBe(true);
   });
 
+  it("翌日の脚の重さが打ち込まれていれば各回に載せる", () => {
+    const a = interval("2026-06-01", 300, [43, 44, 45, 46], { nextDayLegs: "heavy" });
+    const b = interval("2026-06-15", 300, [43, 43.5, 44, 44.5], { nextDayLegs: "fresh" });
+    const g = groupBySamePrescription([a.s, b.s], [a.r, b.r]);
+    expect(g[0].occurrences[0].nextDayLegs).toBe("heavy");
+    expect(g[0].occurrences[1].nextDayLegs).toBe("fresh");
+  });
+
+  it("翌日の脚の重さが未入力なら undefined のまま", () => {
+    const a = interval("2026-06-01", 300, [43, 44, 45, 46]);
+    const b = interval("2026-06-15", 300, [43, 43.5, 44, 44.5]);
+    const g = groupBySamePrescription([a.s, b.s], [a.r, b.r]);
+    expect(g[0].occurrences[0].nextDayLegs).toBeUndefined();
+  });
+
   it("実施日順に並ぶ", () => {
     const a = interval("2026-06-15", 300, [43, 44]);
     const b = interval("2026-06-01", 300, [44, 45]);

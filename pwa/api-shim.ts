@@ -75,6 +75,7 @@ import {
 import { judgeEconomyTrend } from "../src/lib/core/propagation";
 import { acwr, dailyLoads, highLactate28dAvgPerWeek } from "../src/lib/core/load";
 import { restingHrTrend } from "../src/lib/core/signal";
+import { buildTimeline } from "../src/lib/core/timeline";
 import { addDays, localToday, weekStart } from "../src/lib/core/dates";
 import {
   assessHeatBlock,
@@ -214,6 +215,17 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
       } catch {
         weeks = [];
       }
+      const timeline = buildTimeline({
+        today,
+        days: 28,
+        loadSeries,
+        dailyChecks: repo.listDailyChecks(),
+        sessions,
+        raceDates: repo
+          .listMarkers()
+          .filter((m) => m.type === "race")
+          .map((m) => m.date),
+      });
       return {
         economyPoints,
         economyTrend: judgeEconomyTrend(economyPoints),
@@ -223,6 +235,7 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
         cfeHistory: repo.getCfe()?.history ?? [],
         restingHrTrend: restingHrTrend(repo.listDailyChecks()),
         samePrescription: samePrescriptionGroups(repo),
+        timeline,
         weeks,
         changeLog: repo.listChangeLog(50),
       };

@@ -4,6 +4,7 @@ import { Card, CATEGORY_COLORS, CATEGORY_LABELS, StatusText, fmtSec } from "../c
 import RaceAnalysis from "../race/page";
 import type { CoverageReview } from "@/lib/core/coverage";
 import type { SessionCategory } from "@/lib/core/types";
+import type { TimelineDay } from "@/lib/core/timeline";
 
 /** 単一系列の折れ線（1系列のみなので凡例なし・タイトルが系列名を兼ねる） */
 function LineChart({
@@ -147,6 +148,10 @@ export default function AnalysisPage() {
       {seg === "now" ? <GapPanel /> : null}
       {seg === "now" ? <CoveragePanel /> : null}
       {seg === "now" ? <ReviewPanel /> : null}
+
+      <div className={seg === "trend" ? "" : "hidden"}>
+        <TimelineCard days={data.timeline ?? []} />
+      </div>
 
       <div className={seg === "trend" ? "grid md:grid-cols-2 gap-3" : "hidden"}>
       <Card title="CFE（推定800mタイム）の推移">
@@ -299,6 +304,181 @@ export default function AnalysisPage() {
 
 
 /**
+ * 28日間統合タイムライン。
+ *
+ * これまで負荷/ACWR・睡眠・脚疲労・張り・安静時心拍・シグナルは別々のカードに
+ * 分かれていたため、「負荷を上げた数日後に脚が重くなった」のような時間差のある
+ * 関係を画面上で見比べられなかった。同じ日付軸に並べ直すだけで、新しい判定や
+ * 推定は一切増やさない（すべて既存カードの値をそのまま使う）。
+ */
+/**
+ * 欠測を含む点列からSVGパスを作る。
+ * 先頭が欠測でも次に有効な点を必ず "M"（始点）にする
+ * （元配列のindexで M/L を決めると、先頭が欠測のとき "L" から始まり不正なpathになる）。
+ */
+function sparsePath(
+  points: { x: number; v: number | undefined }[],
+  toY: (v: number) => number
+): string {
+  let started = false;
+  const parts: string[] = [];
+  for (const p of points) {
+    if (typeof p.v !== "number") continue;
+    parts.push(`${started ? "L" : "M"}${p.x},${toY(p.v)}`);
+    started = true;
+  }
+  return parts.join(" ");
+}
+
+function TimelineCard({ days }: { days: TimelineDay[] }) {
+  if (!days || days.length < 2) {
+    return (
+      <Card title="28日間タイムライン">
+        <p className="text-[11.5px] leading-relaxed" style={{ color: "var(--text-3)" }}>
+          記録がたまると、負荷・睡眠・脚疲労・張り・安静時心拍を同じ日付軸で見比べられます。
+        </p>
+      </Card>
+    );
+  }
+  const w = 560;
+  const pad = 28;
+  const n = days.length;
+  const px = (i: number) => pad + (n === 1 ? 0 : (i / (n - 1)) * (w - pad * 2));
+  const colW = (w - pad * 2) / n;
+
+  const loadTop = 6;
+  const loadH = 56;
+  const maxLoad = Math.max(...days.map((d) => d.load), 1);
+  const acwrVals = days.map((d) => d.acwr).filter((v) => typeof v === "number") as number[];
+  const maxAcwr = Math.max(...acwrVals, 1.5, 0.001);
+  const acwrY = (v: number) => loadTop + loadH - (v / maxAcwr) * loadH;
+
+  const dotRowY = { sleep: 84, leg: 106, tight: 128 } as const;
+  const hrTop = 142;
+  const hrH = 26;
+  const hrVals = days.map((d) => d.restingHr).filter((v) => typeof v === "number") as number[];
+  const hrMin = hrVals.length ? Math.min(...hrVals) : 0;
+  const hrMax = hrVals.length ? Math.max(...hrVals) : 1;
+  const hrRange = hrMax - hrMin || 1;
+  const hrY = (v: number) => hrTop + hrH - ((v - hrMin) / hrRange) * hrH;
+
+  const axisY = 172;
+  const totalH = axisY + 16;
+
+  const badDot = (v: number, invert: boolean) => (invert ? v <= 2 : v >= 4);
+
+  return (
+    <Card title="28日間タイムライン">
+      <div className="overflow-x-auto">
+        <svg viewBox={`0 0 ${w} ${totalH}`} className="w-full" style={{ minWidth: 480 }}>
+          {/* 背景帯: 休養日・シグナル日 */}
+          {days.map((d, i) =>
+            d.isRest || d.signal === "yellow" || d.signal === "red" ? (
+              <rect
+                key={`bg-${i}`}
+                x={px(i) - colW / 2}
+                y={0}
+                width={colW}
+                height={totalH - 12}
+                fill={
+                  d.signal === "red"
+                    ? "rgba(255,80,80,0.10)"
+                    : d.signal === "yellow"
+                    ? "rgba(255,193,7,0.10)"
+                    : "var(--surface-2)"
+                }
+              />
+            ) : null
+          )}
+
+          {/* 負荷バー */}
+          {days.map((d, i) => {
+            const h = (d.load / maxLoad) * loadH;
+            return (
+              <rect
+                key={`load-${i}`}
+                x={px(i) - colW * 0.28}
+                y={loadTop + loadH - h}
+                width={colW * 0.56}
+                height={h}
+                fill="var(--text-3)"
+              />
+            );
+          })}
+          {/* ACWR折れ線 */}
+          <path
+            d={sparsePath(
+              days.map((d, i) => ({ x: px(i), v: d.acwr })),
+              acwrY
+            )}
+            fill="none"
+            stroke="var(--forge)"
+            strokeWidth={1.5}
+          />
+          <text x={2} y={loadTop + 8} fontSize="9" fill="var(--text-3)">負荷/ACWR</text>
+
+          {/* 睡眠・脚疲労・張り: 5段階を点の色で表す（濃いグレー=通常、アンバー=要注意） */}
+          {(
+            [
+              ["sleep", "睡眠", true],
+              ["leg", "脚疲労", false],
+              ["tight", "張り", false],
+            ] as const
+          ).map(([key, label, invert]) => (
+            <g key={key}>
+              <text x={2} y={dotRowY[key] + 3} fontSize="9" fill="var(--text-3)">{label}</text>
+              {days.map((d, i) => {
+                const v = key === "sleep" ? d.sleepQuality : key === "leg" ? d.legFatigue : d.muscleTightness;
+                if (typeof v !== "number") return null;
+                return (
+                  <circle
+                    key={i}
+                    cx={px(i)}
+                    cy={dotRowY[key]}
+                    r={2.6}
+                    fill={badDot(v, invert) ? "var(--amber)" : "var(--text-2)"}
+                  />
+                );
+              })}
+            </g>
+          ))}
+
+          {/* 安静時心拍 */}
+          <text x={2} y={hrTop + 8} fontSize="9" fill="var(--text-3)">安静時HR</text>
+          <path
+            d={sparsePath(
+              days.map((d, i) => ({ x: px(i), v: d.restingHr })),
+              hrY
+            )}
+            fill="none"
+            stroke="var(--text-2)"
+            strokeWidth={1.5}
+          />
+
+          {/* 軸: レース・休養日マーカー */}
+          <line x1={pad} y1={axisY} x2={w - pad} y2={axisY} stroke="var(--border)" />
+          {days.map((d, i) =>
+            d.isRace ? (
+              <circle key={`race-${i}`} cx={px(i)} cy={axisY} r={3} fill="var(--forge)" />
+            ) : null
+          )}
+          {days
+            .map((d, i) => (i % Math.ceil(n / 6) === 0 ? (
+              <text key={`x-${i}`} x={px(i)} y={totalH - 2} fontSize="8" textAnchor="middle" fill="var(--text-3)">
+                {d.date.slice(5)}
+              </text>
+            ) : null))}
+        </svg>
+      </div>
+      <p className="text-[10.5px] mt-2 leading-relaxed" style={{ color: "var(--text-3)" }}>
+        上から: 負荷（灰棒）とACWR（緑線）／睡眠・脚疲労・張り（点。アンバーは要注意の値）／安静時心拍。
+        黄・赤の背景はその日のシグナル、灰色の背景は休養日、軸上の緑丸はレース日。
+      </p>
+    </Card>
+  );
+}
+
+/**
  * G: 同一処方の経時比較
  *
  * 平均タイムと垂れ幅を必ず別々に出す。
@@ -391,6 +571,8 @@ function SamePrescriptionCard({ groups }: { groups: any[] }) {
               <th className="text-right">最終本</th>
               <th className="text-right">垂れ</th>
               <th className="text-right">心拍</th>
+              <th className="text-right">RPE</th>
+              <th className="text-right">翌日脚</th>
               <th className="text-right">レスト</th>
               <th className="text-right">気温</th>
             </tr>
@@ -415,6 +597,26 @@ function SamePrescriptionCard({ groups }: { groups: any[] }) {
                 </td>
                 <td className="text-right num">
                   {o.avgHr !== undefined ? Math.round(o.avgHr) : "-"}
+                </td>
+                <td className="text-right num" style={{ color: "var(--text-3)" }}>
+                  {o.rpe ?? "-"}
+                </td>
+                <td
+                  className="text-right num"
+                  style={{
+                    color:
+                      o.nextDayLegs === "heavy"
+                        ? "var(--amber)"
+                        : "var(--text-3)",
+                  }}
+                >
+                  {o.nextDayLegs === "heavy"
+                    ? "重い"
+                    : o.nextDayLegs === "fresh"
+                    ? "軽い"
+                    : o.nextDayLegs === "normal"
+                    ? "普通"
+                    : "-"}
                 </td>
                 <td className="text-right num" style={{ color: "var(--text-3)" }}>
                   {o.restNote ?? "-"}

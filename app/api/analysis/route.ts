@@ -5,6 +5,7 @@ import { acwr, dailyLoads, highLactate28dAvgPerWeek } from "@/lib/core/load";
 import { restingHrTrend } from "@/lib/core/signal";
 import { addDays, weekStart, localToday } from "@/lib/core/dates";
 import { weeklySummary } from "@/lib/core/rules";
+import { buildTimeline } from "@/lib/core/timeline";
 import { buildRuleContext, samePrescriptionGroups } from "@/lib/service";
 
 export const dynamic = "force-dynamic";
@@ -57,6 +58,18 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  const timeline = buildTimeline({
+    today,
+    days: 28,
+    loadSeries,
+    dailyChecks: repo.listDailyChecks(),
+    sessions,
+    raceDates: repo
+      .listMarkers()
+      .filter((m) => m.type === "race")
+      .map((m) => m.date),
+  });
+
   return NextResponse.json({
     samePrescription: samePrescriptionGroups(repo),
     economyPoints,
@@ -66,6 +79,7 @@ export async function GET(req: NextRequest) {
     hlPerWeek28d: highLactate28dAvgPerWeek(sessions, today),
     cfeHistory: repo.getCfe()?.history ?? [],
     restingHrTrend: restingHrTrend(repo.listDailyChecks()),
+    timeline,
     weeks,
     changeLog: repo.listChangeLog(50),
   });

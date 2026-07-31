@@ -10,7 +10,7 @@
  * 平均が改善していても垂れ幅が広がっていれば後半維持は悪化している。
  * したがって2つを必ず別々に判定する。
  */
-import type { Session, SessionCategory, SessionResult } from "./types";
+import type { NextDayLegs, Session, SessionCategory, SessionResult } from "./types";
 
 export interface PrescriptionKey {
   category: SessionCategory;
@@ -34,6 +34,8 @@ export interface PrescriptionOccurrence {
   tempC?: number;
   rpe?: number;
   heatFlagged?: boolean;
+  /** 分析画面用に追加。翌日の脚の重さ（打ち込まれていれば）。回復の質を判断する材料 */
+  nextDayLegs?: NextDayLegs;
 }
 
 export interface PrescriptionGroup {
@@ -199,6 +201,7 @@ export function groupBySamePrescription(
       tempC: r.weatherTempC,
       rpe: r.rpe,
       heatFlagged: r.heatFlagged,
+      nextDayLegs: r.nextDayLegs,
     };
     const id = keyId(key);
     if (!buckets.has(id)) buckets.set(id, { key, list: [] });
