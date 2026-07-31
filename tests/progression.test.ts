@@ -129,6 +129,51 @@ describe("S-7 直近の出来を内容に反映する", () => {
     const s = spec(3, { trend: "ease", loadHigh: true });
     expect(s.blocks[0].reps).toBeGreaterThanOrEqual(1);
   });
+
+  /*
+   * 「600m反復は翌日疲労が強く残るので、同等の刺激を400m反復で低疲労コストに
+   * 得たい」という着想への最小対応。8次元の刺激エンジンは作らず、既存の
+   * muscleDamageRisk（Specific期のhigh_lactateでは300m系=3・400m系=4）への
+   * 既存のACWRペナルティ（loadHigh）を、ACWRの裏付けが無い「直近の疲労兆候
+   * だけ」でも効くように拡張した。athleteType:"balanced"は400m系の
+   * athleteTypesボーナス（+1）を意図的に発生させ、疲労信号が無ければ400m系が
+   * 選ばれ、疲労信号があれば筋損傷リスクの低い300m系に切り替わることを確認する。
+   */
+  it("直近の疲労兆候があれば、ACWRの裏付けが無くても筋損傷リスクの低い形式へ切り替わる", () => {
+    const withoutSignal = buildSessionSpec({
+      category: "high_lactate",
+      phase: "Specific",
+      weekIndex: 0,
+      cfeSec: CFE,
+      athleteType: "balanced",
+    })!;
+    expect(withoutSignal.blocks[0].distanceM).toBe(400); // athleteTypeボーナスで400m系が勝つ
+
+    const withSignal = buildSessionSpec({
+      category: "high_lactate",
+      phase: "Specific",
+      weekIndex: 0,
+      cfeSec: CFE,
+      athleteType: "balanced",
+      recentFatigueSignal: true,
+    })!;
+    expect(withSignal.blocks[0].distanceM).toBe(300); // 疲労兆候で300m系（リスク3）へ切り替わる
+    expect(withSignal.reasons.join()).toContain("直近の疲労兆候があるため、筋損傷リスクの高い");
+    expect(withSignal.reasons.join()).toContain("高乳酸セッション（400m特異的）"); // 避けた候補名を明記
+  });
+
+  it("ACWR裏付けありのloadHighは既存どおり働き、理由がloadHighとrecentFatigueSignalで異なる", () => {
+    const loadHighOnly = buildSessionSpec({
+      category: "high_lactate",
+      phase: "Specific",
+      weekIndex: 0,
+      cfeSec: CFE,
+      athleteType: "balanced",
+      loadHigh: true,
+    })!;
+    expect(loadHighOnly.blocks[0].distanceM).toBe(300);
+    expect(loadHighOnly.reasons.join()).toContain("直近の負荷増加と疲労兆候があるため");
+  });
 });
 
 describe("複数テンプレート選択", () => {

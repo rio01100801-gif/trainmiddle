@@ -606,6 +606,11 @@ export interface BuildSpecInput {
   trend?: TrendVerdict;
   /** ACWRが高い（急に増やさない） */
   loadHigh?: boolean;
+  /**
+   * 直近に疲労の兆候がある（黄・赤信号、翌日の脚の重さ、未達・中止）。
+   * ACWRの裏付けが無くても、疲労の実測だけで筋損傷リスクの高い形式を避ける。
+   */
+  recentFatigueSignal?: boolean;
   /** 経済走の導入週（既存の漸進をそのまま使う） */
   economyWeek?: number;
   /** threshold / CV の実測ベース設定 */
@@ -707,8 +712,12 @@ function selectTemplate(
       else if (entry.variationGroup === candidate.variationGroup && age <= 14) score -= 1.5;
     }
     if (input.trend === "ease" && candidate.difficulty >= 4) score -= 2;
-    if (input.loadHigh && candidate.muscleDamageRisk >= 4) score -= 2;
-    return { candidate, score, reasons };
+    // ペナルティ自体はここで付ける。理由は「避けられた側」ではなく「選ばれた側」の
+    // reasonsに残す必要があるため、その説明はscored確定後にまとめて行う（下記）。
+    const fatigueAvoided =
+      (input.loadHigh || input.recentFatigueSignal) && candidate.muscleDamageRisk >= 4;
+    if (fatigueAvoided) score -= 2;
+    return { candidate, score, reasons, fatigueAvoided };
   });
   scored.sort(
     (a, b) => b.score - a.score || a.candidate.id.localeCompare(b.candidate.id)
@@ -730,6 +739,28 @@ function selectTemplate(
   }
   else if (stableCount >= 2) selected.reasons.push("安定完遂が2回あり次段階を優先");
   else if (completed.length === 0) selected.reasons.push("同形式の実績不足のため初期候補");
+
+  /*
+   * 「600m反復は翌日疲労が強く残るので、同等の刺激を400m反復で低疲労コストに
+   * 得たい」という着想への最小対応（8次元の刺激エンジンは作らない）。
+   * ペナルティで避けられた候補が、ペナルティが無ければ実際に選ばれていた
+   * （＝この選択を左右した）場合だけ、選ばれた側の理由として明記する。
+   * 常に出すと「常に触れているが実際は決め手でない」説明になってしまうため、
+   * 決定的だったときだけ出す。
+   */
+  const avoidedHigherRisk = scored.find(
+    (item) =>
+      item.fatigueAvoided &&
+      item.candidate.id !== selected.candidate.id &&
+      item.score + 2 > selected.score
+  );
+  if (avoidedHigherRisk) {
+    selected.reasons.push(
+      input.loadHigh
+        ? `直近の負荷増加と疲労兆候があるため、筋損傷リスクの高い「${avoidedHigherRisk.candidate.name}」を避けました`
+        : `直近の疲労兆候があるため、筋損傷リスクの高い「${avoidedHigherRisk.candidate.name}」を避けました`
+    );
+  }
 
   return {
     candidate: selected.candidate,

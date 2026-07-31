@@ -526,6 +526,10 @@ export function regeneratePlan(repo: Store, startDate: string): {
       acwrNow.acwr !== undefined &&
       acwrNow.acwr > 1.3 &&
       hasRecentLoadConcern(repo, startDate),
+    // ACWRの裏付けが無くても、疲労の実測（signal・翌日の脚の重さ・未達）だけで
+    // 筋損傷リスクの高い形式を避ける（selectTemplate参照）。loadHighはこれを
+    // 必要条件として含むため、loadHighが真ならこちらも必ず真になる。
+    recentFatigueSignal: hasRecentLoadConcern(repo, startDate),
   });
 
   // 3-2: 使われた自作メニューの使用実績を更新する

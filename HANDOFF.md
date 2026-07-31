@@ -27,12 +27,13 @@
 | 項目 | 値 |
 | --- | --- |
 | branch | `main` |
-| HEAD | `10c1bf4`（`release: AGENTS.md/CLAUDE.mdの同期漏れを修正し forge-v39 を配信`） |
-| `origin/main` との差 | **0 / 0**（完全一致・push済み・forge-v39としてgh-pages配信済み） |
+| HEAD | `059ec4a`（`fix: 実運用で見つかった4件の不具合を修正`） |
+| `origin/main` との差 | **0 / 0**（完全一致・push済み・forge-v40としてgh-pages配信済み） |
 
 直近コミット:
 
 ```
+059ec4a fix: 実運用で見つかった4件の不具合を修正
 10c1bf4 release: AGENTS.md/CLAUDE.mdの同期漏れを修正し forge-v39 を配信
 125aa05 feat: 運用整備（CI・アトミックビルド・診断画面・runbook）を追加
 80bbcc1 fix: セキュリティ・プライバシー監査で見つかった問題を修正
@@ -42,7 +43,6 @@ a9ec349 feat: P0監査の残り3項目（依存関係・危険な提案防止・
 8900c7d feat: FIT/Garmin取込基盤とPWA保存保証・UI/UXアクセシビリティ改善を追加
 9d14ead docs: NEXT-002完了（forge-v35実機確認済み）を反映
 51ada24 docs: forge-v35配信後の状態を反映
-d997ddb fix: Supabase Storageの初回push未検出を修正
 ```
 
 **本番Supabaseへの対応（2026-07-31・リポジトリ外の作業）**: `forge`バケットの
@@ -58,35 +58,51 @@ private・50MB・`application/json`限定に設定済み。
 
 ## 未コミット変更
 
-**あり（2026-07-31・実際の利用で見つかった不具合4件の修正）。**
-`npm run typecheck`・`npm test`（956件）・`npm run build:all`・`npm run e2e`・
+**あり（2026-07-31・刺激ベース生成エンジンの大規模提案を検討し、最小代替案を実装）。**
+`npm run typecheck`・`npm test`（958件）・`npm run build:all`・`npm run e2e`・
 `npm run e2e:update`・`npm run ci:checks`が全て成功済み。**VERSION更新・
 commit・push・gh-pages配信はまだ行っていない**（本人の標準運用に従い許可待ち）。
 
-変更点の詳細は会話ログ参照。要約:
+**経緯**: 本人から「刺激ベース・トレーニング生成エンジン」への大規模移行
+（8次元の刺激/疲労コストベクトル・週間刺激目標・ハード制約とスコアリングの
+分離・シャドーモード・5段階移行計画）の詳細な実装指示書が提示されたが、
+単一利用者・週3〜4回の質練習という頻度では個人適応部分（同一メニューを
+3回以上繰り返さないと意味を持たない）が長期間ほぼ機能しないこと、既存の
+ルールエンジン・limiter判定が既に大部分をカバーしていることを指摘し、
+実装しないことを提案。本人がこれに同意し、核心の着想（同等の刺激をより
+低い疲労コストで得られる形式を優先する）だけを既存アーキテクチャへの
+最小拡張で実装する方針になった。
+
+**実装内容**: `src/lib/core/progression.ts`の`selectTemplate`には既に
+`muscleDamageRisk`（筋損傷リスク）付きの候補と、ACWR高値時にリスク4以上の
+候補を減点する仕組みが存在していた。この減点条件を、ACWRの裏付けが無い
+「直近の疲労兆候（黄・赤信号・翌日の脚の重さ・未達・中止。既存の
+`hasRecentLoadConcern`と同じ判定）だけ」でも発動するよう拡張
+（`recentFatigueSignal`）。閾値（-2点、リスク4以上）は変更していない。
+選定理由にも、実際にその判断が選択を左右した場合だけ候補名入りで表示する
+（`src/lib/service.ts`, `src/lib/core/periodization.ts`,
+`src/lib/core/progression.ts`）。
+
+その前の不具合4件修正の要約:
 - 練習結果の削除機能が無かった問題 → `deleteResult`をService/Store両実装/
   Next.js API/PWA shimに追加。誤記録の削除・CFE取り消しに対応
-  （`src/lib/service.ts`, `app/api/results/route.ts`, `pwa/api-shim.ts`,
-  `app/results/page.tsx`）
 - カレンダーの＋シートに「記録する」導線が無かった問題 →
-  `/results?date=X`への直接リンクを追加（`app/calendar/page.tsx`）
+  `/results?date=X`への直接リンクを追加
 - 予定と違う練習を記録してもカレンダーに予定のメニューが残る問題 →
-  実際の結果と予定の食い違いを検出して表示（新規
-  `src/lib/core/actualVsPlan.ts`、`app/calendar/page.tsx`）
+  実際の結果と予定の食い違いを検出して表示（新規`src/lib/core/actualVsPlan.ts`）
 - ジョグ＋坂ダッシュ等の複合メニューが片方消える問題 → データモデルの
   制約（1枠1種類）自体は変更せず、混在を検出して警告表示
-  （`src/lib/core/bulkImport.ts`の`detectMixedWorkoutKind`、
-  `app/components/prescription-fields.tsx`）
 
 次に取りかかる担当（または本人）がやること:
 1. VERSION更新・commit・push・配信の許可を判断する
 2. README.mdの「セキュリティ・プライバシー監査」節末尾「指摘したが今回直して
-   いないこと」（クラウドスナップショット削除機能の欠如、Supabase implicit
-   flowの平文トークン保存など）、および`OPERATIONS.md`にある未着手項目を、
-   次の作業候補として扱ってよい
+   いないこと」、および`OPERATIONS.md`にある未着手項目を次の作業候補として
+   扱ってよい
 3. ジョグ＋坂ダッシュのような複合メニューを本当に1枠で記録したい場合、
    データモデル（Session/SessionResultへのsegments概念の追加）の設計判断が
    必要（今回は警告表示のみで対応し、モデル変更は見送った）
+4. 刺激ベース生成エンジンの本格導入は今回見送ったが、指示書自体は会話ログに
+   残っている。個人反応データが十分に蓄積された将来、再検討の余地はある
 
 ---
 
@@ -100,10 +116,10 @@ gh-pages配信済み（2026-07-30・`forge-v35`）。内容は下の「NEXT-001 
 
 | 項目 | 値 |
 | --- | --- |
-| ソース `pwa/sw.js` | `forge-v35` |
-| `pwa-dist/sw.js` | `forge-v35` |
-| 公開中（`gh-pages`） | `forge-v35`（配信済み・2026-07-30） |
-| `main:pwa-dist` と `gh-pages` の tree | **一致（配信済み・未配信の差分なし）** |
+| ソース `pwa/sw.js` | `forge-v40`（未コミットのローカル変更で`forge-v41`に更新済み） |
+| `pwa-dist/sw.js` | `forge-v41`（ローカルビルド済み・未配信） |
+| 公開中（`gh-pages`） | `forge-v40`（配信済み・2026-07-31） |
+| `main:pwa-dist` と `gh-pages` の tree | 今回の変更ぶんは配信の許可待ち |
 
 ---
 

@@ -496,6 +496,15 @@ export interface GeneratePlanInput {
   recentTrend?: Partial<Record<SessionCategory, TrendVerdict>>;
   /** S-7: 直近の負荷が高い。増やす方向の漸進を止める */
   loadHigh?: boolean;
+  /**
+   * 直近に疲労の兆候（黄・赤信号、翌日の脚の重さ、未達・中止）がある。
+   * `loadHigh`はACWR増加という裏付けが要るが、こちらはACWRに関わらず
+   * 疲労の実測だけで立つ——ACWRが低くても、直近で脚が重い等の兆候が
+   * あれば筋損傷リスクの高い形式を避けたいため（`selectTemplate`参照）。
+   * `loadHigh`が真ならこちらも必ず真になる（`hasRecentLoadConcern`が
+   * `loadHigh`の必要条件のため）。
+   */
+  recentFatigueSignal?: boolean;
   /** 候補形式の重み付けにだけ使う。安全ルールやフェーズを上書きしない */
   athleteType?: AthleteType;
   /** 完了済みの自動生成形式。再使用間隔と段階判定に使う */
@@ -706,6 +715,7 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
           cfeSec: grpBase,
           trend: input.recentTrend?.[t.category],
           loadHigh: input.loadHigh,
+          recentFatigueSignal: input.recentFatigueSignal,
           economyWeek: t.category === "race_economy" ? economyWeek : undefined,
           aerobicProfile,
           athleteType: input.athleteType,
