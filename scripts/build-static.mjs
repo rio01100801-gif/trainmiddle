@@ -32,6 +32,11 @@ const FILES = [
   "icon-192.png",
   "icon-512.png",
   "icon-maskable-512.png",
+  /*
+   * ブランド資産。styles.css の url("./brand-wordmark.png") が
+   * pwa-dist/ 基準で解決されるので、ここに置く必要がある。
+   */
+  "brand-wordmark.png",
 ];
 
 fs.mkdirSync(to, { recursive: true });

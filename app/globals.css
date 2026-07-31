@@ -80,6 +80,29 @@
   --radius: 16px;
   --radius-sm: 10px;
   --focus-ring: 0 0 0 3px rgba(182, 255, 0, 0.22);
+
+  /*
+   * ---- ビジュアル刷新（reference-ui）で追加 ----
+   *
+   * 光跡のグラデーション端点。左（暗）→右（白熱）へ向かう。
+   * SVG側の stop-color と対で使う値なので、片方だけ変えないこと。
+   */
+  --forge-dim: rgba(182, 255, 0, 0.22);
+  --forge-mid: #c8ff3c;
+  --forge-hot: #f0ffbe;
+
+  /*
+   * 数値の階層。リファレンスは「数値を主役にする」ため段差を大きく取っている。
+   * 既存画面の細かい文字サイズは触らず、刷新した画面だけがこれを使う。
+   */
+  --num-hero: 54px;
+  --num-xl: 40px;
+  --num-lg: 28px;
+  --num-md: 20px;
+
+  /* 技術ラベル（英大文字＋字送り）。リファレンスの細い見出しの見え方 */
+  --label-size: 11px;
+  --label-tracking: 0.14em;
 }
 
 html,
@@ -277,6 +300,33 @@ textarea:focus-visible {
 }
 
 /* ---- 部品 ---- */
+/*
+ * ---- ブランド要素（reference-ui のビジュアル刷新） ----
+ *
+ * ワードマークは画像をCSSの mask として使う。url() をCSSに置いているのは、
+ * Next.js と PWA でURLの基準が違うため——CSSの url() は「そのCSSファイルの位置」を
+ * 基準に解決されるので、Next.js（app/globals.css 基準）でも
+ * PWA（pwa-dist/styles.css 基準）でも同じ記述で正しく解決される。
+ * JS側でパスを組み立てるとどちらかで壊れる。
+ * 実体は app/brand-wordmark.png と pwa/brand-wordmark.png の2箇所に置く
+ * （build-static.mjs が pwa/ 側を pwa-dist/ にコピーする）。
+ */
+.forge-wordmark {
+  display: inline-block;
+  flex-shrink: 0;
+  background: currentColor;
+  -webkit-mask: url("./brand-wordmark.png") no-repeat center / contain;
+  mask: url("./brand-wordmark.png") no-repeat center / contain;
+}
+
+/* 英大文字の技術ラベル。リファレンスの細い見出し */
+.forge-label {
+  font-size: var(--label-size);
+  font-weight: 700;
+  letter-spacing: var(--label-tracking);
+  color: var(--text-2);
+}
+
 .card {
   position: relative;
   background: linear-gradient(145deg, rgba(255,255,255,.018), transparent 46%), var(--surface);
@@ -562,6 +612,17 @@ table {
 }
 .today-card {
   overflow: hidden;
+}
+/*
+ * TODAYカードの光跡を置く帯。
+ * 左右の負マージンでカード内側の余白ぶんを打ち消し、端まで届かせる
+ * （途中で切れていると軌跡ではなく貼り込んだ図版に見える）。
+ */
+.today-track-band {
+  position: relative;
+  height: 84px;
+  margin: 10px -18px 0;
+  pointer-events: none;
 }
 .today-card::after {
   position: absolute;

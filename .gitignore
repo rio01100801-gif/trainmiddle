@@ -14,6 +14,9 @@ harness/fixtures.json
 harness/node_modules/
 tsconfig.tsbuildinfo
 shots/
+# 視覚回帰の撮影結果と差分。baseline だけは残す（比較の基準になるため）
+visual/current/
+visual/diff/
 .claude/settings.local.json
 /.pwa-dist-staging/
 /.pwa-dist-backup/

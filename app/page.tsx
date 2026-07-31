@@ -6,6 +6,7 @@ import { Card, Sparkline, StatusText, fmtSec } from "./components/ui";
 import { withQuery } from "./components/route-query";
 import { SessionEditSheet } from "./components/session-edit-sheet";
 import { saveSplashSummary } from "./components/splash-cache";
+import { ForgeTrack } from "./components/brand/forge-track";
 
 /**
  * ホーム画面（改修指示書 フェーズA）
@@ -101,8 +102,14 @@ export default function Home() {
 
   return (
     <div className="home-screen flex flex-col gap-3">
-      <HomePriority d={d} />
+      {/*
+        リファレンス（today.jpeg）の並び: 見出し → 今日のセッション → 週の合計。
+        指標ストリップ（HomePriority）は RECOVERY と数字が重なるので、
+        セッションの後ろへ下げる。消してはいない（レースまでの日数・警告件数はここだけ）。
+      */}
+      <TodayHeader d={d} />
       <Today d={d} today={today} onChanged={load} />
+      <HomePriority d={d} />
       {/*
         ポイント練習の日だけ、その日の枠に固定する。
         今日がジョグや休養だと設定の調整は出ないので、その場合は指定せず、
@@ -135,6 +142,109 @@ export default function Home() {
       <WeekStrip d={d} today={today} />
       <AnalysisSwipe d={d} today={today} />
     </div>
+  );
+}
+
+/**
+ * 刷新した表示が /api/dashboard から実際に触る値だけを型にする。
+ * ホーム全体の `d` は既存コードが `any` のままだが、新しく足す表示では使わない。
+ */
+interface TodayHeaderData {
+  athlete?: { name?: string } | null;
+  readiness?: { score?: number; level?: string } | null;
+}
+interface WeeklySummaryData {
+  weekTotals?: { distanceKm: number; durationMin: number; load: number } | null;
+}
+
+/**
+ * TODAY の見出し（reference-ui の today.jpeg）。
+ *
+ * 「今日」を最大の文字で置き、その直下に回復状態を1本のバーで出す。
+ * 数値を主役にする、というリファレンスの方針そのもの。
+ * ここは表示だけで、準備度の計算には触らない（readiness は既存のまま使う）。
+ */
+function TodayHeader({ d }: { d: TodayHeaderData }) {
+  const r = d.readiness;
+  const score = typeof r?.score === "number" ? r.score : undefined;
+  const name = (d.athlete?.name ?? "").trim();
+  // 「伊藤 吏央」→「吏央」。姓ではなく名で呼ぶ（リファレンスは RIO）
+  const firstName = name ? (name.split(/\s+/)[1] ?? name) : undefined;
+  const hour = new Date().getHours();
+  const greeting = hour < 4 ? "GOOD NIGHT" : hour < 11 ? "GOOD MORNING" : hour < 17 ? "GOOD AFTERNOON" : "GOOD EVENING";
+  const color =
+    r?.level === "low" ? "var(--red)" : r?.level === "caution" ? "var(--amber)" : "var(--forge)";
+
+  return (
+    <section className="today-header">
+      <p className="forge-label" style={{ letterSpacing: ".1em" }}>
+        {greeting}
+        {firstName ? `, ${firstName}` : ""}
+      </p>
+      <h1
+        className="font-extrabold leading-none mt-1.5"
+        style={{ fontSize: "var(--num-hero)", letterSpacing: "-.03em" }}
+      >
+        TODAY
+      </h1>
+
+      {score !== undefined ? (
+        <div className="mt-5">
+          <p className="forge-label">RECOVERY</p>
+          <p className="num font-extrabold leading-none mt-1" style={{ fontSize: "var(--num-lg)", color }}>
+            {score}
+            <span className="text-[15px] font-bold ml-0.5">%</span>
+          </p>
+          <div
+            className="mt-2.5 h-[5px] rounded-full overflow-hidden"
+            style={{ background: "var(--surface-3)" }}
+            role="progressbar"
+            aria-label="回復状態"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={score}
+          >
+            <i className="block h-full rounded-full" style={{ width: `${score}%`, background: color }} />
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * WEEKLY SUMMARY（reference-ui の today.jpeg 下部）。
+ * 集計は service の dashboard() 側で済ませてある（画面ごとに数字が食い違わないように）。
+ */
+function WeeklySummary({ d }: { d: WeeklySummaryData }) {
+  const t = d.weekTotals;
+  if (!t) return null;
+  const h = Math.floor(t.durationMin / 60);
+  const m = t.durationMin % 60;
+  const items = [
+    { label: "Distance", value: t.distanceKm.toFixed(1), unit: "km" },
+    { label: "Time", value: `${h}:${String(m).padStart(2, "0")}`, unit: "h" },
+    { label: "Intensity", value: t.load.toLocaleString(), unit: "pt" },
+  ];
+  return (
+    <section>
+      <p className="forge-label mb-3">WEEKLY SUMMARY</p>
+      <div className="grid grid-cols-3 gap-2">
+        {items.map((it) => (
+          <div key={it.label}>
+            <p className="text-[11.5px]" style={{ color: "var(--text-3)" }}>
+              {it.label}
+            </p>
+            <p className="num font-bold leading-none mt-1.5" style={{ fontSize: "var(--num-md)" }}>
+              {it.value}
+            </p>
+            <p className="text-[10.5px] mt-1" style={{ color: "var(--text-3)" }}>
+              {it.unit}
+            </p>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -571,13 +681,23 @@ function Today({ d, today, onChanged }: { d: any; today: string; onChanged: () =
   }
 
   return (
+    <>
     <Card variant="hero" className="today-card">
-      <div className="flex items-center justify-between gap-2 mb-2.5">
-        <span className="metric-label">TODAY</span>
-        <span className="text-[11px] num" style={{ color: "var(--text-3)" }}>
-          {today.slice(5).replace("-", "/")}（{dowOf(today)}）
-        </span>
-      </div>
+      {/*
+        リファレンス（today.jpeg）のセッションカード。
+        ラベルは緑、メニュー名を大きく、処方を副行に置き、
+        カード下半分に光るトラックを敷く。トラックは装飾なので
+        文字の下（z-index的に背面）に置き、左側では消えるようにしてある。
+      */}
+      <div className="relative">
+        <div className="flex items-center justify-between gap-2 mb-2.5">
+          <span className="forge-label" style={{ color: "var(--forge)" }}>
+            TODAY&apos;S SESSION
+          </span>
+          <span className="text-[11px] num" style={{ color: "var(--text-3)" }}>
+            {today.slice(5).replace("-", "/")}（{dowOf(today)}）
+          </span>
+        </div>
       {msg ? (
         <p className="text-[11.5px] mb-2" style={{ color: "var(--text-3)" }}>
           {msg}
@@ -601,35 +721,18 @@ function Today({ d, today, onChanged }: { d: any; today: string; onChanged: () =
           </div>
 
           {/* メニュー本文は1回だけ（E-4: 現行の二重表示を解消） */}
-          <p className="text-[15px] font-semibold leading-snug mb-1">{s.name}</p>
+          <p className="font-extrabold leading-none mb-2.5" style={{ fontSize: "var(--num-lg)", letterSpacing: "-.02em" }}>
+            {s.name}
+          </p>
           <p className="text-[12.5px] leading-relaxed mb-3" style={{ color: "var(--text-2)" }}>
             {s.prescription}
           </p>
 
-          {/* 準備度・転移度・リスクを1行に。リングは詳細画面へ（A-3） */}
-          <div
-            className="flex items-center gap-x-6 gap-y-2 flex-wrap py-3 border-t border-b mb-3"
-            style={{ borderColor: "var(--border)" }}
-          >
-            <MiniMetric
-              label="準備度"
-              value={r ? String(r.score) : "-"}
-              unit="/100"
-              color={
-                r?.level === "low"
-                  ? "var(--red)"
-                  : r?.level === "caution"
-                  ? "var(--amber)"
-                  : "var(--forge)"
-              }
-            />
-            <MiniMetric label="800m転移度" value={`${s.transfer800m}`} unit="/5" />
-            <MiniMetric
-              label="リスク"
-              value={s.riskLevel === "high" ? "高" : s.riskLevel === "mid" ? "中" : "低"}
-              color={s.riskLevel === "high" ? "var(--amber)" : undefined}
-            />
-          </div>
+          {/*
+            準備度はカードに出さない。見出しの RECOVERY と同じ値で、
+            上下に同じ数字が並ぶ状態になっていた。
+            転移度・リスクは走る前の判断を変えないので、カードの下へ移した。
+          */}
 
           {/* 当日・翌日のセッションに関する警告だけをここに1〜2行（A-3） */}
           {violations.slice(0, 2).map((v: any, i: number) => (
@@ -654,23 +757,26 @@ function Today({ d, today, onChanged }: { d: any; today: string; onChanged: () =
             </Link>
           ) : null}
 
+          {/*
+            リファレンスのカード下半分の光跡。カードの左右いっぱいに出す
+            （内側の余白で切れていると、走っている軌跡ではなく図版に見える）。
+          */}
+          <div className="today-track-band">
+            <ForgeTrack />
+          </div>
+
+          {/*
+            カードに置くのは主アクションだけ（リファレンスの START SESSION → にあたる）。
+            変更・根拠はカードの外へ出した。毎日押すものではない。
+          */}
           <div className="flex gap-2 mt-3 flex-col sm:flex-row">
-            <ActionButton action={action} />
             {/* M-4: 1本ごとに入れながら、続けるかどうかをその場で見る */}
             {!result && s.targetPaces?.length > 0 ? (
-              <Link href={withQuery("/run", { sessionId: s.id })} className="btn-volt justify-center">
+              <Link href={withQuery("/run", { sessionId: s.id })} className="btn-volt justify-center flex-1">
                 セッションを開始
               </Link>
             ) : null}
-            {/* P-1: 固定枠（チーム練習等）は動かせないので出さない */}
-            {!s.isFixed ? (
-              <button className="btn-ghost text-center" onClick={() => setEditing(true)}>
-                メニューを変更
-              </button>
-            ) : null}
-            <Link href={withQuery("/session", { id: s.id })} className="btn-ghost text-center">
-              メニューの根拠を確認
-            </Link>
+            <ActionButton action={action} />
           </div>
         </>
       ) : (
@@ -688,7 +794,43 @@ function Today({ d, today, onChanged }: { d: any; today: string; onChanged: () =
           </div>
         </>
       )}
+      </div>
     </Card>
+
+    {/*
+      週の合計はセッションカードの直後に置く（リファレンスの並び）。
+      TODAYのまとまりとして「今日やること → 今週の積み上げ → 補足」の順にする。
+    */}
+    <WeeklySummary d={d} />
+
+    {/*
+      カードから出した二次情報。走る前の判断は変えないが、消してはいない。
+      スクロールで届く位置に置き、タップ数は増やさない。
+    */}
+    {s ? (
+      <section className="today-secondary">
+        <div className="flex items-center gap-x-6 gap-y-2 flex-wrap mb-3">
+          <MiniMetric label="800m転移度" value={`${s.transfer800m}`} unit="/5" />
+          <MiniMetric
+            label="リスク"
+            value={s.riskLevel === "high" ? "高" : s.riskLevel === "mid" ? "中" : "低"}
+            color={s.riskLevel === "high" ? "var(--amber)" : undefined}
+          />
+        </div>
+        <div className="flex gap-2 flex-col sm:flex-row">
+          {/* P-1: 固定枠（チーム練習等）は動かせないので出さない */}
+          {!s.isFixed ? (
+            <button className="btn-ghost text-center flex-1" onClick={() => setEditing(true)}>
+              メニューを変更
+            </button>
+          ) : null}
+          <Link href={withQuery("/session", { id: s.id })} className="btn-ghost text-center flex-1">
+            メニューの根拠を確認
+          </Link>
+        </div>
+      </section>
+    ) : null}
+    </>
   );
 }
 

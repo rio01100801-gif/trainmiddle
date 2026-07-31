@@ -11,7 +11,7 @@
  *
  * リリースのたびに VERSION を必ず上げること（上げないと install が走らない）。
  */
-const VERSION = "forge-v43";
+const VERSION = "forge-v44";
 const ASSETS = [
   "./",
   "./index.html",
@@ -30,6 +30,13 @@ const ASSETS = [
   `./icon-192.png?v=${VERSION}`,
   `./icon-512.png?v=${VERSION}`,
   `./icon-maskable-512.png?v=${VERSION}`,
+  /*
+   * ブランド資産。styles.css から参照されるのでオフラインでも要る。
+   * アイコンと違い版数クエリを付けないのは、CSSの url() 側にクエリが無く
+   * URLが一致しないとキャッシュヒットしないため（fetchハンドラは
+   * ignoreSearch で拾うが、install時のaddAllはURL一致で入る）。
+   */
+  "./brand-wordmark.png",
 ];
 
 /** 更新を必ず取りに行く対象（アプリ本体） */

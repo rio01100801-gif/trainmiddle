@@ -1282,6 +1282,35 @@ export function dashboard(repo: Store, today: string) {
       v.sessionIds.some((id) => todaySessionIds.has(id))
   );
 
+  /*
+   * ホームの WEEKLY SUMMARY（距離・時間・強度）。
+   *
+   * 上の「UIに計算を持ち込まない」と同じ理由でここに置く。
+   * 強度は既存の負荷定義（RPE×分。`loads` はACWRと同じ値）をそのまま合計する——
+   * 画面用に別の強度を定義すると、分析画面のACWRと数字が食い違う。
+   * 予定は数えず、実施したぶんだけを数える（`dailyLoads` と同じ扱い）。
+   */
+  const weekFrom = weekStart(today);
+  const weekTo = addDays(weekFrom, 6);
+  const weekTotals = (() => {
+    let distanceKm = 0;
+    let durationMin = 0;
+    for (const s of allSessions) {
+      if (s.date < weekFrom || s.date > weekTo) continue;
+      const r = resultBySession.get(s.id);
+      if (!r && s.status !== "completed") continue;
+      distanceKm += r?.continuous?.distanceKm ?? s.distanceKm ?? 0;
+      durationMin += r?.durationMin ?? s.durationMin ?? 0;
+    }
+    let load = 0;
+    for (let d = weekFrom; d <= weekTo; d = addDays(d, 1)) load += loads.get(d) ?? 0;
+    return {
+      distanceKm: Math.round(distanceKm * 10) / 10,
+      durationMin: Math.round(durationMin),
+      load: Math.round(load),
+    };
+  })();
+
   // 日付ごとの警告件数（カレンダーのバッジ用・C-2）
   const violationsByDate: Record<string, number> = {};
   for (const v of violations) {
@@ -1314,6 +1343,7 @@ export function dashboard(repo: Store, today: string) {
     lastSync: repo.listSyncs(1)[0],
     injuries: repo.listInjuries(),
     daysToRace: targetRace ? diffDays(today, targetRace.dateStart) : undefined,
+    weekTotals,
     weekSessions: repo.listSessions(weekStart(today), addDays(weekStart(today), 6)),
     weekStrengths: repo.listStrengths(weekStart(today), addDays(weekStart(today), 6)),
     violations,

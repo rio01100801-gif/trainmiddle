@@ -6,15 +6,34 @@ import { useEffect, useState } from "react";
 type Item = { href: string; label: string; icon: JSX.Element; mobile?: boolean };
 
 const I = {
-  home: <path d="M3 10l9-7 9 7v10a1 1 0 01-1 1h-5v-7H9v7H4a1 1 0 01-1-1z" />,
+  /*
+   * TODAY はブランドの2周トラックそのもの（reference-ui の bottom-navigation.jpeg）。
+   * 家のアイコンではなく、アプリの記号を最初のタブに置く。
+   * ForgeMark と同じ形だが、他のアイコンと同じ 24x24 の枠に合わせてある。
+   */
+  home: (
+    <>
+      <path d="M11 5H7.5a7 7 0 000 14H11" />
+      <path d="M13 5h3.5a7 7 0 010 14H13" />
+      <path d="M11 9H9a3 3 0 000 6h2" />
+      <path d="M13 9h2a3 3 0 010 6h-2" />
+    </>
+  ),
   calendar: (
     <>
       <rect x="3" y="5" width="18" height="16" rx="2" />
       <path d="M3 10h18M8 3v4M16 3v4" />
     </>
   ),
-  record: <path d="M12 3v18M5 8v13M19 12v9" />,
-  chart: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
+  /* RECORD は「録る」を表す同心円（リファレンスと同じ） */
+  record: (
+    <>
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="2.4" />
+    </>
+  ),
+  /* ANALYTICS は高さの違う4本の棒。基線は引かない（リファレンスに合わせる） */
+  chart: <path d="M5 20v-5M10 20V8M15 20v-8M20 20V5" />,
   gear: (
     <>
       <circle cx="12" cy="12" r="3.2" />
@@ -90,10 +109,10 @@ const ico = (p: JSX.Element) => (
  * 「設定」はヘッダー右のアイコンから開く。ハンバーガーは廃止した。
  */
 export const NAV_ITEMS: Item[] = [
-  { href: "/", label: "ホーム", icon: ico(I.home), mobile: true },
-  { href: "/calendar", label: "カレンダー", icon: ico(I.calendar), mobile: true },
-  { href: "/results", label: "記録", icon: ico(I.record), mobile: true },
-  { href: "/analysis", label: "分析", icon: ico(I.chart), mobile: true },
+  { href: "/", label: "TODAY", icon: ico(I.home), mobile: true },
+  { href: "/calendar", label: "PLAN", icon: ico(I.calendar), mobile: true },
+  { href: "/results", label: "RECORD", icon: ico(I.record), mobile: true },
+  { href: "/analysis", label: "ANALYTICS", icon: ico(I.chart), mobile: true },
 ];
 
 /** 設定画面の中身（B-2の再配置先） */
@@ -370,11 +389,16 @@ export function BottomTabs() {
             href={n.href}
             aria-current={on ? "page" : undefined}
             data-on={on ? "1" : "0"}
-            className="flex-1 text-center text-[9.5px] font-semibold min-h-[44px] flex flex-col justify-center"
-            style={{ color: on ? "var(--forge)" : "var(--text-3)" }}
+            className="flex-1 text-center text-[9px] font-bold min-h-[44px] flex flex-col justify-center"
+            style={{
+              color: on ? "var(--forge)" : "var(--text-3)",
+              // リファレンスのラベルは英大文字＋字送り。字送りぶん右にずれるので相殺する
+              letterSpacing: ".08em",
+              textIndent: ".08em",
+            }}
           >
             <span
-              className="w-[19px] h-[19px] block mx-auto mb-1 [&>svg]:w-full [&>svg]:h-full"
+              className="w-[21px] h-[21px] block mx-auto mb-1.5 [&>svg]:w-full [&>svg]:h-full"
               style={{ stroke: "currentColor" }}
             >
               {n.icon}
