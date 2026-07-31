@@ -2616,8 +2616,17 @@ if (splashSaved) {
   if (!/レースまで/.test(splashText)) fail(`R-2: レースまでの日数が出ていない（${splashText}）`);
   if (!/\d+日/.test(splashText)) fail("R-2: 日数の数字が出ていない");
   if (!/目標.*秒|到達/.test(splashText)) fail("R-2: 目標との差が出ていない");
-  if ((await sp.locator("#splash svg.mark path").count()) !== 4) {
-    fail("R-2: スプラッシュのトラックマークが崩れている");
+  /*
+   * 2周ぶんのレーンが揃っていること。
+   * 生のpath数で数えると、発光層や光条を足しただけで落ちてしまい、
+   * 「トラックが崩れた」のか「装飾が増えた」のか区別できない。
+   * 意味のある単位（下地2本・光る軌跡2本以上）で見る。
+   */
+  if ((await sp.locator("#splash svg.mark path.lane-muted").count()) !== 2) {
+    fail("R-2: スプラッシュのトラックの下地が2周ぶんでない");
+  }
+  if ((await sp.locator("#splash svg.mark path.lane-live").count()) < 2) {
+    fail("R-2: スプラッシュの光る軌跡が出ていない");
   }
   // 画面外にはみ出していないこと（iPhone幅で数字が切れると読めない）
   const infoBox = await sp.locator("#splash-value").boundingBox();
