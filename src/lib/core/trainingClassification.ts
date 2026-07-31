@@ -46,6 +46,24 @@ export function trainingLoadClass(category: SessionCategory): TrainingLoadClass 
   return CATEGORY_LOAD_CLASS[category];
 }
 
+/**
+ * カレンダーの強度マーカー。
+ *
+ * 色だけで強度を示さない（FORGEの方針。色覚や暗所での判別に頼らない）ため、
+ * 形で区別する: 高=四角 / 中=丸 / 低=三角 / 休=線。
+ * 新しい強度の定義は作らず、既存の `TrainingLoadClass` からの写像にする——
+ * 画面ごとに「高負荷」の意味が変わると、警告と見た目が食い違う。
+ */
+export type IntensityMark = "high" | "medium" | "low" | "off";
+
+export function intensityMark(category: SessionCategory): IntensityMark {
+  const kind = trainingLoadClass(category);
+  if (kind === "glycolytic" || kind === "middle_distance_specific") return "high";
+  if (kind === "aerobic_high" || kind === "neuromuscular") return "medium";
+  if (kind === "recovery") return "off";
+  return "low";
+}
+
 export function isHighLoadCategory(category: SessionCategory): boolean {
   const kind = trainingLoadClass(category);
   return kind === "glycolytic" || kind === "middle_distance_specific" || kind === "aerobic_high";

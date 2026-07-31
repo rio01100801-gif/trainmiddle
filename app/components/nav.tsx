@@ -136,9 +136,14 @@ const EXTRA_ITEMS: Item[] = [
 
 export const SCREEN_TITLES: Record<string, string> = {
   "/": "ホーム",
-  "/calendar": "カレンダー",
-  "/results": "記録",
-  "/analysis": "分析",
+  /*
+   * 主要4画面の見出しは英語にする（reference-ui に合わせた技術ラベル）。
+   * ナビの PLAN に対して見出しが CALENDAR なのはリファレンスどおり
+   * （枠の名前と画面の名前は別でよい）。それ以外の画面は日本語のまま。
+   */
+  "/calendar": "CALENDAR",
+  "/results": "RECORD",
+  "/analysis": "PERFORMANCE",
   "/settings": "設定",
   "/setup": "プロフィール",
   "/plan-settings": "メニュー設定",

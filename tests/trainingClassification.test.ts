@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  HIGH_LOAD_CATEGORIES,
+  intensityMark,
   isDemandingNeuromuscularSession,
   isGlycolyticSession,
   isHighLoadSession,
@@ -80,5 +82,30 @@ describe("組み合わせ警告", () => {
     const warning = violationsOf(runRuleEngine(ctx({ sessions: [a, b] })), "RULE-03")[0];
     expect(warning.message).toContain("300m反復");
     expect(warning.message).toContain("600m経済走");
+  });
+});
+
+describe("カレンダーの強度マーカー（色だけに頼らない形の識別）", () => {
+  it("高乳酸・経済走・モデリングは「高」", () => {
+    expect(intensityMark("high_lactate")).toBe("high");
+    expect(intensityMark("race_economy")).toBe("high");
+    expect(intensityMark("modeling")).toBe("high");
+  });
+
+  it("CV・閾値・神経系は「中」", () => {
+    expect(intensityMark("cv")).toBe("medium");
+    expect(intensityMark("threshold")).toBe("medium");
+    expect(intensityMark("neural")).toBe("medium");
+  });
+
+  it("有酸素は「低」、休養は「休」", () => {
+    expect(intensityMark("aerobic")).toBe("low");
+    expect(intensityMark("off")).toBe("off");
+  });
+
+  it("既存の高負荷判定と食い違わない（高負荷カテゴリは必ず高か中になる）", () => {
+    for (const c of HIGH_LOAD_CATEGORIES) {
+      expect(["high", "medium"], `${c}`).toContain(intensityMark(c));
+    }
   });
 });

@@ -705,6 +705,14 @@ table {
 
 .calendar-controls {
   background: #090a0a;
+  /*
+   * 操作系は主役ではないので詰める。ここが高いぶんだけ予定が画面外へ出る。
+   * タップ領域は 44px を保ったまま、周囲の余白だけを削る。
+   */
+  padding: 12px 14px;
+}
+.calendar-controls .seg {
+  padding: 1px;
 }
 .calendar-day-list > .card {
   transition: border-color 140ms ease, background 140ms ease;

@@ -14,6 +14,7 @@ import { localToday } from "@/lib/core/dates";
 import type { CoverageReview } from "@/lib/core/coverage";
 import type { Race, Session, SessionResult } from "@/lib/core/types";
 import { actualDiffersFromPlan, describeActualResult } from "@/lib/core/actualVsPlan";
+import { intensityMark, type IntensityMark } from "@/lib/core/trainingClassification";
 
 /**
  * カレンダー（改修指示書 フェーズC）
@@ -66,6 +67,58 @@ const STATE_MARK: Record<DayState, { icon: string; label: string; color: string 
 };
 
 const LONG_PRESS_MS = 450;
+
+/**
+ * 強度マーカー（reference-ui の calendar.jpeg）。
+ * 高=四角 / 中=丸 / 低=三角 / 休=線。色は補助で、判別の主役は形。
+ */
+const INTENSITY_LABEL: Record<IntensityMark, string> = {
+  high: "高",
+  medium: "中",
+  low: "低",
+  off: "休",
+};
+
+function IntensityShape({ mark }: { mark: IntensityMark }) {
+  const color = mark === "off" ? "var(--text-3)" : "var(--forge)";
+  const common = { width: 9, height: 9, flexShrink: 0 } as const;
+  if (mark === "off") {
+    return <span aria-hidden style={{ ...common, height: 2, background: color, borderRadius: 1 }} />;
+  }
+  if (mark === "high") {
+    return <span aria-hidden style={{ ...common, background: color, borderRadius: 1 }} />;
+  }
+  if (mark === "medium") {
+    return <span aria-hidden style={{ ...common, background: color, borderRadius: "50%" }} />;
+  }
+  // 低: 三角。border で作る（SVGを増やさない）
+  return (
+    <span
+      aria-hidden
+      style={{
+        width: 0,
+        height: 0,
+        flexShrink: 0,
+        borderLeft: "5px solid transparent",
+        borderRight: "5px solid transparent",
+        borderBottom: `9px solid ${color}`,
+      }}
+    />
+  );
+}
+
+function IntensityLegend() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+      {(["high", "medium", "low", "off"] as IntensityMark[]).map((m) => (
+        <span key={m} className="flex items-center gap-1.5 text-[10.5px]" style={{ color: "var(--text-3)" }}>
+          <IntensityShape mark={m} />
+          {INTENSITY_LABEL[m]}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 interface EditConflict {
   sessionId: string;
@@ -265,10 +318,19 @@ export default function CalendarPage() {
             今日
           </button>
         </div>
-        <p className="text-[11px] leading-relaxed mt-2.5" style={{ color: "var(--text-3)" }}>
-          日付の行をタップするとその日の記録を入力できます。
-          ✎ でメニューの変更・移動・削除、＋ でその日に練習を足せます（セッションの長押しでも同じです）。
-        </p>
+        {/*
+          操作の説明は毎回読むものではない。常時3行を占有していたのを畳んだ。
+          初見で迷わないよう、見出し自体は残す。
+        */}
+        <details className="mt-2.5">
+          <summary className="text-[11px] cursor-pointer" style={{ color: "var(--text-3)" }}>
+            操作のしかた
+          </summary>
+          <p className="text-[11px] leading-relaxed mt-1.5" style={{ color: "var(--text-3)" }}>
+            日付の行をタップするとその日の記録を入力できます。
+            ✎ でメニューの変更・移動・削除、＋ でその日に練習を足せます（セッションの長押しでも同じです）。
+          </p>
+        </details>
       </Card>
 
       {msg ? (
@@ -414,6 +476,13 @@ export default function CalendarPage() {
       ) : null}
 
       <Card title="凡例">
+        <p className="forge-label mb-2" style={{ fontSize: 10 }}>
+          強度
+        </p>
+        <IntensityLegend />
+        <p className="forge-label mt-3.5 mb-2" style={{ fontSize: 10 }}>
+          その日の状態
+        </p>
         <div className="flex flex-wrap gap-x-4 gap-y-1.5">
           {(Object.keys(STATE_MARK) as DayState[])
             .filter((k) => k !== "empty")
@@ -482,21 +551,31 @@ function CoverageStrip() {
           内訳を見る →
         </Link>
       </div>
+      {/*
+        結論と「で、どうするのか」を2行に分ける（S-12: 行動が出ていること）。
+        以前は1つの段落で3行に折り返していて、予定が画面外へ押し出されていた。
+        行動を削るのは不可——何が足りないかだけ言って終わる画面にはしない。
+      */}
       {topSignal ? (
-        <p className="text-[12.5px] leading-relaxed">
-          <b style={{ color: "var(--amber)" }}>{topSignal.message}</b>
-          <span style={{ color: "var(--text-3)" }}> 次の行動: {topSignal.action}</span>
-        </p>
+        <>
+          <p className="text-[12.5px] truncate">
+            <b style={{ color: "var(--amber)" }}>{topSignal.message}</b>
+          </p>
+          <p className="text-[11.5px] truncate mt-0.5" style={{ color: "var(--text-3)" }}>
+            次の行動: {topSignal.action}
+          </p>
+        </>
       ) : top ? (
-        <p className="text-[12.5px] leading-relaxed">
-          <b style={{ color: "var(--amber)" }}>
-            {COVERAGE_JP[top.category] ?? top.category}が{top.shortfall}回 足りていません
-          </b>
-          <span style={{ color: "var(--text-3)" }}>
-            {" "}
-            ／ 直近4週の実績から。入れ替えるなら分析タブから選べます
-          </span>
-        </p>
+        <>
+          <p className="text-[12.5px] truncate">
+            <b style={{ color: "var(--amber)" }}>
+              {COVERAGE_JP[top.category] ?? top.category}が{top.shortfall}回 足りていません
+            </b>
+          </p>
+          <p className="text-[11.5px] truncate mt-0.5" style={{ color: "var(--text-3)" }}>
+            入れ替えるなら分析タブから選べます
+          </p>
+        </>
       ) : (
         <p className="text-[12.5px]" style={{ color: "var(--text-2)" }}>
           予定と実施の4週推移に、今すぐ直す警告はありません。
@@ -557,7 +636,8 @@ function DayRow({
 
   return (
     <div
-      className="card !p-3"
+      /* 1画面に入る日数を増やすため、行の余白を詰める（予定そのものを主役にする） */
+      className="card !px-3 !py-2"
       style={{
         borderColor: isToday ? "rgba(182,255,0,0.35)" : "var(--border)",
         background: moving ? "var(--surface-2)" : "var(--surface)",
@@ -622,9 +702,17 @@ function DayRow({
                       onContextMenu={(e) => e.preventDefault()}
                       style={{ WebkitTouchCallout: "none" } as any}
                     >
-                      <b style={{ color: CATEGORY_COLORS[s.category as keyof typeof CATEGORY_COLORS] }}>
-                        {CATEGORY_LABELS[s.category as keyof typeof CATEGORY_LABELS] ?? s.category}
-                      </b>{" "}
+                      {/*
+                        強度は形で示す（色だけに頼らない）。
+                        カテゴリ名は色つきの文字で残す——形は4段階しかなく、
+                        「高乳酸」と「経済走」の区別は形からは付かないため。
+                      */}
+                      <span className="inline-flex items-center gap-1.5 align-middle mr-1.5">
+                        <IntensityShape mark={intensityMark(s.category)} />
+                        <b style={{ color: CATEGORY_COLORS[s.category as keyof typeof CATEGORY_COLORS] }}>
+                          {CATEGORY_LABELS[s.category as keyof typeof CATEGORY_LABELS] ?? s.category}
+                        </b>
+                      </span>
                       <span
                         style={{ color: "var(--text-2)" }}
                         className={diverged ? "line-through" : undefined}

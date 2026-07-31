@@ -37,6 +37,12 @@ fs.mkdirSync(OUT_DIR, { recursive: true });
  */
 const FROZEN_NOW = "2026-08-15T09:41:00+09:00";
 const RACE_DATE = "2026-09-25";
+/*
+ * プランの生成開始日。基準日より前から作る。
+ * 基準日と同じにすると、カレンダーの表示範囲（週頭から）の前半が
+ * まるごと「予定なし」になり、画面の半分が空で比較にならない。
+ */
+const PLAN_START = "2026-07-27";
 
 /** 撮る画面。name はファイル名、hash は遷移先 */
 const SCREENS = [
@@ -83,7 +89,7 @@ const browser = await chromium.launch(launchOptions());
 /** 決定的なデータを流し込む。UI操作ではなくAPI直叩き（速いうえ、画面の変更に影響されない） */
 async function seed(page) {
   const report = await page.evaluate(
-    async ({ raceDate, startDate }) => {
+    async ({ raceDate, startDate, today }) => {
       const post = async (url, body) => {
         const r = await fetch(url, {
           method: "POST",
@@ -125,9 +131,42 @@ async function seed(page) {
         ],
       });
       const plan = await post("/api/plan", { startDate });
-      return { sessions: plan?.sessionCount ?? 0, error: plan?.error };
+
+      /*
+       * 基準日より前のセッションに結果を入れる。
+       * 実施済みが1件も無いと WEEKLY SUMMARY も分析のグラフも空のままで、
+       * 見た目の確認ができない。処方どおりこなした体で機械的に埋める。
+       */
+      const from = startDate;
+      const list = await fetch(`/api/sessions?from=${from}&to=${today}`).then((r) => r.json());
+      let recorded = 0;
+      for (const s of list.sessions ?? []) {
+        if (s.date >= today || s.category === "off") continue;
+        const durationMin = s.durationMin ?? 40;
+        const distanceKm = s.distanceKm ?? 8;
+        const r = await fetch("/api/results", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            id: `res-visual-${s.id}`,
+            sessionId: s.id,
+            date: s.date,
+            actualLapsSec: [Math.round(durationMin * 60)],
+            continuous: {
+              distanceKm,
+              durationMin,
+              avgPaceSecPerKm: Math.round((durationMin * 60) / distanceKm),
+            },
+            achievement: "achieved",
+            rpe: s.category === "aerobic" ? 3 : 8,
+            subjective: s.category === "aerobic" ? "easy" : "hard",
+          }),
+        });
+        if (r.ok) recorded++;
+      }
+      return { sessions: plan?.sessionCount ?? 0, recorded, error: plan?.error };
     },
-    { raceDate: RACE_DATE, startDate: FROZEN_NOW.slice(0, 10) }
+    { raceDate: RACE_DATE, startDate: PLAN_START, today: FROZEN_NOW.slice(0, 10) }
   );
   // IndexedDBへの保存は250msデバウンスされている。読み直す前に落ち着かせる
   await page.waitForTimeout(600);
@@ -184,6 +223,7 @@ for (const { w, h } of WIDTHS) {
     shots++;
     console.log(`  ${path.relative(ROOT, file)}`);
   }
+  console.log(`  （生成 ${seeded.sessions}件 / 実施記録 ${seeded.recorded}件）`);
   await context.close();
 }
 
