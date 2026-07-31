@@ -6,7 +6,7 @@ import { restingHrTrend } from "@/lib/core/signal";
 import { addDays, weekStart, localToday } from "@/lib/core/dates";
 import { weeklySummary } from "@/lib/core/rules";
 import { buildTimeline } from "@/lib/core/timeline";
-import { buildRuleContext, samePrescriptionGroups } from "@/lib/service";
+import { buildRuleContext, performanceSummaries, samePrescriptionGroups } from "@/lib/service";
 
 export const dynamic = "force-dynamic";
 
@@ -79,6 +79,7 @@ export async function GET(req: NextRequest) {
     hlPerWeek28d: highLactate28dAvgPerWeek(sessions, today),
     cfeHistory: repo.getCfe()?.history ?? [],
     restingHrTrend: restingHrTrend(repo.listDailyChecks()),
+    performance: performanceSummaries(repo, today),
     timeline,
     weeks,
     changeLog: repo.listChangeLog(50),

@@ -85,6 +85,7 @@ import {
 } from "./core/sanity";
 import { cfeRange, spreadOf } from "./core/backfill";
 import { groupBySamePrescription } from "./core/samePrescription";
+import { periodSummary, type PeriodKind } from "./core/periodSummary";
 import { planRaceSplits, type RaceLapSample } from "./core/racePlan";
 import { findPreviousEntry, inferAchievement, type PreviousEntry } from "./core/workoutLog";
 import {
@@ -1964,6 +1965,19 @@ function raceSplitPlanInternal(repo: Store) {
 }
 
 /** G: 同一処方の経時比較 */
+/**
+ * 分析画面 PERFORMANCE の期間集計。WEEK/MONTH/YEAR の3つをまとめて返す。
+ * 画面側で期間を切り替えるたびに取り直さなくて済むようにする（3つとも軽い）。
+ */
+export function performanceSummaries(repo: Store, today: string) {
+  const sessions = repo.listSessions();
+  const resultsBySessionId = new Map(repo.listResults().map((r) => [r.sessionId, r]));
+  const kinds: PeriodKind[] = ["week", "month", "year"];
+  return kinds.map((kind) =>
+    periodSummary({ sessions, resultsBySessionId, today, kind })
+  );
+}
+
 export function samePrescriptionGroups(repo: Store) {
   return groupBySamePrescription(repo.listSessions(), repo.listResults());
 }

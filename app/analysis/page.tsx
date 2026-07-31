@@ -5,6 +5,11 @@ import RaceAnalysis from "../race/page";
 import type { CoverageReview } from "@/lib/core/coverage";
 import type { SessionCategory } from "@/lib/core/types";
 import type { TimelineDay } from "@/lib/core/timeline";
+import {
+  formatPeriodRange,
+  PERIOD_LABELS,
+  type PeriodSummary,
+} from "@/lib/core/periodSummary";
 
 /** 単一系列の折れ線（1系列のみなので凡例なし・タイトルが系列名を兼ねる） */
 function LineChart({
@@ -96,6 +101,14 @@ function LineChart({
  *   レース … レースに向けて何をするか
  * 中身のカードは縦に並ぶだけなので、まとまっても迷わない。
  */
+/*
+ * PERFORMANCE（リファレンスの期間サマリー）は4つ目のタブにしない。
+ * セグメントを増やすとiPhone幅で詰まる、というのが上のP-5の判断で、
+ * 実際に4つにすると「PERFORMANCE」が幅を食って残り3つが読みにくくなった。
+ * 「どれだけ積み上げたか」は「どう変わってきたか」の問いに含まれるので、
+ * 推移の先頭に置く。既存の3つは置き換えない——置き換えると制限因子・
+ * 600m通過・同一処方比較・CFE推移・ACWR・カバレッジ・レース分析が全部消える。
+ */
 const ANALYSIS_SEGMENTS = [
   { key: "now", label: "現在地" },
   { key: "trend", label: "推移" },
@@ -149,7 +162,8 @@ export default function AnalysisPage() {
       {seg === "now" ? <CoveragePanel /> : null}
       {seg === "now" ? <ReviewPanel /> : null}
 
-      <div className={seg === "trend" ? "" : "hidden"}>
+      <div className={seg === "trend" ? "flex flex-col gap-3" : "hidden"}>
+        <PerformancePanel periods={data.performance ?? []} />
         <TimelineCard days={data.timeline ?? []} />
       </div>
 
@@ -302,6 +316,164 @@ export default function AnalysisPage() {
   );
 }
 
+
+/**
+ * PERFORMANCE（reference-ui/crops/analytics.jpeg）。
+ *
+ * 期間の総距離とその積み上がり方を1画面で見る。
+ * 集計は `src/lib/core/periodSummary.ts` に置いてあり、ここは表示だけ。
+ * グラフは既存の LineChart を使わず専用に描く——薄いグリッド線・小さい点・
+ * 軸ラベルという構成がリファレンス固有で、汎用の折れ線に足すと他の画面が変わる。
+ */
+function PerformancePanel({ periods }: { periods: PeriodSummary[] }) {
+  const [idx, setIdx] = useState(1); // 既定は MONTH
+  if (!periods || periods.length === 0) {
+    return (
+      <Card title="PERFORMANCE">
+        <p className="text-[11.5px] leading-relaxed" style={{ color: "var(--text-3)" }}>
+          練習を記録すると、週・月・年ごとの積み上げが出ます。
+        </p>
+      </Card>
+    );
+  }
+  const p = periods[Math.min(idx, periods.length - 1)];
+  const paceText =
+    p.avgPaceSecPerKm !== undefined
+      ? `${Math.floor(p.avgPaceSecPerKm / 60)}:${String(Math.round(p.avgPaceSecPerKm % 60)).padStart(2, "0")}`
+      : "-";
+  const h = Math.floor(p.totalDurationMin / 60);
+  const m = p.totalDurationMin % 60;
+
+  return (
+    <Card>
+      {/* 期間の切り替え。選択中だけ下線（リファレンスの表現） */}
+      <div className="flex items-stretch mb-4" role="group" aria-label="集計期間">
+        {periods.map((x, i) => (
+          <button
+            key={x.kind}
+            className="flex-1 min-h-[44px] text-[11.5px] font-bold"
+            aria-pressed={i === idx}
+            onClick={() => setIdx(i)}
+            style={{
+              color: i === idx ? "#fff" : "var(--text-3)",
+              letterSpacing: ".12em",
+              borderBottom: `2px solid ${i === idx ? "var(--forge)" : "transparent"}`,
+            }}
+          >
+            {PERIOD_LABELS[x.kind]}
+          </button>
+        ))}
+      </div>
+
+      <p className="text-[12px] num text-center mb-4" style={{ color: "var(--text-2)" }}>
+        {formatPeriodRange(p)}
+      </p>
+
+      <p className="forge-label">TOTAL DISTANCE</p>
+      <div className="flex items-end justify-between gap-3 mt-1.5 mb-4">
+        <p className="num font-extrabold leading-none" style={{ fontSize: "var(--num-xl)" }}>
+          {p.totalDistanceKm.toFixed(1)}
+          <span className="text-[15px] font-bold ml-1.5" style={{ color: "var(--text-2)" }}>
+            km
+          </span>
+        </p>
+        {p.deltaPct !== undefined ? (
+          <div className="text-right">
+            <p
+              className="num text-[14px] font-bold leading-none"
+              style={{ color: p.deltaPct >= 0 ? "var(--forge)" : "var(--amber)" }}
+            >
+              {p.deltaPct > 0 ? "+" : ""}
+              {p.deltaPct.toFixed(1)}%
+            </p>
+            <p className="text-[10px] num mt-1" style={{ color: "var(--text-3)" }}>
+              vs {formatPeriodRange({ ...p, from: p.prevFrom, to: p.prevTo })}
+            </p>
+          </div>
+        ) : null}
+      </div>
+
+      <CumulativeChart points={p.points} />
+
+      <div className="grid grid-cols-3 gap-2 mt-5">
+        {[
+          { label: "AVG PACE", value: paceText, unit: "/km" },
+          { label: "TOTAL TIME", value: `${h}:${String(m).padStart(2, "0")}`, unit: "h" },
+          { label: "INTENSITY", value: p.totalLoad.toLocaleString(), unit: "pt" },
+        ].map((it) => (
+          <div key={it.label}>
+            <p className="text-[9.5px] font-bold" style={{ color: "var(--text-3)", letterSpacing: ".1em" }}>
+              {it.label}
+            </p>
+            <p className="num font-bold leading-none mt-1.5" style={{ fontSize: "var(--num-md)" }}>
+              {it.value}
+            </p>
+            <p className="text-[10px] mt-1" style={{ color: "var(--text-3)" }}>
+              {it.unit}
+            </p>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+/** 累積距離の折れ線。薄い横グリッド・小さい点・両端の日付だけの軸 */
+function CumulativeChart({ points }: { points: PeriodSummary["points"] }) {
+  if (points.length < 2) {
+    return (
+      <p className="text-[11.5px]" style={{ color: "var(--text-3)" }}>
+        記録が2日分たまると推移が出ます。
+      </p>
+    );
+  }
+  const w = 330;
+  const h = 132;
+  const padL = 30;
+  const padB = 18;
+  const padT = 6;
+  const max = Math.max(...points.map((p) => p.cumulativeKm), 1);
+  // 目盛りはキリのよい4本にする（データ最大に合わせた半端な数字を出さない）
+  const step = niceStep(max / 4);
+  const top = Math.ceil(max / step) * step;
+  const ticks = [];
+  for (let v = 0; v <= top + 0.0001; v += step) ticks.push(Math.round(v * 10) / 10);
+
+  const px = (i: number) => padL + (i / (points.length - 1)) * (w - padL - 6);
+  const py = (v: number) => padT + (1 - v / top) * (h - padT - padB);
+  const path = points.map((p, i) => `${i === 0 ? "M" : "L"}${px(i)},${py(p.cumulativeKm)}`).join(" ");
+
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full" role="img" aria-label="期間内の累積距離">
+      {ticks.map((v) => (
+        <g key={v}>
+          <line x1={padL} y1={py(v)} x2={w - 6} y2={py(v)} stroke="var(--border)" strokeWidth="1" />
+          <text x={padL - 5} y={py(v) + 3.5} fontSize="8.5" textAnchor="end" fill="var(--text-3)">
+            {v}
+          </text>
+        </g>
+      ))}
+      <path d={path} fill="none" stroke="var(--forge)" strokeWidth="1.8" strokeLinejoin="round" />
+      {points.map((p, i) => (
+        <circle key={i} cx={px(i)} cy={py(p.cumulativeKm)} r="2" fill="var(--forge)" />
+      ))}
+      <text x={padL} y={h - 4} fontSize="8.5" fill="var(--text-3)">
+        {points[0].date.slice(5).replace("-", "/")}
+      </text>
+      <text x={w - 6} y={h - 4} fontSize="8.5" textAnchor="end" fill="var(--text-3)">
+        {points[points.length - 1].date.slice(5).replace("-", "/")}
+      </text>
+    </svg>
+  );
+}
+
+/** 目盛り幅を 1/2/5×10^n に丸める */
+function niceStep(raw: number): number {
+  if (raw <= 0) return 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const n = raw / mag;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * mag;
+}
 
 /**
  * 28日間統合タイムライン。
