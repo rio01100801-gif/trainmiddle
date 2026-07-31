@@ -141,4 +141,109 @@ describe("parseFitFile", () => {
     expect(result.manufacturer).toBe("garmin");
     expect(result.timeCreatedUtc).toBe("2026-07-20T09:55:00.000Z");
   });
+
+  describe("ランニングダイナミクス（ピッチ・ストライド・上下動・接地時間・気温）", () => {
+    it("sessionのダイナミクスを取り出す。cadenceは片脚分から歩数/分へ2倍にする", async () => {
+      const bytes = buildFitFile({
+        sessions: [
+          {
+            startTime: "2026-07-20T10:00:00Z",
+            timestamp: "2026-07-20T10:05:00Z",
+            avgCadence: 85, // rpm（片脚） → 170spm
+            maxCadence: 95,
+            avgTemperatureC: 28,
+            maxTemperatureC: 31,
+            avgVerticalOscillationMm: 8.5,
+            avgGroundContactTimeMs: 245,
+            avgStepLengthMm: 1120,
+          },
+        ],
+      });
+      const result = await parseFitFile(bytes);
+      const s = result.sessions[0];
+      expect(s.avgCadenceSpm).toBe(170);
+      expect(s.maxCadenceSpm).toBe(190);
+      expect(s.avgTemperatureC).toBe(28);
+      expect(s.maxTemperatureC).toBe(31);
+      expect(s.avgVerticalOscillationMm).toBeCloseTo(8.5, 5);
+      expect(s.avgGroundContactTimeMs).toBeCloseTo(245, 5);
+      expect(s.avgStepLengthM).toBeCloseTo(1.12, 5);
+    });
+
+    it("lapのダイナミクスを取り出す", async () => {
+      const bytes = buildFitFile({
+        laps: [
+          {
+            startTime: "2026-07-20T10:00:00Z",
+            timestamp: "2026-07-20T10:05:00Z",
+            avgCadence: 90,
+            avgVerticalOscillationMm: 7.9,
+            avgGroundContactTimeMs: 230,
+            avgStepLengthMm: 1200,
+          },
+        ],
+      });
+      const result = await parseFitFile(bytes);
+      const l = result.laps[0];
+      expect(l.avgCadenceSpm).toBe(180);
+      expect(l.avgVerticalOscillationMm).toBeCloseTo(7.9, 5);
+      expect(l.avgGroundContactTimeMs).toBeCloseTo(230, 5);
+      expect(l.avgStepLengthM).toBeCloseTo(1.2, 5);
+    });
+
+    it("recordごとのダイナミクスを取り出す", async () => {
+      const bytes = buildFitFile({
+        records: [
+          {
+            timestamp: "2026-07-20T10:00:00Z",
+            cadence: 88,
+            temperatureC: 29,
+            verticalOscillationMm: 8.2,
+            groundContactTimeMs: 240,
+            stepLengthMm: 1150,
+          },
+        ],
+      });
+      const result = await parseFitFile(bytes);
+      const r = result.records[0];
+      expect(r.cadenceSpm).toBe(176);
+      expect(r.temperatureC).toBe(29);
+      expect(r.verticalOscillationMm).toBeCloseTo(8.2, 5);
+      expect(r.groundContactTimeMs).toBeCloseTo(240, 5);
+      expect(r.stepLengthM).toBeCloseTo(1.15, 5);
+    });
+
+    it("気温は0度・氷点下でも読み取れる（0や負数を欠損扱いにしない）", async () => {
+      const bytes = buildFitFile({
+        sessions: [
+          {
+            startTime: "2026-07-20T10:00:00Z",
+            timestamp: "2026-07-20T10:05:00Z",
+            avgTemperatureC: 0,
+          },
+        ],
+        records: [{ timestamp: "2026-07-20T10:00:00Z", temperatureC: -3 }],
+      });
+      const result = await parseFitFile(bytes);
+      expect(result.sessions[0].avgTemperatureC).toBe(0);
+      expect(result.records[0].temperatureC).toBe(-3);
+    });
+
+    it("デバイスがダイナミクスに対応していなければ推測で埋めずundefinedのままにする", async () => {
+      const bytes = buildFitFile({
+        sessions: [{ startTime: "2026-07-20T10:00:00Z", timestamp: "2026-07-20T10:05:00Z", avgHr: 150 }],
+        records: [{ timestamp: "2026-07-20T10:00:00Z", heartRate: 150 }],
+      });
+      const result = await parseFitFile(bytes);
+      const s = result.sessions[0];
+      const r = result.records[0];
+      expect(s.avgCadenceSpm).toBeUndefined();
+      expect(s.avgVerticalOscillationMm).toBeUndefined();
+      expect(s.avgGroundContactTimeMs).toBeUndefined();
+      expect(s.avgStepLengthM).toBeUndefined();
+      expect(s.avgTemperatureC).toBeUndefined();
+      expect(r.cadenceSpm).toBeUndefined();
+      expect(r.verticalOscillationMm).toBeUndefined();
+    });
+  });
 });

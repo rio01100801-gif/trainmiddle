@@ -43,7 +43,7 @@ export const SLOT_LABELS: Record<string, string> = {
   modeling: "モデリング",
   cv: "CV",
   threshold: "閾値",
-  neural: "神経系",
+  neural: "神経系（ジョグ込み）",
   aerobic: "ジョグ",
   off: "休養",
 };

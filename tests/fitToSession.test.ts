@@ -148,6 +148,77 @@ describe("fitToSessionAndResult", () => {
     ).toThrow();
   });
 
+  it("インターバルはメイン区間だけの平均でランニングダイナミクスを出す", () => {
+    const laps: FitParseLap[] = INTERVAL_LAPS.map((l, i) =>
+      [1, 3, 5, 7].includes(i)
+        ? { ...l, avgCadenceSpm: 180 + i, avgVerticalOscillationMm: 8, avgGroundContactTimeMs: 230, avgStepLengthM: 1.1, avgTemperatureC: 27 }
+        : { ...l, avgCadenceSpm: 999, avgVerticalOscillationMm: 999, avgGroundContactTimeMs: 999, avgStepLengthM: 9, avgTemperatureC: -99 }
+    );
+    const parse = baseParse({ laps, utcOffsetSec: 9 * 3600 });
+    const { result } = fitToSessionAndResult({
+      sourceId: "t8",
+      fileName: "sample.fit",
+      parse,
+      confirmedKinds: INTERVAL_KINDS,
+      grpSecPerM: 1.2 / 400,
+    });
+    // メイン区間(index 1,3,5,7)のavgCadenceSpmは181,183,185,187 → 平均184
+    expect(result.avgCadenceSpm).toBe(184);
+    expect(result.avgVerticalOscillationMm).toBe(8);
+    expect(result.avgGroundContactTimeMs).toBe(230);
+    expect(result.avgStepLengthM).toBe(1.1);
+    expect(result.weatherTempC).toBe(27);
+  });
+
+  it("デバイスがダイナミクスに対応していなければ推測で埋めずundefinedのままにする", () => {
+    const parse = baseParse({ laps: INTERVAL_LAPS, utcOffsetSec: 9 * 3600 });
+    const { result } = fitToSessionAndResult({
+      sourceId: "t9",
+      fileName: "sample.fit",
+      parse,
+      confirmedKinds: INTERVAL_KINDS,
+      grpSecPerM: 1.2 / 400,
+    });
+    expect(result.avgCadenceSpm).toBeUndefined();
+    expect(result.avgVerticalOscillationMm).toBeUndefined();
+    expect(result.avgGroundContactTimeMs).toBeUndefined();
+    expect(result.avgStepLengthM).toBeUndefined();
+    expect(result.weatherTempC).toBeUndefined();
+  });
+
+  it("持続走はセッション全体のランニングダイナミクスを使う", () => {
+    const parse = baseParse({
+      sessions: [
+        {
+          startTimeUtc: "2026-07-20T10:00:00Z",
+          totalDistanceKm: 10,
+          totalElapsedSec: 3000,
+          avgCadenceSpm: 172,
+          avgVerticalOscillationMm: 9.2,
+          avgGroundContactTimeMs: 250,
+          avgStepLengthM: 1.05,
+          avgTemperatureC: 30,
+        },
+      ],
+      laps: [
+        lap({ index: 0, startTimeUtc: "2026-07-20T10:00:00Z", distanceKm: 5, elapsedSec: 1500 }),
+        lap({ index: 1, startTimeUtc: "2026-07-20T10:25:00Z", distanceKm: 5, elapsedSec: 1500 }),
+      ],
+      utcOffsetSec: 0,
+    });
+    const { result } = fitToSessionAndResult({
+      sourceId: "t10",
+      fileName: "jog.fit",
+      parse,
+      confirmedKinds: ["warmup", "warmup"],
+    });
+    expect(result.avgCadenceSpm).toBe(172);
+    expect(result.avgVerticalOscillationMm).toBe(9.2);
+    expect(result.avgGroundContactTimeMs).toBe(250);
+    expect(result.avgStepLengthM).toBe(1.05);
+    expect(result.weatherTempC).toBe(30);
+  });
+
   it("日時を特定できるフィールドが無ければ登録できない", () => {
     const parse = baseParse({
       laps: [lap({ index: 0, distanceKm: 1, elapsedSec: 300 })],

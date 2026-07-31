@@ -443,3 +443,39 @@ describe("3-2 プラン生成が自作メニューを使う", () => {
     expect(violations.filter((v) => v.level === "ERROR")).toEqual([]);
   });
 });
+
+describe("要望対応: 曜日設定で「神経系」を固定すると、ジョグも同じ日に自動で入る", () => {
+  // 「曜日の優先設定でジョグ＋神経系のような複数種目に対応してほしい」への対応。
+  // 週テンプレートの「神経系」枠は strides()（combinedJogMin付き）に解決されるため、
+  // 新しい型・UIを増やさずに、既存の単一選択のままジョグ+神経系の2セッションになる。
+  const athlete = testAthlete();
+  const race = makeRace("2026-09-25");
+  const goal: Goal = {
+    targetEvent: "800m",
+    targetTimeSec: 108.9,
+    targetRaceId: race.id,
+    subRaceIds: [],
+  };
+  const aerobic = buildAerobicProfile([], "2026-06-08", 111.0);
+
+  it("固定した曜日に神経系とジョグの2セッションが生成される", () => {
+    const plan = generatePlan({
+      athlete,
+      goal,
+      races: [race],
+      cfeSec: 111.0,
+      aerobicProfile: aerobic,
+      startDate: "2026-06-08", // 月曜
+      weekTemplate: T({ 3: "neural" }), // 水曜固定
+    });
+    const wednesdays = plan.sessions.filter((s) => new Date(s.date + "T00:00:00Z").getUTCDay() === 3);
+    const neural = wednesdays.filter((s) => s.category === "neural");
+    expect(neural.length).toBeGreaterThan(0);
+    for (const n of neural) {
+      const jogSameDay = wednesdays.find(
+        (s) => s.category === "aerobic" && s.date === n.date && s.timeOfDay !== n.timeOfDay
+      );
+      expect(jogSameDay, `${n.date}に対応するジョグが無い`).toBeDefined();
+    }
+  });
+});

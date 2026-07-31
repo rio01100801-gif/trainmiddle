@@ -380,6 +380,15 @@ export interface SessionResult {
   durationMin?: number;
   /** 過去データの遡り入力から作られた結果（CFEの逐次更新ループには流さない） */
   backfilled?: boolean;
+  /**
+   * FIT取込のランニングダイナミクス（対応デバイスのみ）。
+   * インターバルは「メイン」区間の平均、持続走はセッション全体の平均。
+   * デバイスが対応していなければ全てundefinedのまま（推測で埋めない）。
+   */
+  avgCadenceSpm?: number;
+  avgVerticalOscillationMm?: number;
+  avgGroundContactTimeMs?: number;
+  avgStepLengthM?: number;
 }
 
 // ---------------------------------------------------------------------------

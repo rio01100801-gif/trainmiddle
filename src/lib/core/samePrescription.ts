@@ -36,6 +36,8 @@ export interface PrescriptionOccurrence {
   heatFlagged?: boolean;
   /** 分析画面用に追加。翌日の脚の重さ（打ち込まれていれば）。回復の質を判断する材料 */
   nextDayLegs?: NextDayLegs;
+  /** FIT取込のランニングダイナミクス（対応デバイスのみ）。ピッチ（歩数/分） */
+  avgCadenceSpm?: number;
 }
 
 export interface PrescriptionGroup {
@@ -202,6 +204,7 @@ export function groupBySamePrescription(
       rpe: r.rpe,
       heatFlagged: r.heatFlagged,
       nextDayLegs: r.nextDayLegs,
+      avgCadenceSpm: r.avgCadenceSpm,
     };
     const id = keyId(key);
     if (!buckets.has(id)) buckets.set(id, { key, list: [] });

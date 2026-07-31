@@ -84,6 +84,14 @@ describe("G 同一処方の経時比較", () => {
     expect(g[0].occurrences[1].nextDayLegs).toBe("fresh");
   });
 
+  it("FIT取込のピッチ（avgCadenceSpm）が入っていれば各回に載せる", () => {
+    const a = interval("2026-06-01", 300, [43, 44, 45, 46], { avgCadenceSpm: 182 });
+    const b = interval("2026-06-15", 300, [43, 43.5, 44, 44.5]);
+    const g = groupBySamePrescription([a.s, b.s], [a.r, b.r]);
+    expect(g[0].occurrences[0].avgCadenceSpm).toBe(182);
+    expect(g[0].occurrences[1].avgCadenceSpm).toBeUndefined();
+  });
+
   it("翌日の脚の重さが未入力なら undefined のまま", () => {
     const a = interval("2026-06-01", 300, [43, 44, 45, 46]);
     const b = interval("2026-06-15", 300, [43, 43.5, 44, 44.5]);

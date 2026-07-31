@@ -65,6 +65,14 @@ interface DayTemplate {
   risk: "low" | "mid" | "high";
   timeOfDay?: "am" | "pm";
   aerobicPurpose?: AerobicPurpose;
+  /**
+   * この処方が本来「ジョグ+刺激」のような複合内容を1つの文面に押し込んでいた場合の
+   * ジョグ分（分）。設定すると、この処方自体の文面からはジョグ部分を外し、
+   * 別のaerobicセッションとして同じ日にもう1件自動生成する
+   * （不具合: 「ジョグ＋坂ダッシュ」等が1セッションに固められ、
+   * 別々に記録したいという要望に応えられなかった）。
+   */
+  combinedJogMin?: number;
 }
 
 const jog = (min: number, name = "ジョグ"): DayTemplate => ({
@@ -127,28 +135,31 @@ const hillSprints = (reps: number): DayTemplate => ({
   category: "neural",
   name: "坂ダッシュ",
   buildPrescription: () => ({
-    prescription: `坂ダッシュ 8〜10秒 × ${reps}本（完全休息・歩行で戻る）+ ジョグ30分`,
+    prescription: `坂ダッシュ 8〜10秒 × ${reps}本（完全休息・歩行で戻る）`,
     targetPaces: [],
-    durationMin: 45,
-    distanceKm: 6,
+    durationMin: 15,
+    distanceKm: 1,
   }),
   transfer800m: 3,
   transfer1500m: 2,
   risk: "low",
+  // 別枠のジョグと合わせて元の「坂ダッシュ+ジョグ30分」と同じ内容にする
+  combinedJogMin: 30,
 });
 
 const strides = (reps: number, dist = 150): DayTemplate => ({
   category: "neural",
   name: "流し",
   buildPrescription: (g) => ({
-    prescription: `ジョグ30分 + ${dist}m流し × ${reps}本（完全休息）`,
+    prescription: `${dist}m流し × ${reps}本（完全休息）`,
     targetPaces: [specificPace(g, "neural", dist)],
-    durationMin: 45,
-    distanceKm: 6,
+    durationMin: 15,
+    distanceKm: 1,
   }),
   transfer800m: 3,
   transfer1500m: 2,
   risk: "low",
+  combinedJogMin: 30,
 });
 
 const thresholdReps = (): DayTemplate => ({
@@ -649,14 +660,15 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
             category: "neural",
             name: "刺激入れ（流し）",
             buildPrescription: (g) => ({
-              prescription: "ジョグ15分 + 100m流し × 3本（完全休息）",
+              prescription: "100m流し × 3本（完全休息）",
               targetPaces: [specificPace(g, "neural", 100)],
-              durationMin: 25,
-              distanceKm: 3,
+              durationMin: 10,
+              distanceKm: 1,
             }),
             transfer800m: 3,
             transfer1500m: 2,
             risk: "low",
+            combinedJogMin: 15,
           };
         }
       }
@@ -841,6 +853,41 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
         generation: custom ? undefined : built.generation,
       };
       sessions.push(session);
+      /*
+       * 不具合対応: 「ジョグ＋坂ダッシュ」のような複合メニューが1セッションに
+       * まとめられ、記録画面で別々に打ち込みたくても片方が消えてしまっていた。
+       * combinedJogMinが設定されているテンプレートは、ジョグ部分を別のaerobic
+       * セッション（別のtimeOfDay）として自動生成し、最初からカレンダー上で
+       * 別々に扱えるようにする。自作メニュー（custom）を使った日は対象外
+       * （本人が登録した内容をそのまま尊重する）。
+       */
+      if (!custom && tpl.combinedJogMin) {
+        const jogTpl = jog(tpl.combinedJogMin);
+        const jogBuilt = jogTpl.buildPrescription(grpBase, aerobicProfile);
+        const jogTimeOfDay: Session["timeOfDay"] = timeOfDay === "am" ? "pm" : "am";
+        sessions.push({
+          id: generatedSessionId(date, jogTimeOfDay),
+          date,
+          category: jogTpl.category,
+          name: jogTpl.name,
+          prescription: jogBuilt.prescription,
+          targetPaces: jogBuilt.targetPaces,
+          transfer800m: jogTpl.transfer800m,
+          transfer1500m: jogTpl.transfer1500m,
+          riskLevel: jogTpl.risk,
+          phase,
+          rationale: rationaleFor(jogTpl.category),
+          status: "planned",
+          origin: "generated",
+          isFixed: false,
+          timeOfDay: jogTimeOfDay,
+          distanceKm: jogBuilt.distanceKm,
+          durationMin: jogBuilt.durationMin,
+          paceSecPerKm: jogBuilt.paceSecPerKm,
+          aerobicPurpose: jogTpl.aerobicPurpose,
+          surface: "road",
+        });
+      }
       if (session.generation) {
         templateHistory.push({
           date: session.date,

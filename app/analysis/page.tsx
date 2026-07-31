@@ -571,6 +571,7 @@ function SamePrescriptionCard({ groups }: { groups: any[] }) {
               <th className="text-right">最終本</th>
               <th className="text-right">垂れ</th>
               <th className="text-right">心拍</th>
+              <th className="text-right">ピッチ</th>
               <th className="text-right">RPE</th>
               <th className="text-right">翌日脚</th>
               <th className="text-right">レスト</th>
@@ -597,6 +598,9 @@ function SamePrescriptionCard({ groups }: { groups: any[] }) {
                 </td>
                 <td className="text-right num">
                   {o.avgHr !== undefined ? Math.round(o.avgHr) : "-"}
+                </td>
+                <td className="text-right num" style={{ color: "var(--text-3)" }}>
+                  {o.avgCadenceSpm !== undefined ? `${Math.round(o.avgCadenceSpm)}spm` : "-"}
                 </td>
                 <td className="text-right num" style={{ color: "var(--text-3)" }}>
                   {o.rpe ?? "-"}

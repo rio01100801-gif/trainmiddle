@@ -2326,3 +2326,87 @@ StatusTextでは無く警告色の項目だけに条件付きでアイコン・r
 `StatusText`は1箇所の実装なので、ここで確認できれば他の20箇所の呼び出しも
 同じ実装を経由していることの裏付けになる。**T-4でrole/アイコンの出力を
 削り、赤に戻ることを確認して復元。**
+
+## 実運用で見つかった5件の修正（2026-07-31）
+
+利用者が実際に使っていて見つけた5件。着手前に各項目を実コード調査で
+裏付けてから修正した（推測で直さない）。
+
+### 1. カレンダーの✎ボタンが2件目以降のセッションに届かない
+
+`app/calendar/page.tsx`の`DayRow`は、1日に複数セッションがあるとき
+`editable = sessions.find((s) => !s.isFixed)`で**最初の1件しか**✎ボタンの
+対象にしていなかった。長押しは行ごとに正しく対象を拾えていたが、iOSでは
+長押しが取りこぼされることがあるとコード内に既にコメントがあり、
+確実な代替導線（✎ボタン）がここだけ効かなかった。
+
+`editableSessions = sessions.filter((s) => !s.isFixed)`に変え、非固定
+セッションの数だけ✎ボタンを出す（複数あるときはカテゴリ色をボーダーに
+つけて、どの行に対応するか分かるようにする）。1件のときの見た目は変わらない。
+
+### 2. 実施タイム（カンマ区切り）欄でカンマが打てない
+
+`app/results/page.tsx`の「実施タイム（本数分をカンマ区切り）」欄に
+`inputMode="decimal"`が付いていた。JS側の文字除去処理は無く、原因は
+iOS等の数値専用キーボード（カンマキーが無い）だった。この欄はカンマ区切りの
+**文字列**を受け取る欄で単一の小数ではないため、`inputMode="decimal"`の
+指定自体が誤りだった。属性を外して通常のテキストキーボードにした。
+
+### 3. FIT取込でランニングダイナミクスを取得する
+
+`src/lib/core/fitParse.ts`は心拍以外（ピッチ・ストライド・上下動・
+接地時間・気温）を一切読んでいなかった。`fit-file-parser`の生成プロファイル
+（`node_modules/fit-file-parser/dist/garmin_profile.generated.js`）を実際に
+確認し、session/lap/recordメッセージのフィールド番号・スケール・単位を
+特定した上で追加（`avg_cadence`=session18/lap17、`avg_temperature`=
+session57/lap50、`avg_vertical_oscillation`=session89/lap77(scale10=mm)、
+`avg_stance_time`=session91/lap79(scale10=ms)、`avg_step_length`=
+session134/lap120(scale10=mm)。record単位は`cadence`=4、`temperature`=13、
+`vertical_oscillation`=39、`stance_time`=41、`step_length`=85）。
+
+**cadenceは片脚分（rpm）で記録される**というGarmin FIT SDKの既知の仕様に
+従い、2倍して歩数/分（spm）として持つ（`RUNNING_CADENCE_LEGS`）。湿度は
+FITの標準recordフィールドとして存在しないため対象外（引き続き手入力のみ）。
+
+集計は`fitToSession.ts`の`deriveFitActuals`で、インターバルは**「メイン」
+区間だけ**の平均、持続走は**セッション全体**（無ければlap平均）を使う——
+ウォームアップ・クールダウンの遅いピッチを混ぜると実際の巡航ピッチより
+低く出るため。温度は既存の`SessionResult.weatherTempC`に載せ、暑熱判定
+（WBGT・`heatFlagged`）にもFIT由来の気温がそのまま使えるようにした
+（新しい重複フィールドを作らない）。表示はFIT取込確認カードと同一処方
+比較表（ピッチのみ、列を増やしすぎない）に留め、新しい分析画面は作っていない。
+
+**検証**: `tests/fitParse.test.ts`・`tests/fitToSession.test.ts`に
+先に赤→ 実装 → 緑。cadenceの2倍処理・メイン区間限定平均をそれぞれ
+T-4で無効化し赤に戻ることを確認して復元。E2Eにも実際のFITメッセージで
+ピッチ・気温が表示されることの確認を追加。
+
+### 4. 「ジョグ＋坂ダッシュ」等の複合メニューを自動生成の時点で分割する
+
+`src/lib/core/periodization.ts`の`hillSprints()`・`strides()`・テーパー期の
+「刺激入れ（流し）」は、ジョグと刺激（坂ダッシュ／流し）を**1つの
+prescription文字列**に結合していた。以前の対応（forge-v40）は複合本文の
+検出・警告表示だけで、生成そのものは直していなかった。
+
+週生成ループ（`generatePlan`）は1日につき`sessions.push`を1回しか呼ばない
+設計だが、カレンダー側（`sessionsByDate`）・保存層は元々1日に複数
+セッションを問題なく扱える（手動追加の「同じ日に午前と午後」機能が
+既に動いている）。そこで`DayTemplate`に`combinedJogMin?: number`を追加し、
+設定されていれば（かつ自作メニューを使っていない日は）ジョグ部分を
+`jog()`の別セッション（`timeOfDay`を主セッションと分ける）として自動生成
+するようにした。`hillSprints`/`strides`/「刺激入れ（流し）」の文面からは
+ジョグの記述を削除し、別セッションの文言と役割が重ならないようにした。
+
+**曜日の優先設定で「神経系」を固定する場合も同じ経路を通る**
+（`templateForSlot`の`"neural"`分岐が`strides(6)`を返すため）。
+ユーザーから「曜日設定でジョグ＋神経系のような複数種目に対応してほしい」
+という要望もあったが、新しい型やUI（複数枠選択）を追加しなくても、
+既存の単一選択のまま「神経系」を選ぶだけでジョグが自動的に付くことを
+確認できたため、そちらは見送った（`SLOT_LABELS`の表示だけ
+「神経系（ジョグ込み）」に変更して分かりやすくした）。
+
+**検証**: `tests/periodization.test.ts`・`tests/weekTemplate.test.ts`に
+先に赤→実装→緑。分割ロジックをT-4で無効化し、両ファイルとも赤に戻ることを
+確認して復元。`npm run verify`実行で978→979件に増加。既存の全テスト
+（週次サマリー・ACWR・カバレッジ等、セッション件数の変化に影響されうる
+箇所）に回帰が無いことを確認済み。

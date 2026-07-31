@@ -430,14 +430,30 @@ function FitImportCard() {
       {parsed ? (
         <div className="mt-3 pt-3 border-t text-[12px]" style={{ borderColor: "var(--border)" }}>
           {parsed.sessions.length > 0 ? (
-            parsed.sessions.map((s, i) => (
-              <p key={i} className="num" style={{ color: "var(--text)" }}>
-                {s.sport ?? "種目不明"}
-                {s.totalDistanceKm !== undefined ? ` ／ ${s.totalDistanceKm}km` : ""}
-                {s.totalElapsedSec !== undefined ? ` ／ ${Math.round(s.totalElapsedSec)}秒` : ""}
-                {s.avgHr !== undefined ? ` ／ 平均心拍${s.avgHr}` : ""}
-              </p>
-            ))
+            parsed.sessions.map((s, i) => {
+              const dynamics = [
+                s.avgCadenceSpm !== undefined ? `ピッチ${Math.round(s.avgCadenceSpm)}spm` : null,
+                s.avgStepLengthM !== undefined ? `ストライド${s.avgStepLengthM.toFixed(2)}m` : null,
+                s.avgVerticalOscillationMm !== undefined ? `上下動${s.avgVerticalOscillationMm.toFixed(1)}mm` : null,
+                s.avgGroundContactTimeMs !== undefined ? `接地時間${Math.round(s.avgGroundContactTimeMs)}ms` : null,
+                s.avgTemperatureC !== undefined ? `気温${s.avgTemperatureC}℃` : null,
+              ].filter((x): x is string => x !== null);
+              return (
+                <div key={i}>
+                  <p className="num" style={{ color: "var(--text)" }}>
+                    {s.sport ?? "種目不明"}
+                    {s.totalDistanceKm !== undefined ? ` ／ ${s.totalDistanceKm}km` : ""}
+                    {s.totalElapsedSec !== undefined ? ` ／ ${Math.round(s.totalElapsedSec)}秒` : ""}
+                    {s.avgHr !== undefined ? ` ／ 平均心拍${s.avgHr}` : ""}
+                  </p>
+                  {dynamics.length > 0 ? (
+                    <p className="num text-[11px]" style={{ color: "var(--text-2)" }}>
+                      {dynamics.join(" ／ ")}
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })
           ) : (
             <p style={{ color: "var(--text-2)" }}>sessionメッセージが含まれていません。</p>
           )}

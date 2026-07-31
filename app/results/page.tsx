@@ -1582,7 +1582,6 @@ function ResultForm({
                 value={times}
                 onChange={(e) => setTimes(e.target.value)}
                 placeholder="39.2, 39.6, 40.1, 40.8"
-                inputMode="decimal"
               />
             </L>
           )}

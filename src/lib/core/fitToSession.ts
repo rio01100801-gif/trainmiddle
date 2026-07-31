@@ -70,6 +70,12 @@ export interface FitDerivedActuals {
   totalDistanceKm: number;
   totalDurationMin: number;
   warnings: string[];
+  /** ランニングダイナミクス。対応デバイスのFITだけに入っている（無ければundefined） */
+  weatherTempC?: number;
+  avgCadenceSpm?: number;
+  avgVerticalOscillationMm?: number;
+  avgGroundContactTimeMs?: number;
+  avgStepLengthM?: number;
 }
 
 export interface FitToSessionInput extends DeriveFitActualsInput {
@@ -116,6 +122,13 @@ function categoryForDistance(distanceM: number): SessionCategory {
   if (distanceM <= 600) return "high_lactate";
   if (distanceM <= 1600) return "cv";
   return "threshold";
+}
+
+/** 定義されている値だけの平均。1つも無ければundefined（0で埋めない） */
+function avgOf(values: (number | undefined)[]): number | undefined {
+  const defined = values.filter((v): v is number => v !== undefined);
+  if (defined.length === 0) return undefined;
+  return defined.reduce((a, b) => a + b, 0) / defined.length;
 }
 
 /** [from, to) 区間のlapの距離・時間を合算する。値が1つも読めなければ undefined */
@@ -192,6 +205,13 @@ export function deriveFitActuals(input: DeriveFitActualsInput): FitDerivedActual
   let actualLapsSec: number[];
   let lapDistancesM: number[] | undefined;
   let completedReps: number | undefined;
+  // ランニングダイナミクス（対応デバイスのみ）。インターバルは「メイン」区間の平均、
+  // 持続走はセッション全体（無ければlap平均）。デバイス非対応なら全てundefinedのまま。
+  let avgCadenceSpm: number | undefined;
+  let avgVerticalOscillationMm: number | undefined;
+  let avgGroundContactTimeMs: number | undefined;
+  let avgStepLengthM: number | undefined;
+  let weatherTempC: number | undefined;
 
   if (mainPositions.length > 0) {
     const reps: RepResult[] = mainPositions.map((pos, idx) => {
@@ -221,6 +241,13 @@ export function deriveFitActuals(input: DeriveFitActualsInput): FitDerivedActual
     actualLapsSec = reps.map((r) => r.actualSec);
     lapDistancesM = reps.map((r) => r.distanceM);
     completedReps = reps.length;
+
+    const mainLaps = mainPositions.map((pos) => laps[pos]);
+    avgCadenceSpm = avgOf(mainLaps.map((l) => l.avgCadenceSpm));
+    avgVerticalOscillationMm = avgOf(mainLaps.map((l) => l.avgVerticalOscillationMm));
+    avgGroundContactTimeMs = avgOf(mainLaps.map((l) => l.avgGroundContactTimeMs));
+    avgStepLengthM = avgOf(mainLaps.map((l) => l.avgStepLengthM));
+    weatherTempC = avgOf(mainLaps.map((l) => l.avgTemperatureC));
 
     if (grpSecPerM !== undefined) {
       category = mode(
@@ -253,6 +280,14 @@ export function deriveFitActuals(input: DeriveFitActualsInput): FitDerivedActual
     };
     actualLapsSec = [Math.round(elapsedSec)];
     category = "aerobic";
+
+    avgCadenceSpm = session0?.avgCadenceSpm ?? avgOf(laps.map((l) => l.avgCadenceSpm));
+    avgVerticalOscillationMm =
+      session0?.avgVerticalOscillationMm ?? avgOf(laps.map((l) => l.avgVerticalOscillationMm));
+    avgGroundContactTimeMs =
+      session0?.avgGroundContactTimeMs ?? avgOf(laps.map((l) => l.avgGroundContactTimeMs));
+    avgStepLengthM = session0?.avgStepLengthM ?? avgOf(laps.map((l) => l.avgStepLengthM));
+    weatherTempC = session0?.avgTemperatureC ?? avgOf(laps.map((l) => l.avgTemperatureC));
   }
 
   const totalDistanceKm =
@@ -279,6 +314,11 @@ export function deriveFitActuals(input: DeriveFitActualsInput): FitDerivedActual
     totalDistanceKm: Math.round(totalDistanceKm * 100) / 100,
     totalDurationMin: Math.round(totalDurationSec / 60),
     warnings,
+    weatherTempC,
+    avgCadenceSpm,
+    avgVerticalOscillationMm,
+    avgGroundContactTimeMs,
+    avgStepLengthM,
   };
 }
 
@@ -324,6 +364,11 @@ export function buildBackfilledSessionAndResult(
     subjective: derived.subjective,
     note: `FIT取込: ${fileName}`,
     backfilled: true,
+    weatherTempC: derived.weatherTempC,
+    avgCadenceSpm: derived.avgCadenceSpm,
+    avgVerticalOscillationMm: derived.avgVerticalOscillationMm,
+    avgGroundContactTimeMs: derived.avgGroundContactTimeMs,
+    avgStepLengthM: derived.avgStepLengthM,
   };
   return { session, result, warnings: derived.warnings };
 }
@@ -354,6 +399,11 @@ export function buildLinkedResult(
     achievement: "achieved",
     subjective: derived.subjective,
     note: `FIT取込: ${fileName}`,
+    weatherTempC: derived.weatherTempC,
+    avgCadenceSpm: derived.avgCadenceSpm,
+    avgVerticalOscillationMm: derived.avgVerticalOscillationMm,
+    avgGroundContactTimeMs: derived.avgGroundContactTimeMs,
+    avgStepLengthM: derived.avgStepLengthM,
   };
 }
 

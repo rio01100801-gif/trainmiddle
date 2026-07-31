@@ -16,7 +16,29 @@ export interface FitParseWarning {
   message: string;
 }
 
-export interface FitParseSession {
+/**
+ * ランニングダイナミクス系の共通フィールド。
+ *
+ * FITのcadence系フィールドはランニングでは片脚分（rpm）で記録される
+ * （Garmin FIT SDKの既知の仕様。多くのランニングアプリ・解析ツールが
+ * 同様に2倍して「歩数/分」として表示する）。ここでは2倍したうえで
+ * spm（歩数/分）として持つ。デバイスが対応していない場合、これらの
+ * フィールドはFIT側に存在しないため、常にundefined（推測で埋めない）。
+ */
+export interface FitDynamics {
+  avgCadenceSpm?: number;
+  maxCadenceSpm?: number;
+  avgTemperatureC?: number;
+  maxTemperatureC?: number;
+  /** 上下動（mm） */
+  avgVerticalOscillationMm?: number;
+  /** 接地時間（ms） */
+  avgGroundContactTimeMs?: number;
+  /** ストライド長（m） */
+  avgStepLengthM?: number;
+}
+
+export interface FitParseSession extends FitDynamics {
   sport?: string;
   startTimeUtc?: string;
   endTimeUtc?: string;
@@ -28,7 +50,7 @@ export interface FitParseSession {
   maxHr?: number;
 }
 
-export interface FitParseLap {
+export interface FitParseLap extends FitDynamics {
   index: number;
   startTimeUtc?: string;
   endTimeUtc?: string;
@@ -44,6 +66,11 @@ export interface FitParseRecord {
   /** 秒/km。FORGEの内部表現に合わせる（km/hのまま持たない） */
   paceSecPerKm?: number;
   hr?: number;
+  cadenceSpm?: number;
+  temperatureC?: number;
+  verticalOscillationMm?: number;
+  groundContactTimeMs?: number;
+  stepLengthM?: number;
 }
 
 export interface FitParseResult {
@@ -76,6 +103,46 @@ function safeNumber(
   if (!options.allowNegative && value < 0) return undefined;
   if (!options.allowZero && value === 0) return undefined;
   return value;
+}
+
+/**
+ * FITのランニングcadenceは片脚分（rpm）で記録される（Garmin FIT SDKの既知の仕様）。
+ * 実際の歩数/分（spm）にするため2倍する。他の主要な解析ツールも同様に扱う。
+ */
+const RUNNING_CADENCE_LEGS = 2;
+
+function cadenceSpm(value: unknown): number | undefined {
+  const v = safeNumber(value);
+  return v === undefined ? undefined : v * RUNNING_CADENCE_LEGS;
+}
+
+/** ストライド長はFIT上はmm。表示単位のmに変換する */
+function stepLengthM(value: unknown): number | undefined {
+  const v = safeNumber(value);
+  return v === undefined ? undefined : v / 1000;
+}
+
+/** fit-file-parserの生出力（session/lapメッセージ）のうち、ダイナミクス系フィールドだけの形 */
+interface RawDynamicsFields {
+  avg_cadence?: unknown;
+  max_cadence?: unknown;
+  avg_temperature?: unknown;
+  max_temperature?: unknown;
+  avg_vertical_oscillation?: unknown;
+  avg_stance_time?: unknown;
+  avg_step_length?: unknown;
+}
+
+function dynamicsOf(src: RawDynamicsFields): FitDynamics {
+  return {
+    avgCadenceSpm: cadenceSpm(src.avg_cadence),
+    maxCadenceSpm: cadenceSpm(src.max_cadence),
+    avgTemperatureC: safeNumber(src.avg_temperature, { allowZero: true, allowNegative: true }),
+    maxTemperatureC: safeNumber(src.max_temperature, { allowZero: true, allowNegative: true }),
+    avgVerticalOscillationMm: safeNumber(src.avg_vertical_oscillation),
+    avgGroundContactTimeMs: safeNumber(src.avg_stance_time),
+    avgStepLengthM: stepLengthM(src.avg_step_length),
+  };
 }
 
 function toIso(value: unknown): string | undefined {
@@ -131,6 +198,7 @@ export async function parseFitFile(bytes: Uint8Array): Promise<FitParseResult> {
     totalDistanceKm: safeNumber(s.total_distance, { allowZero: true }),
     avgHr: safeNumber(s.avg_heart_rate),
     maxHr: safeNumber(s.max_heart_rate),
+    ...dynamicsOf(s),
   }));
 
   const laps: FitParseLap[] = (data.laps ?? []).map((l: any, index: number) => ({
@@ -141,6 +209,7 @@ export async function parseFitFile(bytes: Uint8Array): Promise<FitParseResult> {
     distanceKm: safeNumber(l.total_distance, { allowZero: true }),
     avgHr: safeNumber(l.avg_heart_rate),
     maxHr: safeNumber(l.max_heart_rate),
+    ...dynamicsOf(l),
   }));
 
   const records: FitParseRecord[] = (data.records ?? []).map((r: any) => {
@@ -153,6 +222,11 @@ export async function parseFitFile(bytes: Uint8Array): Promise<FitParseResult> {
       distanceKm: safeNumber(r.distance, { allowZero: true }),
       paceSecPerKm,
       hr: safeNumber(r.heart_rate),
+      cadenceSpm: cadenceSpm(r.cadence),
+      temperatureC: safeNumber(r.temperature, { allowZero: true, allowNegative: true }),
+      verticalOscillationMm: safeNumber(r.vertical_oscillation),
+      groundContactTimeMs: safeNumber(r.stance_time),
+      stepLengthM: stepLengthM(r.step_length),
     };
   });
 

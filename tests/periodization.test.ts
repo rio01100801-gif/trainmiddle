@@ -54,6 +54,47 @@ describe("4-6 プラン自動生成", () => {
     expect(neural.length).toBeGreaterThan(0);
   });
 
+  describe("不具合対応: 「ジョグ＋坂ダッシュ/流し」の複合メニューを別々のセッションに分ける", () => {
+    // 坂ダッシュ・流しは同じ日にジョグ枠を別途自動生成する（combinedJogMin）。
+    const hillOrStrides = plan.sessions.filter(
+      (s) =>
+        s.category === "neural" &&
+        (s.name === "坂ダッシュ" || s.name === "流し" || s.name === "刺激入れ（流し）")
+    );
+
+    it("坂ダッシュ・流しの日が少なくとも1件は生成される", () => {
+      expect(hillOrStrides.length).toBeGreaterThan(0);
+    });
+
+    it("坂ダッシュ・流しの文面にジョグは含まれず、同じ日に別のaerobicセッションがある", () => {
+      for (const s of hillOrStrides) {
+        expect(s.prescription).not.toContain("ジョグ");
+        const companion = plan.sessions.find(
+          (o) =>
+            o.date === s.date &&
+            o.category === "aerobic" &&
+            o.timeOfDay !== s.timeOfDay
+        );
+        expect(companion, `${s.date}の${s.name}に対応するジョグ枠が無い`).toBeDefined();
+        expect(companion!.prescription).toContain("ジョグ");
+      }
+    });
+
+    it("同じ入力からは常に同じ組（決定的）になる", () => {
+      const again = generatePlan({
+        athlete,
+        goal,
+        races: [race],
+        cfeSec: 111.0,
+        aerobicProfile: aerobic,
+        startDate: "2026-06-08",
+      });
+      const pairKey = (s: { date: string; category: string; timeOfDay?: string }) =>
+        `${s.date}|${s.category}|${s.timeOfDay}`;
+      expect(again.sessions.map(pairKey)).toEqual(plan.sessions.map(pairKey));
+    });
+  });
+
   it("生成されたプランはルールエンジンのERROR違反を出さない", () => {
     const violations = runRuleEngine(
       ctx({

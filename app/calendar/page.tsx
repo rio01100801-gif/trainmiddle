@@ -535,8 +535,14 @@ function DayRow({
   const longFired = useRef(false);
   const isToday = date === today;
   const mark = STATE_MARK[state];
-  /** 変更できるセッション（固定枠は対象外） */
-  const editable = sessions.find((s) => !s.isFixed);
+  /**
+   * 変更できるセッション（固定枠は対象外）。
+   * 不具合: 1日に複数セッションがあるとき、✎ボタンが最初の1件しか
+   * 対象にしていなかった。長押しは行ごとに正しく対象を拾えているが、
+   * iOSでは長押しが取りこぼされることがあるため、確実な✎導線も
+   * セッションの数だけ出す。
+   */
+  const editableSessions = sessions.filter((s) => !s.isFixed);
 
   const start = (s: any) => {
     longFired.current = false;
@@ -665,17 +671,23 @@ function DayRow({
 
         {!moving ? (
           <>
-            {/* 長押しはiOSだと取りこぼすことがあるので、押せる場所も置く */}
-            {editable ? (
+            {/*
+              長押しはiOSだと取りこぼすことがあるので、押せる場所も置く。
+              セッションが複数ある日は、それぞれに届くようボタンも複数出す
+              （色をカテゴリと揃えて、どの行に対応するか分かるようにする）。
+            */}
+            {editableSessions.map((s) => (
               <button
+                key={s.id}
                 className="btn-ghost !py-1.5 !px-2 !text-[12px] flex-shrink-0"
-                onClick={() => onLongPress(editable)}
-                aria-label="このメニューを変更"
-                title="メニューの変更・移動・削除"
+                style={editableSessions.length > 1 ? { borderColor: CATEGORY_COLORS[s.category as keyof typeof CATEGORY_COLORS], color: CATEGORY_COLORS[s.category as keyof typeof CATEGORY_COLORS] } : undefined}
+                onClick={() => onLongPress(s)}
+                aria-label={`「${s.name}」を変更`}
+                title={`「${s.name}」の変更・移動・削除`}
               >
                 ✎
               </button>
-            ) : null}
+            ))}
             <button
               className="btn-ghost !py-1.5 !px-2 !text-[12px] flex-shrink-0"
               onClick={() => onAdd(date)}

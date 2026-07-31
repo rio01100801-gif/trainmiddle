@@ -428,8 +428,20 @@ for (const [i, v] of ["39.2", "39.6", "40.1", "41.5"].entries()) {
 // 「まとめて」に切り替えても壊れないこと
 await page.getByRole("button", { name: "まとめて", exact: true }).click();
 await page.waitForTimeout(200);
-if ((await page.getByRole("textbox", { name: /実施タイム/ }).count()) === 0) {
+const bulkTimesBox = page.getByRole("textbox", { name: /実施タイム/ });
+if ((await bulkTimesBox.count()) === 0) {
   fail("N-2: まとめて入力の欄が出ない");
+}
+/*
+ * 不具合: inputMode="decimal" が付いていると、iOS等の数値専用キーボードには
+ * カンマキーが無くカンマ区切りの値を打てなかった。属性が外れていることを確認する。
+ */
+if ((await bulkTimesBox.getAttribute("inputmode")) === "decimal") {
+  fail("まとめて入力欄にinputMode=decimalが付いており、カンマが打てない");
+}
+await bulkTimesBox.fill("39.2, 39.6, 40.1, 41.5");
+if ((await bulkTimesBox.inputValue()) !== "39.2, 39.6, 40.1, 41.5") {
+  fail("まとめて入力欄にカンマ区切りの値を入れられない");
 }
 await page.getByRole("button", { name: "1本ずつ", exact: true }).click();
 await page.waitForTimeout(200);
@@ -627,6 +639,8 @@ function buildRealFitFixture() {
       { number: 5, size: 1, baseType: FitBaseType.Enum, value: 1 }, // sport: running
       { number: 9, size: 4, baseType: FitBaseType.Uint32, value: 200000 }, // total_distance: 2km
       { number: 16, size: 1, baseType: FitBaseType.Uint8, value: 150 }, // avg_heart_rate
+      { number: 18, size: 1, baseType: FitBaseType.Uint8, value: 90 }, // avg_cadence（片脚rpm。表示はspmで2倍）
+      { number: 57, size: 1, baseType: FitBaseType.Sint8, value: 25 }, // avg_temperature
     ],
     2
   );
@@ -666,7 +680,10 @@ if (!fitText.includes("running") || !fitText.includes("2km")) {
 if (!fitText.includes("record 1件")) {
   fail("recordの件数が表示されない: " + fitText.slice(0, 400));
 }
-step("FIT取込Phase2OK（session/lap/recordを実際に解析して概要表示）");
+if (!fitText.includes("ピッチ180spm") || !fitText.includes("気温25℃")) {
+  fail("ランニングダイナミクス（ピッチ・気温）が表示されない: " + fitText.slice(0, 400));
+}
+step("FIT取込Phase2OK（session/lap/recordを実際に解析して概要表示・ランニングダイナミクス含む）");
 
 /*
  * FIT解析コードは動的import（別chunk、対象1・2とは無関係のbundleサイズ対策）。
@@ -1815,7 +1832,7 @@ step("N-3 本文からのカテゴリ判定OK（根拠つき・断定しない�
 // 編集シートで本文を書き換えると欄が組み変わること
 await page.goto("http://localhost:8791/#/calendar");
 await page.waitForTimeout(900);
-await page.getByRole("button", { name: "このメニューを変更" }).first().click();
+await page.getByRole("button", { name: /を変更/ }).first().click();
 await page.waitForTimeout(600);
 const ta = page.locator("textarea").first();
 await ta.fill("300m×5 @41.5秒 r5分");
@@ -1884,8 +1901,8 @@ calAddText = await page.textContent("body");
 if (!calAddText.includes("朝ジョグ（テスト）")) fail("＋から追加した練習がカレンダーに出ない");
 step("カレンダー: ＋から練習を足せるOK（シートが画面内に出る・記録するリンクあり）");
 
-// ✎ を押したら編集シートが開くこと
-await page.getByRole("button", { name: "このメニューを変更" }).first().click();
+// ✎ を押したら編集シートが開くこと（ラベルはセッション名を含む形に変わった）
+await page.getByRole("button", { name: /を変更/ }).first().click();
 await page.waitForTimeout(700);
 calAddText = await page.textContent("body");
 if (!calAddText.includes("メニュー本文")) fail("✎を押しても編集シートが出ない");
@@ -1907,6 +1924,50 @@ if ((await reflectedCalendarRow.count()) === 0) {
 }
 step("カレンダー: 編集保存→一覧・再取得への反映OK");
 await shot("26_calendar_edit");
+
+// ---- 不具合: 1日に複数セッションがあると✎が最初の1件しか対象にしていなかった ----
+const multiSessionCheck = await page.evaluate(async () => {
+  const pad = (n) => String(n).padStart(2, "0");
+  const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const now = new Date();
+  const from = fmt(now);
+  const to = fmt(new Date(now.getTime() + 13 * 86400000));
+  const sessions = await fetch(`/api/sessions?from=${from}&to=${to}`).then((r) => r.json());
+  const target = (sessions.sessions ?? []).find((s) => !s.isFixed);
+  if (!target) return { ok: false, reason: "対象日が見つからない" };
+  const res = await fetch("/api/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      date: target.date,
+      category: "neural",
+      name: "流し（複数セッションE2E）",
+      prescription: "150m流し×4",
+    }),
+  });
+  if (!res.ok) return { ok: false, reason: `POST失敗 ${res.status}` };
+  return { ok: true, date: target.date };
+});
+if (!multiSessionCheck.ok) fail(`複数セッション検証の準備に失敗: ${multiSessionCheck.reason}`);
+await page.goto("http://localhost:8791/#/");
+await page.waitForTimeout(400);
+await page.goto("http://localhost:8791/#/calendar");
+await page.waitForTimeout(900);
+const multiRow = page.locator("div.card", { hasText: "流し（複数セッションE2E）" }).first();
+const multiEditButtons = multiRow.getByRole("button", { name: /を変更/ });
+const multiEditCount = await multiEditButtons.count();
+if (multiEditCount < 2) {
+  fail(`1日に複数セッションがあるのに✎ボタンが${multiEditCount}個しか無い（不具合の再発）`);
+}
+await multiEditButtons.last().click();
+await page.waitForTimeout(700);
+const multiEditText = await page.textContent("body");
+if (!multiEditText.includes("流し（複数セッションE2E）")) {
+  fail("複数セッションの日で、後ろの✎が対応するセッションを開かない");
+}
+await page.getByRole("button", { name: "閉じる", exact: true }).first().click();
+await page.waitForTimeout(400);
+step("カレンダー: 1日に複数セッションがあっても各行の✎で個別に編集できるOK");
 
 // ---- 不具合2: 予定と違う練習を記録すると、カレンダーに実際の内容が出る ----
 const divergedCheck = await page.evaluate(async () => {
