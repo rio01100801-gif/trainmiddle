@@ -3148,6 +3148,31 @@ else {
   step("Q-3 過去データの作り直しOK（何件直したかを出す）");
 }
 
+/*
+ * 取り込み済みのFITを、いまのラップの読み方で作り直せること。
+ *
+ * `rebuildFitDerived` は前から実装されていたが、APIにも画面にも
+ * つながっていなかった（呼び出し元ゼロ）。そのためラップの読み方を直しても、
+ * すでに取り込んだぶんは古い解釈のまま残り、本人には直す手段が無かった。
+ */
+const fitRebuildCard = page.locator("section.card", { hasText: "FIT取込の作り直し" }).first();
+if ((await fitRebuildCard.count()) === 0) {
+  fail("取り込み済みFITの作り直しの導線が無い");
+} else {
+  const importCount = await page.evaluate(async () => {
+    const d = await fetch("/api/fit-import").then((r) => r.json());
+    return (d.imports ?? []).length;
+  });
+  if (importCount === 0) fail("FIT取込が1件も入っていない（前段のFIT取込が効いていない）");
+  await fitRebuildCard.getByRole("button", { name: "FIT取込を作り直す" }).click();
+  await page.waitForTimeout(900);
+  const fitRebuiltText = await fitRebuildCard.textContent();
+  if (!/件のFITを確認し、\d+件を作り直しました/.test(fitRebuiltText)) {
+    fail(`FIT取込の作り直しの結果が出ない（${fitRebuiltText.slice(0, 140)}）`);
+  }
+  step("取り込み済みFITの作り直しOK（何件直したかを出す）");
+}
+
 if (errors.length) {
   console.log("JS ERRORS:", errors.slice(0, 5));
   process.exitCode = 1;

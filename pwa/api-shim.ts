@@ -63,6 +63,7 @@ import {
   interpretPrescription,
   saveGoalAndRaces,
   importFitFile,
+  rebuildFitDerived,
 } from "../src/lib/service";
 import { parseContactCsv } from "../src/lib/core/contactTime";
 import type { PastEntry } from "../src/lib/core/backfill";
@@ -632,6 +633,14 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
   "/api/fit-import": {
     GET: (repo) => ({ imports: repo.listFitImports() }),
     POST: (repo, body) => {
+      // 保存してある元ファイルから、いまの解析ロジックで作り直す
+      if (body?.rebuild) {
+        try {
+          return { ok: true, rebuild: rebuildFitDerived(repo) };
+        } catch (e) {
+          return { error: (e as Error).message };
+        }
+      }
       if (!body?.fileName || !body?.rawBytesBase64 || !body?.parse || !body?.autoClassification || !body?.confirmedKinds) {
         return { error: "取込内容が不足しています" };
       }

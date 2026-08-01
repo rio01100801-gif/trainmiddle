@@ -20,6 +20,7 @@ export default function DataPage() {
   const [mode, setMode] = useState<"replace" | "merge">("merge");
   const [busy, setBusy] = useState(false);
   const [rebuildMsg, setRebuildMsg] = useState("");
+  const [fitMsg, setFitMsg] = useState("");
 
   const rebuild = async () => {
     setBusy(true);
@@ -40,6 +41,38 @@ export default function DataPage() {
         `${b.entries}件を確認し、${b.rebuilt}件を作り直しました。` +
           (b.withoutTarget > 0
             ? `　うち${b.withoutTarget}件は設定タイムが残っていません（登録時に読み取れていないため、作り直しても戻りません）。設定に対する評価が要る場合は、その練習だけ入れ直してください。`
+            : "")
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /*
+   * FIT取込は取り込んだ瞬間にしか変換が走らない。
+   * ラップの読み方を直しても、すでに入っているぶんは古い解釈のまま残る
+   * （1000mを400/400/200と刻んだぶんが「400m×12」のまま、など）。
+   * 元ファイルは `FitImportRecord` に丸ごと残してあるので、そこから作り直せる。
+   */
+  const rebuildFit = async () => {
+    setBusy(true);
+    setFitMsg("");
+    try {
+      const r = await fetch("/api/fit-import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rebuild: true }),
+      });
+      const out = await r.json();
+      const b = out.rebuild;
+      if (!b) {
+        setFitMsg(out.error ?? "作り直せませんでした。");
+        return;
+      }
+      setFitMsg(
+        `${b.imports}件のFITを確認し、${b.rebuilt}件を作り直しました。` +
+          (b.orphaned > 0
+            ? `　うち${b.orphaned}件は紐付け先の予定が消えているため、そのままにしました。`
             : "")
       );
     } finally {
@@ -145,6 +178,28 @@ export default function DataPage() {
         {rebuildMsg ? (
           <p className="text-[11.5px] leading-relaxed mt-2.5" style={{ color: "var(--text-3)" }}>
             {rebuildMsg}
+          </p>
+        ) : null}
+      </Card>
+
+      {/*
+        FIT取込も同じ理由で作り直しが要る。
+        取込は元ファイルを丸ごと保存してあるので、ラップの読み方を直したときは
+        ここから読み直せる。実測そのもの（タイム・心拍）は元ファイルの値なので変わらない。
+      */}
+      <Card title="FIT取込の作り直し">
+        <p className="text-[11.5px] leading-relaxed mb-2.5" style={{ color: "var(--text-2)" }}>
+          時計から取り込んだぶんを、いまのラップの読み方で作り直します。
+          1本の中を刻んで走ったとき（1000mを400/400/200で押した等）の本数が
+          合っていないときに使ってください。保存してある元ファイルから読み直すので、
+          タイムや心拍は変わりません。
+        </p>
+        <button className="btn-ghost" onClick={rebuildFit} disabled={busy}>
+          FIT取込を作り直す
+        </button>
+        {fitMsg ? (
+          <p className="text-[11.5px] leading-relaxed mt-2.5" style={{ color: "var(--text-3)" }}>
+            {fitMsg}
           </p>
         ) : null}
       </Card>
