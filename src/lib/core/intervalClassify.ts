@@ -45,13 +45,31 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /**
- * 中央値よりこの倍率以上速ければ「速い区間（メイン疾走の候補）」とみなす。
- * 0.93 = 中央値より7%速い。800m系のインターバルはメインがリカバリーより
- * 明確に（体感10%以上）速いことが多く、7%を境目にすることで複数本のメインの
- * 多少のばらつきは拾いつつ、ほぼ一定ペースの走行（インターバルではない）を
- * 誤ってメインと判定しないマージンを持たせている。
+ * 疾走群と休息群を分ける「速さの隔たり」の最小比。
+ *
+ * 1.20 = 遅い側が速い側より20%以上遅い。800m系のインターバルは
+ * メインがリカバリーより明確に（体感でも数値でも20%以上）速いので、
+ * ここを下回る差しかないものはインターバル構成と見なさない
+ * （ビルドアップ走やペース走を誤ってメイン扱いしないため）。
+ *
+ * かつて中央値×0.93で切っていたが、これは実運用で壊れた。
+ * 時計で「本」と「休み」だけラップを押すとW-up/C-downのlapが無く、
+ * 疾走と休息がほぼ半々になる。すると全lapの中央値が「最も遅い疾走」に乗り、
+ * 1本目しか閾値を通らず残りの本がクールダウンに落ちて、
+ * 300m×4が「300m×1」として記録されていた。
+ * 中央値は2つの母集団が混ざった列では境目の指標にならない。
+ * ソートしたペース列の最大の隔たりで切れば、混合比に左右されない。
+ *
+ * 「最初に閾値を超えた隔たり」ではなく「最大の隔たり」で切っているのは、
+ * 本の中に1本だけ極端に速いものがあったとき（突っ込んで垂れた場合）に
+ * そこで切れて、残りの本を取りこぼす方が起こりやすいため。
+ * 逆の弱点として、休息側の内部のばらつきが疾走と休息の差を上回ると
+ * 休息を本と数えてしまう（例: リカバリー6:00/kmに対しクールダウンが歩き）。
+ * ただし歩きは距離0のlapになることが多く上のレスト判定で除かれるため、
+ * こちらの方が起きにくいと判断した。どちらに転んでも取込画面の
+ * プルダウンで本人が直せる。
  */
-const FAST_RATIO = 0.93;
+const MIN_GROUP_SEPARATION = 1.2;
 
 /** 距離0のlap（一時停止・手動lap）に与える固定信頼度。機器が明示的に記録した値のため高めに固定 */
 const REST_CONFIDENCE = 0.85;
@@ -106,15 +124,34 @@ export function classifyLaps(laps: FitParseLap[]): IntervalClassifyResult {
     return { laps: result, warnings };
   }
 
+  /*
+   * ソートしたペース列で最も大きな「隔たり」を探し、そこで疾走群と休息群に分ける。
+   * 中央値ではなく隔たりで切るのは、両群の件数比に左右されないため（上の定数の説明を参照）。
+   */
   const sortedPaces = valid.map((v) => v.pace).sort((a, b) => a - b);
-  const mid = Math.floor(sortedPaces.length / 2);
-  const median =
-    sortedPaces.length % 2 === 0
-      ? (sortedPaces[mid - 1] + sortedPaces[mid]) / 2
-      : sortedPaces[mid];
+  let splitAt = -1;
+  let widestGap = 1;
+  for (let i = 0; i < sortedPaces.length - 1; i++) {
+    const gap = sortedPaces[i + 1] / sortedPaces[i];
+    if (gap > widestGap) {
+      widestGap = gap;
+      splitAt = i;
+    }
+  }
+  // 隔たりが小さい＝速い群と遅い群に分かれていない（ほぼ一定ペースの走行）
+  const fastMax = widestGap >= MIN_GROUP_SEPARATION ? sortedPaces[splitAt] : -1;
 
-  const isFast = valid.map((v) => v.pace <= median * FAST_RATIO);
+  const isFast = valid.map((v) => v.pace <= fastMax);
   const fastPositions = isFast.map((f, p) => (f ? p : -1)).filter((p) => p >= 0);
+
+  /*
+   * 信頼度の基準。かつては中央値との比だったが、中央値を使わなくなったので
+   * 「遅い群の最も速いもの」＝休息側の下限を基準にする。
+   * 疾走がこれよりどれだけ速いかで、判定の確からしさを表す。
+   */
+  const slowRef = splitAt >= 0 && splitAt + 1 < sortedPaces.length
+    ? sortedPaces[splitAt + 1]
+    : sortedPaces[sortedPaces.length - 1];
 
   if (fastPositions.length === 0) {
     valid.forEach((v) => {
@@ -137,7 +174,7 @@ export function classifyLaps(laps: FitParseLap[]): IntervalClassifyResult {
   const lastFastPos = fastPositions[fastPositions.length - 1];
 
   valid.forEach((v, p) => {
-    const ratio = v.pace / median;
+    const ratio = v.pace / slowRef;
     const lap = laps[v.arrayIndex];
     if (isFast[p]) {
       result[v.arrayIndex] = {

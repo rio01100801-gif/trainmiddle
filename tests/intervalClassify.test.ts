@@ -50,6 +50,55 @@ describe("classifyLaps", () => {
     expect(result[8].confidence).toBeCloseTo(0.85, 5);
   });
 
+  /*
+   * 実運用で「メニュー内容の読み取りがうまくいかない」と報告があった構成。
+   *
+   * 時計で「本」と「休み」だけラップを押すと、ウォームアップ・クールダウンの
+   * lapが無い状態でFITに入る。このとき疾走と休みが半々になり、
+   * 全lapの中央値が「最も遅い疾走」に乗る。中央値×一定比で速さを切ると
+   * 1本目しか通らず、残りの本がクールダウンに落ちて「300m×1」として記録される。
+   */
+  it("本と休みだけをラップした場合でも、垂れた本を取りこぼさない", () => {
+    const laps: FitParseLap[] = [
+      lap({ index: 0, distanceKm: 0.3, elapsedSec: 39 }), // 130 sec/km
+      lap({ index: 1, distanceKm: 0.2, elapsedSec: 80 }), // 400
+      lap({ index: 2, distanceKm: 0.3, elapsedSec: 40 }), // 133
+      lap({ index: 3, distanceKm: 0.2, elapsedSec: 80 }),
+      lap({ index: 4, distanceKm: 0.3, elapsedSec: 41 }), // 137
+      lap({ index: 5, distanceKm: 0.2, elapsedSec: 80 }),
+      lap({ index: 6, distanceKm: 0.3, elapsedSec: 42 }), // 140（最も垂れた本）
+    ];
+    const kinds = classifyLaps(laps).laps.map((l) => l.kind);
+    expect(kinds).toEqual([
+      "main",
+      "recovery",
+      "main",
+      "recovery",
+      "main",
+      "recovery",
+      "main",
+    ]);
+  });
+
+  /*
+   * ビルドアップ走はだんだん速くなるだけで、疾走群と休息群に分かれない。
+   * 最後の1kmを勝手に「メイン」にすると「1km×1」という実在しない
+   * インターバルとして記録されてしまうので、判定できないと返す
+   * （読めなかったものを推測で埋めない）。
+   */
+  it("ビルドアップ走は速い群と遅い群に分かれないので構成を判定しない", () => {
+    const laps: FitParseLap[] = [
+      lap({ index: 0, distanceKm: 1, elapsedSec: 300 }),
+      lap({ index: 1, distanceKm: 1, elapsedSec: 285 }),
+      lap({ index: 2, distanceKm: 1, elapsedSec: 270 }),
+      lap({ index: 3, distanceKm: 1, elapsedSec: 255 }),
+      lap({ index: 4, distanceKm: 1, elapsedSec: 240 }),
+    ];
+    const out = classifyLaps(laps);
+    expect(out.laps.every((l) => l.kind === "unknown")).toBe(true);
+    expect(out.warnings.map((w) => w.code)).toContain("no_interval_structure");
+  });
+
   it("速さの差が小さい（7%未満）場合はインターバル構成と判定せずunknownにする", () => {
     const laps: FitParseLap[] = [
       lap({ index: 0, distanceKm: 1, elapsedSec: 300 }),
