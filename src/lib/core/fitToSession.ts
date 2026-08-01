@@ -185,6 +185,41 @@ function continuesWithoutRest(prev: FitParseLap, next: FitParseLap): boolean {
   return Math.abs(nextStart - prevEnd) <= SAME_REP_GAP_SEC * 1000;
 }
 
+/**
+ * トラックで実際に走る距離。ここに無い距離は丸めない。
+ *
+ * 800m系の練習で出てくるものだけを並べている。
+ * 「ありうる距離」を増やすほど、実測がたまたま近かっただけの値を
+ * 狙った距離として扱ってしまうので、増やすときは実際に走るかで判断する。
+ */
+const TRACK_DISTANCES_M = [
+  100, 120, 150, 200, 250, 300, 400, 500, 600, 800, 1000, 1200, 1500, 1600, 2000, 3000, 5000,
+];
+
+/**
+ * 実測がトラックの距離からこの割合以内なら、その距離として記録する。
+ *
+ * 3% = 400mなら±12m、1000mなら±30m。
+ * トラックのGPSは、カーブで内側を結ぶぶん1%前後短く出る
+ * （報告のあった実例では 1000m が 990m、400m が 396m）。
+ * 実測の誤差ぶんは吸収しつつ、隣の距離まで届かない幅にしてある——
+ * 一番狭い 1500m と 1600m でも6.7%離れているので、両方の範囲が重なることはない。
+ *
+ * 丸めた場合は必ず警告として出す（黙って数値を書き換えない）。
+ */
+const SNAP_TOLERANCE = 0.03;
+
+/**
+ * 実測の距離を、狙って走ったであろうトラックの距離に丸める。
+ * 近いものが無ければ `undefined`（実測をそのまま使う）。
+ */
+export function snapToTrackDistance(measuredM: number): number | undefined {
+  for (const target of TRACK_DISTANCES_M) {
+    if (Math.abs(measuredM - target) <= target * SNAP_TOLERANCE) return target;
+  }
+  return undefined;
+}
+
 /** 通過ごとの平均心拍を、通過の長さで重みをつけて1本ぶんにする。1つも無ければundefined */
 function weightedHr(parts: FitParseLap[]): number | undefined {
   let sum = 0;
@@ -282,6 +317,8 @@ export function deriveFitActuals(input: DeriveFitActualsInput): FitDerivedActual
 
   if (mainPositions.length > 0) {
     const groups = groupIntoReps(laps, mainPositions);
+    // 丸めた本の実測。何をどう直したかを警告に出すために覚えておく（黙って書き換えない）
+    const snapped: { measuredM: number; usedM: number }[] = [];
     const reps: RepResult[] = groups.map((group, idx) => {
       const last = group[group.length - 1];
       // 直後の「メイン」または「クールダウン」の手前までだけをこの本のレストとして数える。
@@ -297,9 +334,19 @@ export function deriveFitActuals(input: DeriveFitActualsInput): FitDerivedActual
       const rest = sumLapRange(laps, last + 1, end);
       const parts = group.map((p) => laps[p]);
       const splits = parts.map((l) => l.elapsedSec!);
+      /*
+       * 実測の距離を、狙って走ったであろうトラックの距離に丸める。
+       * GPSはカーブで内側を結ぶぶん1%前後短く出るので、1000m×4が
+       * 「990m×4」として残り、同じ練習が日によって990/991/989と
+       * 違う距離になって比較できなくなる。
+       * 丸めた場合は下で警告として出す。
+       */
+      const measuredM = Math.round(parts.reduce((s, l) => s + l.distanceKm! * 1000, 0));
+      const usedM = snapToTrackDistance(measuredM) ?? measuredM;
+      if (usedM !== measuredM) snapped.push({ measuredM, usedM });
       return {
         index: idx + 1,
-        distanceM: Math.round(parts.reduce((s, l) => s + l.distanceKm! * 1000, 0)),
+        distanceM: usedM,
         actualSec: splits.reduce((a, b) => a + b, 0),
         // 通過ごとに心拍が違うので、通過の長さで重みをつけて1本ぶんにする
         avgHr: weightedHr(parts),
@@ -308,6 +355,18 @@ export function deriveFitActuals(input: DeriveFitActualsInput): FitDerivedActual
         splitsSec: splits.length > 1 ? splits : undefined,
       };
     });
+    if (snapped.length > 0) {
+      // どの実測をどう直したかを必ず出す。距離は本数と並んで記録の骨格になる値なので、
+      // 黙って書き換えると、あとで数字を疑うときに追えなくなる
+      const worstPct = Math.max(
+        ...snapped.map((s) => (Math.abs(s.measuredM - s.usedM) / s.usedM) * 100)
+      );
+      const pairs = [...new Set(snapped.map((s) => `${s.measuredM}m→${s.usedM}m`))].join("・");
+      warnings.push(
+        `GPSの実測を狙った距離として記録しました（${pairs}／ずれは最大${worstPct.toFixed(1)}%）。` +
+          `トラックはカーブで内側を結ぶぶん短く出ます。違う場合は記録画面から直してください`
+      );
+    }
     const distanceM = mode(reps.map((r) => r.distanceM));
     interval = { reps: reps.length, distanceM, results: reps };
     actualLapsSec = reps.map((r) => r.actualSec);

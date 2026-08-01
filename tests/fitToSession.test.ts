@@ -3,7 +3,7 @@
  * 機械的に導く純粋関数。`PastEntry` の `toSessionAndResult` と同じ考え方。
  */
 import { describe, expect, it } from "vitest";
-import { fitToSessionAndResult } from "@/lib/core/fitToSession";
+import { fitToSessionAndResult, snapToTrackDistance } from "@/lib/core/fitToSession";
 import type { FitParseLap, FitParseResult } from "@/lib/core/fitParse";
 import type { IntervalKind } from "@/lib/core/intervalClassify";
 
@@ -93,7 +93,7 @@ describe("fitToSessionAndResult", () => {
     });
     const kinds: IntervalKind[] = sub.map(([d]) => (d === 0.2 ? "recovery" : "main"));
 
-    const { result } = fitToSessionAndResult({
+    const { result, warnings } = fitToSessionAndResult({
       sourceId: "t-merge",
       fileName: "1000x4.fit",
       parse: baseParse({ laps, utcOffsetSec: 9 * 3600 }),
@@ -102,7 +102,10 @@ describe("fitToSessionAndResult", () => {
     });
 
     expect(result.interval?.reps).toBe(4);
-    expect(result.interval?.distanceM).toBe(990); // 396+396+198（GPSの実測をそのまま出す）
+    // 実測は 396+396+198 = 990m。GPSがカーブで短く出るぶんを丸めて 1000m にする
+    expect(result.interval?.distanceM).toBe(1000);
+    // 丸めたことは黙らない
+    expect(warnings.some((w) => w.includes("990m→1000m"))).toBe(true);
     expect(result.interval?.results.map((r) => Math.round(r.actualSec * 10) / 10)).toEqual([
       196.1, 194.9, 194.2, 194.7,
     ]);
@@ -110,6 +113,41 @@ describe("fitToSessionAndResult", () => {
     expect(result.interval?.results[0].splitsSec).toEqual([78.87, 78.55, 38.67]);
     // 1本目の直後の休みはジョグ1つぶんだけ（次の本の通過を巻き込まない）
     expect(result.interval?.results[0].restAfterSec).toBe(82);
+  });
+
+  /*
+   * 丸めは「狙って走った距離に直す」ためのもので、
+   * 読めなかったものを埋めるためのものではない。
+   * 近いトラック距離が無ければ実測をそのまま残す。
+   */
+  it("トラックの距離から離れている実測は丸めず、そのまま残す", () => {
+    // 3%以内 → 丸める / 3%を超える → 丸めない（400mなら±12m）
+    expect(snapToTrackDistance(396)).toBe(400);
+    expect(snapToTrackDistance(388)).toBe(400);
+    expect(snapToTrackDistance(387)).toBeUndefined();
+    expect(snapToTrackDistance(990)).toBe(1000);
+    expect(snapToTrackDistance(350)).toBeUndefined(); // 300とも400とも言えない
+    // 一番狭い1500と1600でも、両方の範囲が重ならない
+    expect(snapToTrackDistance(1545)).toBe(1500);
+    expect(snapToTrackDistance(1550)).toBeUndefined();
+    expect(snapToTrackDistance(1552)).toBe(1600);
+  });
+
+  it("丸めるほど近くない実測は、そのままの距離で記録して警告も出さない", () => {
+    const laps: FitParseLap[] = [
+      lap({ index: 0, startTimeUtc: "2026-07-25T10:00:00Z", endTimeUtc: "2026-07-25T10:01:10Z", distanceKm: 0.35, elapsedSec: 70 }),
+      lap({ index: 1, startTimeUtc: "2026-07-25T10:01:10Z", endTimeUtc: "2026-07-25T10:03:10Z", distanceKm: 0.2, elapsedSec: 120 }),
+      lap({ index: 2, startTimeUtc: "2026-07-25T10:03:10Z", endTimeUtc: "2026-07-25T10:04:20Z", distanceKm: 0.35, elapsedSec: 70 }),
+    ];
+    const { result, warnings } = fitToSessionAndResult({
+      sourceId: "t-nosnap",
+      fileName: "nosnap.fit",
+      parse: baseParse({ laps, utcOffsetSec: 9 * 3600 }),
+      confirmedKinds: ["main", "recovery", "main"],
+      grpSecPerM: 70 / 350,
+    });
+    expect(result.interval?.distanceM).toBe(350);
+    expect(warnings.some((w) => w.includes("狙った距離として記録"))).toBe(false);
   });
 
   it("休みを挟まずに時刻が飛んでいる（記録を止めて再開した）lapは別の本として数える", () => {

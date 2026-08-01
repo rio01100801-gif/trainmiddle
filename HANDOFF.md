@@ -1119,7 +1119,9 @@ BUG-02〜04 は**実機 iPhone でしか再現確認できない**。実機の�
 1. **`1000m×4` が `396m×12` と読まれる** → `deriveFitActuals` が lap 1つ＝1本と
    数えていた。時計で1000mの中を400/400/200と刻むと本のlapが3つ入る。
    `groupIntoReps` を足し、間に休みのlapが無く時刻が連続しているメインlapを
-   1本にまとめる。通過タイムは `RepResult.splitsSec` に残して `/summary` に出す
+   1本にまとめる。通過タイムは `RepResult.splitsSec` に残して `/summary` に出す。
+   距離は `snapToTrackDistance` でトラックの距離に丸める（3%以内・forge-v48で追加）。
+   丸めたら警告に出す。近いものが無ければ実測のまま
 2. **固定枠をやらなかったときにカレンダーから外せない** → 固定枠にも
    `SessionEditSheet` を開けるようにし、内容は変えられないと断ったうえで
    「やらなかった」だけ記録できるようにした。消さずに中止（`status: "skipped"`）に
