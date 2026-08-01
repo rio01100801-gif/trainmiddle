@@ -13,6 +13,7 @@ import {
   processRaceResult,
   processResult,
   processSkip,
+  restoreSkippedSession,
   regeneratePlan,
   importAppleHealth,
   previousEntryFor,
@@ -173,6 +174,9 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
 
   "/api/skip": {
     POST: (repo, body) => processSkip(repo, body.sessionId, body.reason),
+    // 中止の取り消し（押し間違いを戻す）
+    DELETE: (repo, _b, params) =>
+      restoreSkippedSession(repo, params.get("sessionId") ?? "", params.get("date") ?? localToday()),
   },
 
   "/api/daily": {

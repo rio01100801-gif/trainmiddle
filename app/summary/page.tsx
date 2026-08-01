@@ -114,7 +114,8 @@ export default function SummaryPage() {
       {view.reps.length > 0 ? (
         <Card>
           {view.reps.map((rep) => (
-            <div key={rep.index} className="flex items-center gap-3 py-2">
+            <div key={rep.index} className="py-2">
+            <div className="flex items-center gap-3">
               <span
                 className="num text-[12.5px] w-[14px] flex-shrink-0"
                 style={{ color: "var(--text-3)" }}
@@ -142,6 +143,16 @@ export default function SummaryPage() {
                   BEST
                 </span>
               ) : null}
+            </div>
+            {/* 1本の中を刻んで走った場合の通過。合計だけだと前後半どちらで落ちたか分からない */}
+            {rep.splitsSec ? (
+              <div
+                className="num text-[11px] mt-1 ml-[26px]"
+                style={{ color: "var(--text-3)" }}
+              >
+                {rep.splitsSec.map((s) => fmtLap(s)).join(" - ")}
+              </div>
+            ) : null}
             </div>
           ))}
         </Card>

@@ -10,6 +10,7 @@ import {
   usePrescriptionFields,
 } from "../components/prescription-fields";
 import { SessionEditSheet } from "../components/session-edit-sheet";
+import { loadViewPref, saveViewPref } from "../components/view-pref";
 import { localToday } from "@/lib/core/dates";
 import type { CoverageReview } from "@/lib/core/coverage";
 import type { Race, Session, SessionResult } from "@/lib/core/types";
@@ -32,6 +33,10 @@ function addDays(dateStr: string, days: number): string {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
+/** 覚えてよい表示期間。ここに無い値が保存されていたら既定に戻す */
+const CALENDAR_MODES = ["week", "month"] as const;
+const CALENDAR_WEEKS = [1, 2, 4] as const;
+
 function weekStart(dateStr: string): string {
   const d = new Date(dateStr + "T00:00:00Z");
   const dow = d.getUTCDay();
@@ -130,9 +135,18 @@ interface EditConflict {
 
 export default function CalendarPage() {
   const todayStr = localToday();
+  /*
+   * 表示期間は端末に覚えさせる（`view-pref.ts`）。
+   * 既定を2週間から1週間に変えたのは、1週間ぶんが1画面に収まって
+   * 「今週なにをやるか」が最初に目に入るため。長い範囲は見たいときに選ぶ。
+   *
+   * 読み込みはマウント後の useEffect でやる。useState の初期値で
+   * localStorage を読むと、Next.js側（サーバーで一度描く）と食い違って
+   * hydration エラーになる。
+   */
   const [mode, setMode] = useState<"week" | "month">("week");
   const [anchor, setAnchor] = useState(weekStart(todayStr));
-  const [weeks, setWeeks] = useState(2);
+  const [weeks, setWeeks] = useState(1);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [results, setResults] = useState<any[]>([]);
   const [injuries, setInjuries] = useState<any[]>([]);
@@ -148,6 +162,21 @@ export default function CalendarPage() {
 
   const from = mode === "week" ? anchor : monthStart(anchor);
   const span = mode === "week" ? weeks * 7 : 42;
+
+  // 覚えてある表示期間を復元する（マウント時の1回だけ）
+  useEffect(() => {
+    setMode(loadViewPref("calendar.mode", CALENDAR_MODES, "week"));
+    setWeeks(loadViewPref("calendar.weeks", CALENDAR_WEEKS, 1));
+  }, []);
+
+  const changeMode = (next: "week" | "month") => {
+    setMode(next);
+    saveViewPref("calendar.mode", next);
+  };
+  const changeWeeks = (next: number) => {
+    setWeeks(next);
+    saveViewPref("calendar.weeks", next);
+  };
 
   const load = useCallback(async () => {
     const sequence = ++loadSequence.current;
@@ -210,6 +239,18 @@ export default function CalendarPage() {
     setMsg(d.error ?? "移動しました。ルールを再チェックしました。");
     if (!d.error) setViolations(d.violations ?? []);
     setMoving(null);
+    load();
+  };
+
+  /** 中止した予定を戻す（押し間違いの取り消し） */
+  const restoreSkipped = async (s: Session) => {
+    const res = await fetch(
+      `/api/skip?sessionId=${encodeURIComponent(s.id)}&date=${todayStr}`,
+      { method: "DELETE" }
+    );
+    const d = await res.json();
+    setMsg(d.error ?? `${s.name} を予定に戻しました。`);
+    if (!d.error) setViolations(d.violations ?? []);
     load();
   };
 
@@ -288,14 +329,14 @@ export default function CalendarPage() {
             <button
               aria-pressed={mode === "week"}
               data-on={mode === "week" ? "1" : "0"}
-              onClick={() => setMode("week")}
+              onClick={() => changeMode("week")}
             >
               週
             </button>
             <button
               aria-pressed={mode === "month"}
               data-on={mode === "month" ? "1" : "0"}
-              onClick={() => setMode("month")}
+              onClick={() => changeMode("month")}
             >
               月
             </button>
@@ -304,7 +345,7 @@ export default function CalendarPage() {
             <select
               className="!text-[12px] !py-1.5"
               value={weeks}
-              onChange={(e) => setWeeks(Number(e.target.value))}
+              onChange={(e) => changeWeeks(Number(e.target.value))}
             >
               <option value={1}>1週間</option>
               <option value={2}>2週間</option>
@@ -444,14 +485,14 @@ export default function CalendarPage() {
             state={stateOf(date)}
             warnCount={violationsByDate[date] ?? 0}
             moving={moving}
+            /*
+             * 固定枠もシートを開く。中身は変えられないが（RULE-15）、
+             * 「やらなかった」ことは起きるので、そこだけは本人が記録できる必要がある。
+             * 以前はここで断って何もできなかったため、流れたチーム練習が
+             * 予定として残り続けていた。断り文はシート側に移してある。
+             */
             onLongPress={(s) => {
               scrollToTop();
-              if (s.isFixed) {
-                setMsg(
-                  `${s.name} は固定セッション（チーム練習等）なので変更できません。前後の自由枠を組み替えてください。`
-                );
-                return;
-              }
               setEditing(s);
               setMsg("");
             }}
@@ -460,6 +501,7 @@ export default function CalendarPage() {
               setAdding(d);
             }}
             onPickDate={(d) => moving && moveSession(moving.id, d)}
+            onRestore={restoreSkipped}
           />
         ))}
       </div>
@@ -597,6 +639,7 @@ function DayRow({
   onLongPress,
   onPickDate,
   onAdd,
+  onRestore,
 }: {
   date: string;
   today: string;
@@ -609,19 +652,29 @@ function DayRow({
   onLongPress: (s: any) => void;
   onPickDate: (date: string) => void;
   onAdd: (date: string) => void;
+  onRestore: (s: Session) => void;
 }) {
   const timer = useRef<any>(null);
   const longFired = useRef(false);
   const isToday = date === today;
   const mark = STATE_MARK[state];
+  /*
+   * 中止した予定は一覧から外す。
+   * やらなかったチーム練習が予定として並び続けると、カレンダーが
+   * これからやることの一覧ではなくなる。消してはいない（実施率には残る）ので、
+   * 下に小さく件数を出して戻せるようにする。
+   */
+  const activeSessions = sessions.filter((s) => s.status !== "skipped");
+  const skippedSessions = sessions.filter((s) => s.status === "skipped");
   /**
-   * 変更できるセッション（固定枠は対象外）。
+   * ✎を出すセッション。
    * 不具合: 1日に複数セッションがあるとき、✎ボタンが最初の1件しか
    * 対象にしていなかった。長押しは行ごとに正しく対象を拾えているが、
    * iOSでは長押しが取りこぼされることがあるため、確実な✎導線も
    * セッションの数だけ出す。
+   * 固定枠も対象にする——内容は変えられないが「やらなかった」は記録できる。
    */
-  const editableSessions = sessions.filter((s) => !s.isFixed);
+  const editableSessions = activeSessions;
 
   const start = (s: any) => {
     longFired.current = false;
@@ -675,7 +728,7 @@ function DayRow({
             {mark.icon}
           </span>
           <span className="min-w-0 flex-1">
-            {sessions.length === 0 && races.length === 0 ? (
+            {activeSessions.length === 0 && races.length === 0 ? (
               <span className="text-[12px]" style={{ color: "var(--text-3)" }}>
                 予定なし
               </span>
@@ -687,7 +740,7 @@ function DayRow({
                     <span style={{ color: "var(--text-2)" }}>{race.name}</span>
                   </span>
                 ))}
-                {sessions.map((s: Session) => {
+                {activeSessions.map((s: Session) => {
                   const result = resultBySessionId.get(s.id);
                   const diverged = actualDiffersFromPlan(s, result);
                   const actualText = diverged ? describeActualResult(result) : undefined;
@@ -787,6 +840,28 @@ function DayRow({
           </>
         ) : null}
       </div>
+
+      {/*
+        中止した予定。一覧からは外してあるが、押し間違いに気づけるよう
+        ここに小さく残す。「戻す」で予定に復帰する（固定枠は手で作り直せないため必須）。
+      */}
+      {skippedSessions.length > 0 && !moving ? (
+        <div className="flex items-center gap-2 flex-wrap mt-1 pl-[52px]">
+          <span className="text-[10.5px] line-through" style={{ color: "var(--text-3)" }}>
+            中止 {skippedSessions.map((s) => s.name).join("・")}
+          </span>
+          {skippedSessions.map((s) => (
+            <button
+              key={s.id}
+              className="btn-ghost !py-0.5 !px-1.5 !text-[10.5px] flex-shrink-0"
+              onClick={() => onRestore(s)}
+              aria-label={`「${s.name}」の中止を取り消す`}
+            >
+              戻す
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

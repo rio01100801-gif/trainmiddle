@@ -309,6 +309,16 @@ export interface RepResult {
    */
   restAfterSec?: number;
   restAfterDistanceM?: number;
+  /**
+   * その1本の中の通過タイム。2つ以上あるときだけ入る。
+   *
+   * 1000mを時計で 400m / 400m / 200m と刻んで走ると、FITにはlapが3つ入る。
+   * 3つを別々の本と数えると「1000m×4」が「396m×12」になるので1本にまとめるが、
+   * まとめただけだと本人が見ている「3:16.1(1:18.9-1:18.5-38.7)」の
+   * 内訳が消える。読めた情報なので捨てずに残す。
+   * 合計は必ず `actualSec` に一致する。
+   */
+  splitsSec?: number[];
   note?: string;
 }
 

@@ -37,6 +37,8 @@ export function SessionEditSheet({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [violations, setViolations] = useState<any[]>([]);
+  // 固定枠を「やらなかった」ときの理由。既定は予定（チーム練習が流れる典型）
+  const [skipReason, setSkipReason] = useState("schedule");
 
   // N-2: 本文に合わせた入力欄。追加シートと同じ実装を使う
   const fields = usePrescriptionFields(prescription, {
@@ -90,6 +92,78 @@ export function SessionEditSheet({
     const out = await r.json();
     onDone(out.error ?? "予定を削除しました。");
   };
+
+  /*
+   * 固定枠は本文も日付も変えられない（RULE-15）が、
+   * 「やらなかった」ことは起きる。チーム練習が中止になった・別のことをした場合に
+   * 予定が残り続けると、カレンダーが実際と合わなくなる。
+   * 消すのではなく中止として記録するので、実施率には残るし、あとで戻せる。
+   */
+  const skip = async () => {
+    setBusy(true);
+    try {
+      const r = await fetch("/api/skip", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: session.id, reason: skipReason }),
+      });
+      const out = await r.json();
+      if (out.error) {
+        setErr(out.error);
+        return;
+      }
+      onDone(out.decision?.message ?? "やらなかったことにしました。");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (session.isFixed) {
+    return (
+      <Card title={title ?? `${session.date.slice(5).replace("-", "/")} ${session.name}`}>
+        <p className="text-[11.5px] mb-2" style={{ color: "var(--text-3)" }}>
+          固定枠（チーム練習等）なので、内容と日付は変えられません（RULE-15）。
+          やらなかった場合は、下から中止として記録できます。カレンダーの一覧から外れ、
+          そのあとで戻すこともできます。
+        </p>
+        <label className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
+          やらなかった理由
+        </label>
+        <select
+          className="!text-[12px] !py-1.5 mb-2"
+          value={skipReason}
+          onChange={(e) => setSkipReason(e.target.value)}
+        >
+          <option value="schedule">予定</option>
+          <option value="fatigue">疲労</option>
+          <option value="red_signal">赤信号</option>
+          <option value="injury">故障</option>
+          <option value="weather">天候</option>
+          <option value="other">その他</option>
+        </select>
+        {err ? (
+          <StatusText kind="error" className="text-[11.5px] mb-2">
+            {err}
+          </StatusText>
+        ) : null}
+        <div className="flex gap-2 flex-wrap">
+          <ConfirmButton
+            label="やらなかった"
+            title="この固定枠を中止として記録しますか？"
+            message="カレンダーの一覧から外れます。記録済みの結果は消えません。あとで戻せます。"
+            className="btn-ghost"
+            onConfirm={skip}
+          />
+          <a className="btn-ghost" href={withQuery("/run", { sessionId: session.id })}>
+            走りながら入力
+          </a>
+          <button className="btn-ghost" disabled={busy} onClick={onClose}>
+            閉じる
+          </button>
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card title={title ?? `${session.date.slice(5).replace("-", "/")} ${session.name}`}>

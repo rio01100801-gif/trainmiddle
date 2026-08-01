@@ -70,6 +70,65 @@ describe("fitToSessionAndResult", () => {
     expect(warnings).toHaveLength(0);
   });
 
+  /*
+   * 実運用で報告された構成（2026-08-01）。
+   * 1000m×4 r200jog を、時計で1000mの中を 400m / 400m / 200m と刻んで走った。
+   * lapとlapの間に休みが無い（時刻が連続している）ので、この3つは
+   * 別々の本ではなく1本の中の通過。以前はlap1つを1本と数えていたため
+   * 「1000m×4」が「396m×12」として記録されていた。
+   */
+  it("1本の中を刻んだlap（400/400/200）を1本にまとめる", () => {
+    // 実際の記録: 3:16.1(1:18.9-1:18.5-38.7) / 3:14.9 / 3:14.2 / 3:14.7
+    const sub: Array<[number, number]> = [
+      [0.396, 78.87], [0.396, 78.55], [0.198, 38.67], [0.2, 81.8],
+      [0.396, 77.8], [0.396, 77.4], [0.198, 39.7], [0.2, 85.6],
+      [0.396, 77.0], [0.396, 78.2], [0.198, 39.0], [0.2, 80.0],
+      [0.396, 77.6], [0.396, 78.4], [0.198, 38.7],
+    ];
+    let t = Date.UTC(2026, 6, 25, 10, 0, 0);
+    const laps: FitParseLap[] = sub.map(([distanceKm, elapsedSec], index) => {
+      const startTimeUtc = new Date(t).toISOString();
+      t += elapsedSec * 1000; // 休みを含めて時刻は連続している
+      return lap({ index, startTimeUtc, endTimeUtc: new Date(t).toISOString(), distanceKm, elapsedSec });
+    });
+    const kinds: IntervalKind[] = sub.map(([d]) => (d === 0.2 ? "recovery" : "main"));
+
+    const { result } = fitToSessionAndResult({
+      sourceId: "t-merge",
+      fileName: "1000x4.fit",
+      parse: baseParse({ laps, utcOffsetSec: 9 * 3600 }),
+      confirmedKinds: kinds,
+      grpSecPerM: 195 / 1000,
+    });
+
+    expect(result.interval?.reps).toBe(4);
+    expect(result.interval?.distanceM).toBe(990); // 396+396+198（GPSの実測をそのまま出す）
+    expect(result.interval?.results.map((r) => Math.round(r.actualSec * 10) / 10)).toEqual([
+      196.1, 194.9, 194.2, 194.7,
+    ]);
+    // 刻んだ通過は捨てずに残す（本人が「1:18.9-1:18.5-38.7」で見ているため）
+    expect(result.interval?.results[0].splitsSec).toEqual([78.87, 78.55, 38.67]);
+    // 1本目の直後の休みはジョグ1つぶんだけ（次の本の通過を巻き込まない）
+    expect(result.interval?.results[0].restAfterSec).toBe(82);
+  });
+
+  it("休みを挟まずに時刻が飛んでいる（記録を止めて再開した）lapは別の本として数える", () => {
+    const laps: FitParseLap[] = [
+      lap({ index: 0, startTimeUtc: "2026-07-25T10:00:00Z", endTimeUtc: "2026-07-25T10:01:20Z", distanceKm: 0.4, elapsedSec: 80 }),
+      // 前のlapの終わりから3分空いている＝間に休みがあった
+      lap({ index: 1, startTimeUtc: "2026-07-25T10:04:20Z", endTimeUtc: "2026-07-25T10:05:40Z", distanceKm: 0.4, elapsedSec: 80 }),
+    ];
+    const { result } = fitToSessionAndResult({
+      sourceId: "t-gap",
+      fileName: "gap.fit",
+      parse: baseParse({ laps, utcOffsetSec: 9 * 3600 }),
+      confirmedKinds: ["main", "main"],
+      grpSecPerM: 80 / 400,
+    });
+    expect(result.interval?.reps).toBe(2);
+    expect(result.interval?.results[0].splitsSec).toBeUndefined();
+  });
+
   it("GRP未設定のときは距離だけの暫定カテゴリにし、警告を出す", () => {
     const parse = baseParse({ laps: INTERVAL_LAPS, utcOffsetSec: 9 * 3600 });
     const { session, warnings } = fitToSessionAndResult({

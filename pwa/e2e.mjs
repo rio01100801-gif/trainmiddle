@@ -1628,8 +1628,11 @@ step("M-7/M-8/M-10 現在地の表示OK");
 await shot("25_m7_gap");
 
 // P-5: 週報は「現在地」に統合したので、同じセグメントの中にある
-const revText = gapText;
-if (!revText.includes("週次レビュー")) fail("M-11: 週次レビューが無い");
+if (!gapText.includes("週次レビュー")) fail("M-11: 週次レビューが無い");
+// 本文は畳んである（指導者に渡す文章で、この画面で毎回読むものではない）。開いて中身を見る
+await page.getByRole("button", { name: /本文を読む/ }).first().click();
+await page.waitForTimeout(400);
+const revText = await page.textContent("body");
 if (!/設定.*に対して平均|ポイント練習は/.test(revText)) fail("M-11: 実測を引用していない");
 /*
  * P-2: 一括入力ぶんが週次レビューに入っていること。
@@ -1862,6 +1865,20 @@ step("N-2 本文に合わせた入力欄OK（値を消さずに組み替わる�
 await shot("27_edit_structure");
 
 // ---- 10d-2. カレンダーの操作（タップ・＋・✎） ----
+/*
+ * カレンダーの既定表示は「今週の月曜から7日」。
+ * 検証用のセッションをこの範囲の外に作ると、登録は成功するのに
+ * 画面に出てこないので、通らない理由を取り違える。
+ * 表示範囲の計算は app/calendar/page.tsx の weekStart と同じ。
+ */
+const calendarWeek = (() => {
+  const pad = (n) => String(n).padStart(2, "0");
+  const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const now = new Date();
+  const dow = now.getDay();
+  const start = new Date(now.getTime() + (dow === 0 ? -6 : 1 - dow) * 86400000);
+  return { from: fmt(start), to: fmt(new Date(start.getTime() + 6 * 86400000)) };
+})();
 await page.goto("http://localhost:8791/#/calendar");
 await page.waitForTimeout(900);
 // 日付行そのものをタップしたらその日の記録へ行くこと（案内文どおりの挙動）
@@ -1926,12 +1943,7 @@ step("カレンダー: 編集保存→一覧・再取得への反映OK");
 await shot("26_calendar_edit");
 
 // ---- 不具合: 1日に複数セッションがあると✎が最初の1件しか対象にしていなかった ----
-const multiSessionCheck = await page.evaluate(async () => {
-  const pad = (n) => String(n).padStart(2, "0");
-  const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  const now = new Date();
-  const from = fmt(now);
-  const to = fmt(new Date(now.getTime() + 13 * 86400000));
+const multiSessionCheck = await page.evaluate(async ({ from, to }) => {
   const sessions = await fetch(`/api/sessions?from=${from}&to=${to}`).then((r) => r.json());
   const target = (sessions.sessions ?? []).find((s) => !s.isFixed);
   if (!target) return { ok: false, reason: "対象日が見つからない" };
@@ -1947,7 +1959,7 @@ const multiSessionCheck = await page.evaluate(async () => {
   });
   if (!res.ok) return { ok: false, reason: `POST失敗 ${res.status}` };
   return { ok: true, date: target.date };
-});
+}, calendarWeek);
 if (!multiSessionCheck.ok) fail(`複数セッション検証の準備に失敗: ${multiSessionCheck.reason}`);
 await page.goto("http://localhost:8791/#/");
 await page.waitForTimeout(400);
@@ -1970,14 +1982,9 @@ await page.waitForTimeout(400);
 step("カレンダー: 1日に複数セッションがあっても各行の✎で個別に編集できるOK");
 
 // ---- 不具合2: 予定と違う練習を記録すると、カレンダーに実際の内容が出る ----
-const divergedCheck = await page.evaluate(async () => {
-  // カレンダーの既定表示は今週+来週（2週間）だけなので、その範囲内のセッションを選ぶ
+const divergedCheck = await page.evaluate(async ({ from, to }) => {
+  // カレンダーの既定表示は今週（1週間）だけなので、その範囲内のセッションを選ぶ
   // （選ばないと、記録は成功してもカレンダーの初期表示に出てこず誤検知する）
-  const pad = (n) => String(n).padStart(2, "0");
-  const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  const now = new Date();
-  const from = fmt(now);
-  const to = fmt(new Date(now.getTime() + 13 * 86400000));
   const sessions = await fetch(`/api/sessions?from=${from}&to=${to}`).then((r) => r.json());
   const aerobicSession = (sessions.sessions ?? []).find(
     (s) => s.category === "aerobic" && !s.isFixed
@@ -2013,7 +2020,7 @@ const divergedCheck = await page.evaluate(async () => {
   });
   if (!res.ok) return { ok: false, reason: `POST失敗 ${res.status}` };
   return { ok: true, date: aerobicSession.date };
-});
+}, calendarWeek);
 if (!divergedCheck.ok) fail(`不具合2の検証準備に失敗: ${divergedCheck.reason}`);
 // 同じハッシュへのgotoは再読み込みにならない（既存の注意点どおり）。
 // 一度別画面を経由してから戻り、確実に再取得させる。
@@ -2026,6 +2033,73 @@ if (!divergedText.includes("実際: 6本 100m")) {
   fail("不具合2: 予定と違う結果を記録してもカレンダーに実際の内容が出ない");
 }
 step("カレンダー: 予定と違う結果を記録すると「実際:」が表示されるOK（不具合2対応）");
+
+// ---- 固定枠を「やらなかった」ことにして一覧から外し、戻せること ----
+/*
+ * 固定枠（チーム練習等）は RULE-15 で変更も移動もできないが、
+ * 流れることはある。以前は断られるだけで一覧から外せず、
+ * やらなかった予定が残り続けていた。
+ * 消すのではなく中止にする（実施率に残る／再生成で復活しない）。
+ */
+const fixedPrep = await page.evaluate(async ({ from, to }) => {
+  const res = await fetch("/api/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      date: from,
+      category: "aerobic",
+      name: "チーム練習（固定枠E2E）",
+      prescription: "ジョグ40分",
+      isFixed: true,
+    }),
+  });
+  if (!res.ok) return { ok: false, reason: `POST失敗 ${res.status}` };
+  return { ok: true, from, to };
+}, calendarWeek);
+if (!fixedPrep.ok) fail(`固定枠の検証準備に失敗: ${fixedPrep.reason}`);
+await page.goto("http://localhost:8791/#/");
+await page.waitForTimeout(400);
+await page.goto("http://localhost:8791/#/calendar");
+await page.waitForTimeout(900);
+
+const fixedRow = page.locator("div.card", { hasText: "チーム練習（固定枠E2E）" }).first();
+const fixedEdit = fixedRow.getByRole("button", { name: /チーム練習（固定枠E2E）」を変更/ });
+if ((await fixedEdit.count()) === 0) {
+  fail("固定枠に✎が出ない（やらなかったことを記録する導線が無い）");
+}
+await fixedEdit.first().click();
+await page.waitForTimeout(700);
+let fixedSheetText = await page.textContent("body");
+if (!fixedSheetText.includes("RULE-15")) {
+  fail("固定枠のシートに、内容を変えられない理由が出ていない");
+}
+// 本文の書き換え欄は出さない（変えられないものを変えられるように見せない）
+if ((await page.locator("textarea").count()) > 0) {
+  fail("固定枠のシートにメニュー本文の入力欄が出ている（RULE-15と矛盾する）");
+}
+await page.getByRole("button", { name: "やらなかった" }).first().click();
+await page.waitForTimeout(300);
+await page.getByRole("button", { name: "実行する" }).first().click();
+await page.waitForTimeout(1200);
+
+const afterSkip = await page.textContent("body");
+if (!afterSkip.includes("中止 チーム練習（固定枠E2E）")) {
+  fail("固定枠を中止にしても、一覧から外れて「中止」として残る表示にならない");
+}
+// 中止した予定は「戻す」で予定に復帰する（固定枠は手で作り直せないため必須）
+await page
+  .getByRole("button", { name: "「チーム練習（固定枠E2E）」の中止を取り消す" })
+  .first()
+  .click();
+await page.waitForTimeout(1200);
+const afterRestore = await page.textContent("body");
+if (afterRestore.includes("中止 チーム練習（固定枠E2E）")) {
+  fail("中止を取り消しても予定に戻らない");
+}
+if (!afterRestore.includes("チーム練習（固定枠E2E）")) {
+  fail("中止を取り消したのに予定が消えている");
+}
+step("カレンダー: 固定枠をやらなかったことにして一覧から外し、戻せるOK");
 
 // ---- 10d-3. N-2: 「練習を足す」でも本文に合わせて欄が組み変わる ----
 // 編集シートと同じ実装（PrescriptionFields）を使っているので、

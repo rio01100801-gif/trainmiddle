@@ -181,9 +181,14 @@ describe("importFitFile（Phase 5: 二重登録防止）", () => {
       rawBytesBase64: "SAME_BYTES",
       parse: parseWithLaps(LAPS),
       autoClassification: autoClassification(),
-      confirmedKinds: KINDS, // 4本のメイン疾走のうち2本
+      confirmedKinds: KINDS, // lap1とlap3がメイン。間にリカバリーがあるので2本
     });
-    // 1回目は分類を間違えたので、2本目も「メイン」に直して登録し直す
+    /*
+     * 1回目は分類を間違えたので、間のlap2も「メイン」に直して登録し直す。
+     * lap1〜lap3は時刻が連続していて間に休みが無いため、3本ではなく
+     * 1本（0.3+0.2+0.3=800m）の中の通過としてまとまる。
+     * 休み無しで次の本が始まることはありえない、という扱い。
+     */
     const fixedKinds: IntervalKind[] = ["warmup", "main", "main", "main", "cooldown"];
     const { result } = importFitFile(repo, {
       fileName: "sample.fit",
@@ -192,9 +197,11 @@ describe("importFitFile（Phase 5: 二重登録防止）", () => {
       autoClassification: autoClassification(),
       confirmedKinds: fixedKinds,
     });
-    expect(result.interval?.reps).toBe(3);
+    expect(result.interval?.reps).toBe(1);
+    expect(result.interval?.results[0].distanceM).toBe(800);
+    expect(result.interval?.results[0].splitsSec).toEqual([50, 80, 51]);
     expect(repo.listResults()).toHaveLength(1);
-    expect(repo.resultForSession(result.sessionId)?.interval?.reps).toBe(3);
+    expect(repo.resultForSession(result.sessionId)?.interval?.reps).toBe(1);
   });
 
   it("生バイト列が違えば別記録として扱う（二重登録とはみなさない）", () => {

@@ -100,6 +100,10 @@ export interface RelativeIntensity {
   band?: { min: number; max: number };
   verdict: IntensityVerdict;
   note: string;
+  /** 判定に使った平均心拍。画面で帯と一緒に見せるために返す（noteから読み取らせない） */
+  bpm?: number;
+  /** 判定できない場合に、その理由だけを短く。判定できた場合は undefined */
+  blockedReason?: string;
 }
 
 /** その結果の代表的な平均心拍と、1本あたりの長さ */
@@ -136,22 +140,25 @@ export function relativeIntensity(
   if (!band) {
     return {
       verdict: "not_applicable",
+      blockedReason: "1本が短いカテゴリのため判定しない",
       note: `${session.category} は心拍から強度を判定しません（1本が短く、心拍が実際の負荷より低く出るため）`,
     };
   }
   if (!hrMax) {
     return {
       verdict: "no_data",
+      blockedReason: "最大心拍の基準が無い",
       note: "最大心拍の基準がありません（プロフィールに入れるか、最大心拍つきの記録が1件必要です）",
     };
   }
   const { hr, repSec } = hrAndDuration(result);
   if (hr === undefined) {
-    return { verdict: "no_data", note: "この練習には心拍が入っていません" };
+    return { verdict: "no_data", blockedReason: "心拍なし", note: "この練習には心拍が入っていません" };
   }
   if (repSec !== undefined && repSec > 0 && repSec < HR_STEADY_MIN_SEC) {
     return {
       verdict: "not_applicable",
+      blockedReason: `1本${Math.round(repSec)}秒で心拍が定常に達しない`,
       note: `1本が${Math.round(repSec)}秒と短く、心拍が定常に達しないため強度の判定には使いません`,
     };
   }
@@ -164,6 +171,7 @@ export function relativeIntensity(
     pct,
     band,
     verdict,
+    bpm: Math.round(hr),
     note:
       verdict === "in_band"
         ? `${head}。狙った強度で走れています`

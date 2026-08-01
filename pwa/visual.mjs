@@ -278,11 +278,24 @@ for (const { w, h } of WIDTHS) {
     viewport: { width: w, height: h },
     deviceScaleFactor: 2,
     reducedMotion: "reduce",
+    /*
+     * Service Worker を動かさない。
+     * 動いていると bundle.js がキャッシュから返り、`route(..., abort)` が
+     * 効かない。スプラッシュを撮るつもりの1枚が、実際にはアプリ本体を
+     * 撮っていた（baselineごと間違ったまま固定されていた）。
+     */
+    serviceWorkers: "block",
   });
   const page = await context.newPage();
 
-  // 時刻を固定する。固定しないと「レースまでN日」が実行日ごとに変わる
-  await page.addInitScript((iso) => {
+  /*
+   * 時刻を固定する。固定しないと「レースまでN日」が実行日ごとに変わる。
+   *
+   * context に入れるのは、スプラッシュを別ページで撮るため。
+   * page だけに入れていたときは、そのページだけ実時刻で動いていて、
+   * 「GOOD MORNING / GOOD EVENING」が撮った時間帯で変わっていた。
+   */
+  await context.addInitScript((iso) => {
     const fixed = new Date(iso).getTime();
     const Real = Date;
     class Frozen extends Real {

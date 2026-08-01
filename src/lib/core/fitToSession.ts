@@ -131,6 +131,73 @@ function avgOf(values: (number | undefined)[]): number | undefined {
   return defined.reduce((a, b) => a + b, 0) / defined.length;
 }
 
+/**
+ * 同じ1本の通過と見なす、lapの終わりと次のlapの始まりのずれの上限（秒）。
+ *
+ * FITの `total_elapsed_time` は一時停止も含んだ実時間なので、
+ * 「前のlapの終わり ＝ 次のlapの始まり」なら、その間に休みは無い。
+ * 2秒にしているのは、記録が1秒刻みで丸められるぶんだけを許すため
+ * （休みは最短でも数十秒あるので、これを広げる理由が無い）。
+ */
+const SAME_REP_GAP_SEC = 2;
+
+function lapEndMs(lap: FitParseLap): number | undefined {
+  if (lap.endTimeUtc) return new Date(lap.endTimeUtc).getTime();
+  if (lap.startTimeUtc && lap.elapsedSec !== undefined) {
+    return new Date(lap.startTimeUtc).getTime() + lap.elapsedSec * 1000;
+  }
+  return undefined;
+}
+
+/**
+ * 「メイン」lapを本ごとにまとめる。返すのはlap位置の配列の配列。
+ *
+ * 1本の中を時計で刻む（1000mを400/400/200で押す）と、間に休みのlapが無い
+ * メインlapが並ぶ。**休み無しで次の本が始まることはありえない**ので、
+ * この並びは別々の本ではなく1本の中の通過。
+ * lap1つを1本と数えていたため、実運用で `1000m×4` が `396m×12` になっていた。
+ *
+ * まとめる条件は2つとも満たすこと:
+ * - lap配列で隣り合っている（間に他の種別のlapが1つも無い＝休みが記録されていない）
+ * - 時刻が連続している（記録を止めて再開した場合はここで切れる）
+ *
+ * 時刻が読めないFITでは隣接だけで判断する。間にlapが無い以上、
+ * 休みが記録されていないことは確かなので、推測ではない。
+ */
+function groupIntoReps(laps: FitParseLap[], mainPositions: number[]): number[][] {
+  const groups: number[][] = [];
+  for (const pos of mainPositions) {
+    const current = groups[groups.length - 1];
+    const prev = current?.[current.length - 1];
+    if (prev !== undefined && pos === prev + 1 && continuesWithoutRest(laps[prev], laps[pos])) {
+      current.push(pos);
+    } else {
+      groups.push([pos]);
+    }
+  }
+  return groups;
+}
+
+function continuesWithoutRest(prev: FitParseLap, next: FitParseLap): boolean {
+  const prevEnd = lapEndMs(prev);
+  const nextStart = next.startTimeUtc ? new Date(next.startTimeUtc).getTime() : undefined;
+  if (prevEnd === undefined || nextStart === undefined) return true;
+  return Math.abs(nextStart - prevEnd) <= SAME_REP_GAP_SEC * 1000;
+}
+
+/** 通過ごとの平均心拍を、通過の長さで重みをつけて1本ぶんにする。1つも無ければundefined */
+function weightedHr(parts: FitParseLap[]): number | undefined {
+  let sum = 0;
+  let weight = 0;
+  for (const l of parts) {
+    if (l.avgHr === undefined) continue;
+    const w = l.elapsedSec ?? 1;
+    sum += l.avgHr * w;
+    weight += w;
+  }
+  return weight > 0 ? Math.round(sum / weight) : undefined;
+}
+
 /** [from, to) 区間のlapの距離・時間を合算する。値が1つも読めなければ undefined */
 function sumLapRange(
   laps: FitParseLap[],
@@ -214,11 +281,12 @@ export function deriveFitActuals(input: DeriveFitActualsInput): FitDerivedActual
   let weatherTempC: number | undefined;
 
   if (mainPositions.length > 0) {
-    const reps: RepResult[] = mainPositions.map((pos, idx) => {
-      const lap = laps[pos];
+    const groups = groupIntoReps(laps, mainPositions);
+    const reps: RepResult[] = groups.map((group, idx) => {
+      const last = group[group.length - 1];
       // 直後の「メイン」または「クールダウン」の手前までだけをこの本のレストとして数える。
       // クールダウンまで含めてしまうと、最後の本のレストが実際より長く出る。
-      let end = pos + 1;
+      let end = last + 1;
       while (
         end < laps.length &&
         confirmedKinds[end] !== "main" &&
@@ -226,14 +294,18 @@ export function deriveFitActuals(input: DeriveFitActualsInput): FitDerivedActual
       ) {
         end++;
       }
-      const rest = sumLapRange(laps, pos + 1, end);
+      const rest = sumLapRange(laps, last + 1, end);
+      const parts = group.map((p) => laps[p]);
+      const splits = parts.map((l) => l.elapsedSec!);
       return {
         index: idx + 1,
-        distanceM: Math.round(lap.distanceKm! * 1000),
-        actualSec: lap.elapsedSec!,
-        avgHr: lap.avgHr,
+        distanceM: Math.round(parts.reduce((s, l) => s + l.distanceKm! * 1000, 0)),
+        actualSec: splits.reduce((a, b) => a + b, 0),
+        // 通過ごとに心拍が違うので、通過の長さで重みをつけて1本ぶんにする
+        avgHr: weightedHr(parts),
         restAfterSec: rest.sec,
         restAfterDistanceM: rest.m,
+        splitsSec: splits.length > 1 ? splits : undefined,
       };
     });
     const distanceM = mode(reps.map((r) => r.distanceM));

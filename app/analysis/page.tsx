@@ -1084,6 +1084,238 @@ const COVERAGE_JP: Record<string, string> = {
   off: "休養",
 };
 
+/**
+ * 畳める補足。
+ *
+ * `<details>` を使わないのは、閉じていても中身が箱として残り、
+ * 画面最下部の要素がタブバーの裏に入るため（E2EのP-4が捕まえた）。
+ * 閉じているあいだは DOM から外す。
+ */
+function Collapsible({
+  label,
+  className,
+  children,
+}: {
+  label: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={className}>
+      <button
+        className="text-[11.5px] text-left"
+        aria-expanded={open}
+        style={{ color: "var(--text-3)" }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? "▾ " : "▸ "}
+        {label}
+      </button>
+      {open ? children : null}
+    </div>
+  );
+}
+
+interface SecRange {
+  fastSec: number;
+  slowSec: number;
+}
+
+/**
+ * 400m側・1500m側の妥当域と、いまのPB・目標を1本の数直線に並べる。
+ *
+ * 「400mから見た妥当域 1:48.00〜1:51.00」「1500mから見た 1:48.09〜1:50.59」と
+ * 数字を2つ置いても、PBがその中のどこにいるのか、目標が域の内側なのかは
+ * 読み取れない。同じ軸に置けば、どちら側から外れているかが一目で分かる。
+ *
+ * 軸は表示する値の実測の最小・最大から取る（固定幅にしない）。
+ * 妥当域は数秒の幅しかないので、固定幅だと全部が同じ位置に潰れる。
+ */
+function LimiterScale({
+  from400,
+  from1500,
+  pb800Sec,
+  targetSec,
+}: {
+  from400?: SecRange;
+  from1500?: SecRange;
+  pb800Sec: number;
+  targetSec?: number;
+}) {
+  const values = [pb800Sec];
+  if (targetSec !== undefined) values.push(targetSec);
+  for (const r of [from400, from1500]) {
+    if (r) values.push(r.fastSec, r.slowSec);
+  }
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  // 端に貼りつかないよう、幅の8%を左右に足す。幅0（値が1つ）でも割り算が壊れないようにする
+  const pad = Math.max(0.3, (hi - lo) * 0.08);
+  const min = lo - pad;
+  const span = hi - lo + pad * 2;
+  const at = (sec: number) => ((sec - min) / span) * 100;
+
+  const rows: { label: string; range?: SecRange }[] = [
+    { label: "400mから", range: from400 },
+    { label: "1500mから", range: from1500 },
+  ].filter((r) => r.range !== undefined);
+
+  return (
+    <div className="mt-3">
+      {rows.map((r) => (
+        <div key={r.label} className="flex items-center gap-2 mb-1.5">
+          <span className="text-[10px] w-[52px] flex-shrink-0" style={{ color: "var(--text-3)" }}>
+            {r.label}
+          </span>
+          <span
+            className="relative flex-1 min-w-0 h-[6px] rounded-full"
+            style={{ background: "var(--surface-3)" }}
+          >
+            <i
+              className="absolute top-0 h-full rounded-full"
+              style={{
+                left: `${at(r.range!.fastSec)}%`,
+                width: `${at(r.range!.slowSec) - at(r.range!.fastSec)}%`,
+                background: "rgba(182,255,0,.28)",
+              }}
+            />
+            {/* いまのPB。妥当域の中か外かが、この点の位置で分かる */}
+            <i
+              className="absolute top-[-2px] w-[2px] h-[10px] rounded-full"
+              style={{ left: `${at(pb800Sec)}%`, background: "var(--text)" }}
+            />
+            {targetSec !== undefined ? (
+              <i
+                className="absolute top-[-2px] w-[2px] h-[10px] rounded-full"
+                style={{ left: `${at(targetSec)}%`, background: "var(--forge)" }}
+              />
+            ) : null}
+          </span>
+          <span className="num text-[10.5px] w-[86px] text-right flex-shrink-0" style={{ color: "var(--text-3)" }}>
+            {fmtT(r.range!.fastSec)}〜{fmtT(r.range!.slowSec)}
+          </span>
+        </div>
+      ))}
+      <div className="flex gap-3 pl-[60px] mt-1 text-[10px]" style={{ color: "var(--text-3)" }}>
+        <span>
+          <i className="inline-block w-[2px] h-[8px] align-middle mr-1" style={{ background: "var(--text)" }} />
+          PB {fmtT(pb800Sec)}
+        </span>
+        {targetSec !== undefined ? (
+          <span>
+            <i className="inline-block w-[2px] h-[8px] align-middle mr-1" style={{ background: "var(--forge)" }} />
+            目標 {fmtT(targetSec)}
+          </span>
+        ) : null}
+        <span>帯 = 妥当域</span>
+      </div>
+    </div>
+  );
+}
+
+interface HrLine {
+  date: string;
+  verdict: string;
+  note: string;
+  bpm?: number;
+  pct?: number;
+  band?: { min: number; max: number };
+  blockedReason?: string;
+}
+
+/*
+ * 心拍の相対強度の軸。%HRmaxで60〜100だけを描く。
+ * 0から描くと帯（65〜97%）が右端に潰れて、狙いから外れているかが見えない。
+ * ジョグの下限が65%なので、60を下端にすれば「下に外れた」も表示に入る。
+ */
+const HR_AXIS_MIN = 60;
+const HR_AXIS_MAX = 100;
+const hrAxis = (pct: number) =>
+  Math.max(0, Math.min(100, ((pct - HR_AXIS_MIN) / (HR_AXIS_MAX - HR_AXIS_MIN)) * 100));
+
+const HR_VERDICT_LABEL: Record<string, string> = {
+  in_band: "狙い通り",
+  below: "弱い",
+  above: "強い",
+};
+
+/**
+ * 心拍1日ぶん。
+ *
+ * 以前は判定文（一文）をそのまま縦に並べていた。同じ言い回しが8日ぶん続くので、
+ * 「どの日が狙いから外れているか」を知るのに全部読む必要があった。
+ * 狙いの帯を線で描き、その上に実測の位置を打つ。外れている日は目で分かる。
+ * 文は畳んで残す（理由まで読みたいときのため。捨ててはいない）。
+ */
+function HrRow({ line }: { line: HrLine }) {
+  const [open, setOpen] = useState(false);
+  const judged = line.pct !== undefined && line.band !== undefined;
+  const color =
+    line.verdict === "in_band"
+      ? "var(--forge)"
+      : line.verdict === "below" || line.verdict === "above"
+      ? "var(--amber)"
+      : "var(--text-3)";
+
+  return (
+    <div className="py-1.5 border-b last:border-b-0" style={{ borderColor: "var(--border)" }}>
+      <button
+        className="flex items-center gap-2 w-full text-left"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="num text-[11px] w-[34px] flex-shrink-0" style={{ color: "var(--text-3)" }}>
+          {line.date.slice(5).replace("-", "/")}
+        </span>
+        {judged ? (
+          <>
+            <span className="num text-[13px] font-bold w-[42px] flex-shrink-0">
+              {line.bpm}
+              <span className="text-[9px] font-normal" style={{ color: "var(--text-3)" }}>
+                bpm
+              </span>
+            </span>
+            {/* 狙いの帯と実測の位置 */}
+            <span
+              className="relative flex-1 min-w-0 h-[6px] rounded-full"
+              style={{ background: "var(--surface-3)" }}
+            >
+              <i
+                className="absolute top-0 h-full rounded-full"
+                style={{
+                  left: `${hrAxis(line.band!.min)}%`,
+                  width: `${hrAxis(line.band!.max) - hrAxis(line.band!.min)}%`,
+                  background: "rgba(182,255,0,.22)",
+                }}
+              />
+              <i
+                className="absolute top-[-2px] w-[2px] h-[10px] rounded-full"
+                style={{ left: `${hrAxis(line.pct!)}%`, background: color }}
+              />
+            </span>
+            <span className="num text-[11.5px] w-[30px] text-right flex-shrink-0" style={{ color }}>
+              {line.pct!.toFixed(0)}%
+            </span>
+            <span className="text-[10px] w-[44px] text-right flex-shrink-0" style={{ color }}>
+              {HR_VERDICT_LABEL[line.verdict] ?? ""}
+            </span>
+          </>
+        ) : (
+          <span className="flex-1 text-[11px]" style={{ color: "var(--text-3)" }}>
+            {line.blockedReason ?? "判定できません"}
+          </span>
+        )}
+      </button>
+      {open ? (
+        <p className="text-[11px] leading-relaxed mt-1 pl-[34px]" style={{ color: "var(--text-3)" }}>
+          {line.note}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function GapPanel() {
   const d = useInsights();
   if (!d) return <p className="text-[13px]">読み込み中…</p>;
@@ -1102,23 +1334,24 @@ function GapPanel() {
             <div className="metric" style={{ fontSize: 26 }}>
               {LIMITER_JP[lim.limiter] ?? lim.limiter}
             </div>
-            <div className="grid grid-cols-2 gap-2 mt-3 mb-2.5">
-              <div>
-                <div className="metric-label">400mから見た妥当域</div>
-                <div className="text-[13px] num">
-                  {lim.from400 ? `${fmtT(lim.from400.fastSec)}〜${fmtT(lim.from400.slowSec)}` : "-"}
-                </div>
-              </div>
-              <div>
-                <div className="metric-label">1500mから見た妥当域</div>
-                <div className="text-[13px] num">
-                  {lim.from1500 ? `${fmtT(lim.from1500.fastSec)}〜${fmtT(lim.from1500.slowSec)}` : "-"}
-                </div>
-              </div>
-            </div>
-            <p className="text-[12px] leading-relaxed" style={{ color: "var(--text-2)" }}>
-              {lim.narrative}
-            </p>
+            {/*
+              妥当域とPB・目標を同じ数直線に置く。
+              以前は「1:48.00〜1:51.00」という2つの数字と、それを言い直した
+              長い文だけだった。数字の並びからは、PBがその中のどこにいるのか、
+              目標が域の内側なのか外側なのかが読み取れない。
+            */}
+            <LimiterScale
+              from400={lim.from400}
+              from1500={lim.from1500}
+              pb800Sec={lim.pb800Sec}
+              targetSec={d.limiter.targetSec}
+            />
+            {/* 根拠の文は畳む。同じ数字を言い直しているので毎回は読まない */}
+            <Collapsible label="この判定の根拠" className="mt-2.5">
+              <p className="text-[12px] leading-relaxed mt-1.5" style={{ color: "var(--text-2)" }}>
+                {lim.narrative}
+              </p>
+            </Collapsible>
             <p className="text-[11.5px] leading-relaxed mt-2" style={{ color: "var(--text-3)" }}>
               {d.limiter.appliedNote}
             </p>
@@ -1197,25 +1430,9 @@ function GapPanel() {
             記録がまだありません。
           </p>
         ) : (
-          <div className="flex flex-col gap-1.5">
-            {(d.hr.lines ?? []).map((l: any, i: number) => (
-              <div key={i} className="text-[11.5px] leading-relaxed">
-                <span className="num" style={{ color: "var(--text-3)" }}>
-                  {l.date.slice(5).replace("-", "/")}
-                </span>{" "}
-                <span
-                  style={{
-                    color:
-                      l.verdict === "in_band"
-                        ? "var(--forge)"
-                        : l.verdict === "below" || l.verdict === "above"
-                        ? "var(--amber)"
-                        : "var(--text-3)",
-                  }}
-                >
-                  {l.note}
-                </span>
-              </div>
+          <div className="flex flex-col">
+            {(d.hr.lines ?? []).map((l: HrLine, i: number) => (
+              <HrRow key={i} line={l} />
             ))}
           </div>
         )}
@@ -1252,6 +1469,12 @@ const LIMITER_JP: Record<string, string> = {
 function ReviewPanel() {
   const d = useInsights();
   const [copied, setCopied] = useState(false);
+  /*
+   * 本文は閉じているあいだ DOM から外す。
+   * `<details>` で畳むと、閉じていても中身が箱として残り、
+   * 最下部がタブバーの裏に入る（E2EのP-4が捕まえた）。
+   */
+  const [openText, setOpenText] = useState(false);
   if (!d) return <p className="text-[13px]">読み込み中…</p>;
   if (d.empty) return <Card><p className="text-[12px]">プロフィールを登録すると出ます。</p></Card>;
   const rev = d.review;
@@ -1261,12 +1484,26 @@ function ReviewPanel() {
       <p className="text-[11.5px] mb-2.5" style={{ color: "var(--text-3)" }}>
         そのまま指導者に見せられる形にしてあります。数字は実測です。
       </p>
-      <div
-        className="rounded-lg p-3 text-[12.5px] leading-relaxed whitespace-pre-wrap"
-        style={{ background: "var(--surface-2)", color: "var(--text)" }}
+      {/*
+        本文は畳んでおく。これは指導者に渡すための文章であって、
+        毎回この画面で読むものではない。開かず「コピーする」だけで用が足りるので、
+        分析タブを縦にスクロールするときの障害物にしない。
+      */}
+      <button
+        className="btn-ghost !text-[12px] !py-1"
+        aria-expanded={openText}
+        onClick={() => setOpenText((v) => !v)}
       >
-        {rev.text}
-      </div>
+        {openText ? "本文を閉じる" : `本文を読む（${rev.text.length}字）`}
+      </button>
+      {openText ? (
+        <div
+          className="rounded-lg p-3 mt-2 text-[12.5px] leading-relaxed whitespace-pre-wrap"
+          style={{ background: "var(--surface-2)", color: "var(--text)" }}
+        >
+          {rev.text}
+        </div>
+      ) : null}
       <button
         className="btn-ghost mt-2.5"
         onClick={() => {

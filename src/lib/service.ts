@@ -865,6 +865,24 @@ export function processSkip(
 
   if (decision.action === "delete") {
     repo.saveSession({ ...session, status: "skipped" });
+  } else if (decision.action === "postpone" && session.isFixed) {
+    /*
+     * 固定枠（チーム練習等）は後ろ倒ししない。
+     * 日時が決まっているから固定枠なのであって、2日ずらした「チーム練習」は
+     * 実在しない予定になる。RULE-15が変更・移動を禁じているのと同じ理由。
+     * 中止したという事実だけを残す。
+     */
+    repo.saveSession({ ...session, status: "skipped" });
+    return {
+      decision: {
+        ...decision,
+        action: "delete",
+        message:
+          decision.message +
+          " ただし固定枠（チーム練習等）なので後ろ倒しはせず、中止として記録しました。",
+      },
+      violations: runRuleEngine(buildRuleContext(repo, session.date)),
+    };
   } else if (decision.action === "postpone") {
     // 最大2日後ろ倒し → ルール再実行で違反が出れば削除推奨（ここでは1候補を試す）
     const newDate = addDays(session.date, Math.min(2, decision.maxPostponeDays ?? 2));
@@ -893,6 +911,32 @@ export function processSkip(
   }
   const violations = runRuleEngine(buildRuleContext(repo, session.date));
   return { decision, violations };
+}
+
+/**
+ * 中止（skipped）を取り消して予定に戻す。
+ *
+ * 中止した枠はカレンダーの一覧から外れる。押し間違いに気づいたときに
+ * 戻せないと、消えた予定を手で作り直すしかなくなる（固定枠は手で作り直せない）。
+ *
+ * 記録済みのものは戻さない。中止したのに結果があるという状態は
+ * どちらが本当か分からなくなるため。
+ */
+export function restoreSkippedSession(
+  repo: Store,
+  sessionId: string,
+  today: string
+): { ok: boolean; error?: string; violations: RuleViolation[] } {
+  const session = repo.getSession(sessionId);
+  if (!session) return { ok: false, error: "セッションが見つかりません", violations: [] };
+  if (session.status !== "skipped") {
+    return { ok: false, error: "中止していない予定です", violations: [] };
+  }
+  if (repo.resultForSession(sessionId)) {
+    return { ok: false, error: "記録が入っている予定は戻せません", violations: [] };
+  }
+  repo.saveSession({ ...session, status: "planned" });
+  return { ok: true, violations: runRuleEngine(buildRuleContext(repo, today)) };
 }
 
 // ---------------------------------------------------------------------------
@@ -2789,10 +2833,13 @@ export function limiterAssessment(repo: Store): {
   assessment?: LimiterAssessment;
   weights: CategoryWeight[];
   appliedNote: string;
+  /** 目標タイム（秒）。妥当域とPBを同じ数直線に並べて見せるために返す */
+  targetSec?: number;
 } {
   const athlete = repo.getAthlete();
   if (!athlete) return { weights: [], appliedNote: "" };
-  const assessment = assessLimiter(athlete, repo.getGoal()?.targetTimeSec);
+  const targetSec = repo.getGoal()?.targetTimeSec;
+  const assessment = assessLimiter(athlete, targetSec);
   const weights = categoryWeights(assessment.limiter);
   // 動かす項目だけを出す。据え置き（1.0）を「0%」と並べても判断材料にならない
   const moved = weights.filter((w) => w.weight !== 1);
@@ -2806,7 +2853,7 @@ export function limiterAssessment(repo: Store): {
               `${CATEGORY_JP_LABELS[w.category] ?? w.category} ${w.weight > 1 ? "+" : ""}${Math.round((w.weight - 1) * 100)}%（${w.note}）`
           )
           .join(" / ");
-  return { assessment, weights, appliedNote };
+  return { assessment, weights, appliedNote, targetSec };
 }
 
 const CATEGORY_JP_LABELS: Record<string, string> = {
@@ -3008,6 +3055,16 @@ export interface HrUsageLine {
   category: SessionCategory;
   verdict: string;
   note: string;
+  /*
+   * 画面で帯として見せるための素の値。
+   * 以前は note（一文）だけを返していたので、同じ文が日数ぶん縦に並び、
+   * どの日が狙いから外れているのかを読み取るのに全部読む必要があった。
+   * 文はそのまま残す（読みたいときに読める）。
+   */
+  bpm?: number;
+  pct?: number;
+  band?: { min: number; max: number };
+  blockedReason?: string;
 }
 
 /**
@@ -3048,6 +3105,10 @@ export function hrUsage(
       category: s.category,
       verdict: ri.verdict,
       note: ri.note,
+      bpm: ri.bpm,
+      pct: ri.pct,
+      band: ri.band,
+      blockedReason: ri.blockedReason,
     });
     if (r.heatFlagged) {
       const ev = heatHrEvidence(sessions, results, r);

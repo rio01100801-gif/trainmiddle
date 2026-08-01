@@ -25,6 +25,12 @@ export interface SummaryRep {
    * 差が小さいので、絶対値ではなく「その日の中での相対」で見せる。
    */
   ratio: number;
+  /**
+   * その本の中の通過タイム（2つ以上あるときだけ）。
+   * 1000mを400/400/200と刻んだFITから入る。前半突っ込んだのか
+   * 最後だけ落ちたのかは、合計だけでは分からない。
+   */
+  splitsSec?: number[];
 }
 
 export interface SessionSummaryView {
@@ -53,9 +59,10 @@ export function buildSessionSummary(
   result: SessionResult
 ): SessionSummaryView {
   const iv = result.interval;
-  const times = (iv?.results ?? [])
-    .map((r) => r.actualSec)
-    .filter((v): v is number => typeof v === "number" && v > 0);
+  const done = (iv?.results ?? []).filter(
+    (r) => typeof r.actualSec === "number" && r.actualSec > 0
+  );
+  const times = done.map((r) => r.actualSec);
 
   if (iv && times.length > 0) {
     const best = Math.min(...times);
@@ -64,6 +71,7 @@ export function buildSessionSummary(
       index: i + 1,
       sec,
       isBest: sec === best,
+      splitsSec: done[i].splitsSec,
       /*
        * 最速を1、遅い本ほど短くする。0起点だと差が誇張されすぎ、
        * 1起点だと差が見えないので、0.55を下駄にしている。

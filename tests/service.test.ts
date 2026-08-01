@@ -9,6 +9,7 @@ import {
   regeneratePlan,
   processResult,
   processSkip,
+  restoreSkippedSession,
   processDailyCheck,
   processRaceResult,
   dashboard,
@@ -208,6 +209,40 @@ describe("サービス層: スキップ", () => {
     } else {
       expect(s.status).toBe("skipped");
     }
+  });
+
+  /*
+   * 固定枠（チーム練習等）は日時が決まっているから固定枠なので、
+   * 後ろ倒しした「チーム練習」は実在しない予定になる。
+   */
+  it("固定枠は予定スキップでも後ろ倒しせず、その日のまま中止にする", () => {
+    const { repo } = setup();
+    regeneratePlan(repo, "2026-06-08");
+    const target = repo
+      .listSessions()
+      .filter((s) => s.category === "race_economy" && s.date < "2026-09-01")[0];
+    repo.saveSession({ ...target, isFixed: true });
+
+    const out = processSkip(repo, target.id, "schedule");
+    const after = repo.getSession(target.id)!;
+    expect(after.status).toBe("skipped");
+    expect(after.date).toBe(target.date); // 日付が動いていない
+    expect(out.decision.action).toBe("delete");
+  });
+
+  it("中止を取り消すと予定に戻る。記録が入っていれば戻さない", () => {
+    const { repo } = setup();
+    regeneratePlan(repo, "2026-06-08");
+    const q = repo.listSessions().filter((s) => s.category === "high_lactate")[0];
+    processSkip(repo, q.id, "fatigue");
+    expect(repo.getSession(q.id)!.status).toBe("skipped");
+
+    const back = restoreSkippedSession(repo, q.id, "2026-06-08");
+    expect(back.ok).toBe(true);
+    expect(repo.getSession(q.id)!.status).toBe("planned");
+
+    // 中止していないものは戻す対象にならない
+    expect(restoreSkippedSession(repo, q.id, "2026-06-08").ok).toBe(false);
   });
 });
 
