@@ -3,7 +3,14 @@
  * 元ファイル・自動解析・確認済みSession/Resultを1つのトランザクションで保存する。
  */
 import { describe, expect, it } from "vitest";
-import { importFitFile, rebuildFitDerived, type ImportFitFileOutput } from "@/lib/service";
+import {
+  confirmFitImport,
+  importFitFile as stageFitFile,
+  rebuildFitDerived,
+  trustedResults,
+  type ImportFitFileInput,
+  type ImportFitFileOutput,
+} from "@/lib/service";
 import type { Store } from "@/lib/db/store";
 import type { FitParseLap, FitParseResult } from "@/lib/core/fitParse";
 import type { IntervalClassifyResult, IntervalKind } from "@/lib/core/intervalClassify";
@@ -61,6 +68,18 @@ function autoClassification(): IntervalClassifyResult {
     })),
     warnings: [],
   };
+}
+
+const CONFIRMATION = {
+  category: "high_lactate" as const,
+  rpe: 8,
+  achievement: "achieved" as const,
+  subjective: "hard" as const,
+};
+
+/** 既存の変換テストは、本人確認値を明示した1操作完了経路で実行する。 */
+function importFitFile(repo: Store, input: ImportFitFileInput) {
+  return stageFitFile(repo, { ...input, resultConfirmation: CONFIRMATION });
 }
 
 describe("importFitFile", () => {
@@ -126,7 +145,7 @@ describe("importFitFile", () => {
     expect(repo.listResults()).toHaveLength(0);
   });
 
-  it("保存の途中で失敗したら、先に書き込んだ分もロールバックする（対象2と同じトランザクション保護）", () => {
+  it("正式結果の保存に失敗しても元FITは確認待ちで残し、不完全なSession/Resultは残さない", () => {
     const repo = memRepo();
     const failing = withFailingSaveResult(repo);
     expect(() =>
@@ -138,10 +157,118 @@ describe("importFitFile", () => {
         confirmedKinds: KINDS,
       })
     ).toThrow();
-    // saveFitImport・saveSessionは先に成功していたはずだが、
-    // saveResultの失敗でトランザクション全体が巻き戻っていること
-    expect(repo.listFitImports()).toHaveLength(0);
+    // 元FIT・解析は再入力を失わないため保持する。正式結果側だけがロールバックされる。
+    expect(repo.listFitImports()).toHaveLength(1);
+    expect(repo.listFitImports()[0].resultConfirmation).toEqual({ status: "pending" });
     expect(repo.listSessions()).toHaveLength(0);
+    expect(repo.listResults()).toHaveLength(0);
+  });
+});
+
+describe("FIT本人確認ゲート", () => {
+  it("取込直後は元FITだけを保存し、固定RPE・達成結果・CFE更新を作らない", () => {
+    const repo = memRepo();
+    repo.saveCfe({ estimated800mSec: 108.9, confidence: 0.8, lastUpdated: "2026-07-01", history: [] });
+    const before = repo.getCfe()!.estimated800mSec;
+
+    const staged = stageFitFile(repo, {
+      fileName: "pending.fit",
+      rawBytesBase64: "PENDING_BYTES",
+      parse: parseWithLaps(LAPS),
+      autoClassification: autoClassification(),
+      confirmedKinds: KINDS,
+    });
+
+    expect("needsResultConfirmation" in staged && staged.needsResultConfirmation).toBe(true);
+    expect(repo.listFitImports()[0].resultConfirmation).toEqual({ status: "pending" });
+    expect(repo.listSessions()).toHaveLength(0);
+    expect(repo.listResults()).toHaveLength(0);
+    expect(trustedResults(repo)).toHaveLength(0);
+    expect(repo.getCfe()!.estimated800mSec).toBe(before);
+  });
+
+  it("本人確認後だけ入力したカテゴリ・RPE・達成状態で正式結果を作る", () => {
+    const repo = memRepo();
+    const staged = stageFitFile(repo, {
+      fileName: "confirmed.fit",
+      rawBytesBase64: "CONFIRMED_BYTES",
+      parse: parseWithLaps(LAPS),
+      autoClassification: autoClassification(),
+      confirmedKinds: KINDS,
+    });
+    if (!("needsResultConfirmation" in staged) || !staged.needsResultConfirmation) {
+      throw new Error("本人確認待ちになっていません");
+    }
+
+    const confirmed = confirmFitImport(repo, {
+      fitImportId: staged.record.id,
+      category: "race_economy",
+      rpe: 6.5,
+      achievement: "partial",
+      subjective: "moderate",
+    });
+
+    expect(confirmed.record.resultConfirmation).toMatchObject({
+      status: "confirmed",
+      category: "race_economy",
+      rpe: 6.5,
+      achievement: "partial",
+      subjective: "moderate",
+    });
+    expect(confirmed.record.resultConfirmation).not.toHaveProperty("fitImportId");
+    expect(confirmed.session.category).toBe("race_economy");
+    expect(confirmed.result).toMatchObject({
+      rpe: 6.5,
+      achievement: "partial",
+      subjective: "moderate",
+    });
+    expect(trustedResults(repo)).toHaveLength(1);
+  });
+
+  it("同じ紐付け済みFITを再確認しても結果・CFE寄与を二重にしない", () => {
+    const repo = memRepo();
+    repo.saveAthlete(testAthlete());
+    repo.saveCfe({ estimated800mSec: 108.9, confidence: 0.8, lastUpdated: "2026-07-01", history: [] });
+    repo.saveSession(makeSession("2026-07-20", "threshold", { id: "planned-confirm" }));
+    const staged = stageFitFile(repo, {
+      fileName: "linked.fit",
+      rawBytesBase64: "LINKED_BYTES",
+      parse: parseWithLaps(LAPS),
+      autoClassification: autoClassification(),
+      confirmedKinds: KINDS,
+      linkToSessionId: "planned-confirm",
+    });
+    if (!("needsResultConfirmation" in staged) || !staged.needsResultConfirmation) {
+      throw new Error("本人確認待ちになっていません");
+    }
+    const input = { fitImportId: staged.record.id, ...CONFIRMATION };
+    const first = confirmFitImport(repo, input);
+    const historyAfterFirst = repo.getCfe()!.history.length;
+    const second = confirmFitImport(repo, input);
+
+    expect(second.result.id).toBe(first.result.id);
+    expect(second.session.category).toBe("high_lactate");
+    expect(repo.listResults()).toHaveLength(1);
+    expect(repo.getCfe()!.history.length).toBe(historyAfterFirst);
+  });
+
+  it("確認状態のない旧FITは結果を保持したまま分析対象外にする", () => {
+    const repo = memRepo();
+    const confirmed = importFitFile(repo, {
+      fileName: "legacy.fit",
+      rawBytesBase64: "LEGACY_BYTES",
+      parse: parseWithLaps(LAPS),
+      autoClassification: autoClassification(),
+      confirmedKinds: KINDS,
+    });
+    if (!("record" in confirmed) || !("result" in confirmed)) {
+      throw new Error("テスト用の正式結果を作れませんでした");
+    }
+    repo.saveFitImport({ ...confirmed.record, resultConfirmation: undefined });
+
+    expect(repo.listResults()).toHaveLength(1);
+    expect(trustedResults(repo)).toHaveLength(0);
+    expect(rebuildFitDerived(repo)).toMatchObject({ unconfirmed: 1, rebuilt: 0 });
   });
 });
 
@@ -402,6 +529,7 @@ describe("rebuildFitDerived", () => {
     });
     expect("linked" in first && first.linked).toBe(true);
     const sessionCountBefore = repo.listSessions().length;
+    repo.saveSession({ ...repo.getSession("planned-1")!, category: "threshold" });
 
     const { imports, rebuilt, orphaned } = rebuildFitDerived(repo);
     expect(imports).toBe(1);
@@ -410,6 +538,7 @@ describe("rebuildFitDerived", () => {
     // 新規のfit-s-*セッションが増えていない。元のplanned-1のままcompleted
     expect(repo.listSessions()).toHaveLength(sessionCountBefore);
     expect(repo.getSession("planned-1")?.status).toBe("completed");
+    expect(repo.getSession("planned-1")?.category).toBe(CONFIRMATION.category);
     expect(repo.getSession(`fit-s-${(first as any).record.id}`)).toBeUndefined();
   });
 

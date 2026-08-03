@@ -1,14 +1,12 @@
 /**
- * FIT取込 Phase 4: 3層データモデルでの保存（元ファイル / 自動解析 / 確認済み）。
+ * FIT取込 Phase 4: 元ファイル / 自動解析 / 区間分類 / 本人確認値を分けて保存する。
  * FIT取込 Phase 6: 既存の計画済みセッションとの紐付け。
  *
  * 二重登録防止はPhase 5（`src/lib/service.ts` の `importFitFile`）。
  *
- * ここでの「確認済み」は、`FitImportRecord.confirmedKinds`
- * （自動判定＋本人が画面上で直した後の最終的な種別、lap配列と同じ並び）から
- * 実測データ（`deriveFitActuals`）を導く純粋関数。`PastEntry` →
- * `toSessionAndResult`（`backfill.ts`）と同じ考え方：確認済み層だけから
- * 機械的に決まり、何度re-runしても同じ結果になる。
+ * `confirmedKinds`は本人が直した区間分類であり、RPE・達成状態の確認を意味しない。
+ * 実測データ（`deriveFitActuals`）と、FITには無い本人確認値
+ * （`FitResultConfirmation`）が両方揃った後だけSessionResultを作る。
  *
  * 計画済みセッションが見つからない場合（Phase 4までの挙動）は
  * `buildBackfilledSessionAndResult` で新規の`backfilled`セッションを作る。
@@ -20,6 +18,7 @@
  * 対になる。計画済みの予定に対する実測は「今日の記録」そのものだから）。
  */
 import type {
+  Achievement,
   ContinuousRunDetail,
   IntervalDetail,
   RepResult,
@@ -32,7 +31,7 @@ import type { FitParseLap, FitParseResult } from "./fitParse";
 import type { IntervalClassifyResult, IntervalKind } from "./intervalClassify";
 import { categoryFromTarget } from "./bulkImport";
 
-/** 保存される1件のFIT取込。3層のうち「元ファイル」と「自動解析」を持つ */
+/** 保存される1件のFIT取込。元ファイル・自動解析・本人確認状態を持つ */
 export interface FitImportRecord {
   id: string;
   importedAtUtc: string;
@@ -43,8 +42,36 @@ export interface FitImportRecord {
   autoClassification: IntervalClassifyResult;
   /** 本人が画面上で直した後の最終的な種別（lap配列と同じ並び）。「確認済み」層の元になる */
   confirmedKinds: IntervalKind[];
-  sessionId: string;
-  resultId: string;
+  /**
+   * FITだけでは分からない主観情報の確認状態。旧データでは未設定なので、
+   * 呼び出し側は安全側の `pending` として扱う。
+   */
+  resultConfirmation?: FitResultConfirmation;
+  /** 確認後に紐付ける予定。nullは新しい記録、文字列は既存予定への紐付け。 */
+  linkToSessionId?: string | null;
+  /** 確認後にだけ入る。旧データでは既に入っている場合がある。 */
+  sessionId?: string;
+  resultId?: string;
+}
+
+/** FITには存在しないため、本人が入力して初めて確定する情報。 */
+export type FitResultConfirmation =
+  | { status: "pending" }
+  | {
+      status: "confirmed";
+      confirmedAtUtc: string;
+      category: SessionCategory;
+      rpe: number;
+      achievement: Achievement;
+      subjective: Subjective;
+    };
+
+export function isFitResultConfirmed(
+  record: FitImportRecord
+): record is FitImportRecord & {
+  resultConfirmation: Extract<FitResultConfirmation, { status: "confirmed" }>;
+} {
+  return record.resultConfirmation?.status === "confirmed";
 }
 
 export interface DeriveFitActualsInput {
@@ -65,8 +92,6 @@ export interface FitDerivedActuals {
   actualLapsSec: number[];
   lapDistancesM?: number[];
   completedReps?: number;
-  rpe: number;
-  subjective: Subjective;
   totalDistanceKm: number;
   totalDurationMin: number;
   warnings: string[];
@@ -81,6 +106,7 @@ export interface FitDerivedActuals {
 export interface FitToSessionInput extends DeriveFitActualsInput {
   sourceId: string;
   fileName: string;
+  resultConfirmation: Extract<FitResultConfirmation, { status: "confirmed" }>;
 }
 
 export interface FitToSessionOutput {
@@ -427,10 +453,6 @@ export function deriveFitActuals(input: DeriveFitActualsInput): FitDerivedActual
   const totalDurationSec =
     parse.sessions[0]?.totalElapsedSec ?? laps.reduce((sum, l) => sum + (l.elapsedSec ?? 0), 0);
 
-  const rpe = category === "aerobic" ? 3 : 8;
-  const subjective: Subjective =
-    rpe >= 9 ? "very_hard" : rpe >= 7 ? "hard" : rpe >= 5 ? "moderate" : "easy";
-
   return {
     date,
     timeOfDay,
@@ -440,8 +462,6 @@ export function deriveFitActuals(input: DeriveFitActualsInput): FitDerivedActual
     actualLapsSec,
     lapDistancesM,
     completedReps,
-    rpe,
-    subjective,
     totalDistanceKm: Math.round(totalDistanceKm * 100) / 100,
     totalDurationMin: Math.round(totalDurationSec / 60),
     warnings,
@@ -457,9 +477,11 @@ export function deriveFitActuals(input: DeriveFitActualsInput): FitDerivedActual
 export function buildBackfilledSessionAndResult(
   derived: FitDerivedActuals,
   sourceId: string,
-  fileName: string
+  fileName: string,
+  confirmation: Extract<FitResultConfirmation, { status: "confirmed" }>
 ): FitToSessionOutput {
-  const { interval, continuous, category } = derived;
+  const { interval, continuous } = derived;
+  const category = confirmation.category;
   const session: Session = {
     id: `fit-s-${sourceId}`,
     date: derived.date,
@@ -490,9 +512,9 @@ export function buildBackfilledSessionAndResult(
     continuous,
     lapDistancesM: derived.lapDistancesM,
     completedReps: derived.completedReps,
-    rpe: derived.rpe,
-    achievement: "achieved",
-    subjective: derived.subjective,
+    rpe: confirmation.rpe,
+    achievement: confirmation.achievement,
+    subjective: confirmation.subjective,
     note: `FIT取込: ${fileName}`,
     backfilled: true,
     weatherTempC: derived.weatherTempC,
@@ -515,7 +537,8 @@ export function buildLinkedResult(
   derived: FitDerivedActuals,
   sessionId: string,
   resultId: string,
-  fileName: string
+  fileName: string,
+  confirmation: Extract<FitResultConfirmation, { status: "confirmed" }>
 ): SessionResult {
   return {
     id: resultId,
@@ -526,9 +549,9 @@ export function buildLinkedResult(
     continuous: derived.continuous,
     lapDistancesM: derived.lapDistancesM,
     completedReps: derived.completedReps,
-    rpe: derived.rpe,
-    achievement: "achieved",
-    subjective: derived.subjective,
+    rpe: confirmation.rpe,
+    achievement: confirmation.achievement,
+    subjective: confirmation.subjective,
     note: `FIT取込: ${fileName}`,
     weatherTempC: derived.weatherTempC,
     avgCadenceSpm: derived.avgCadenceSpm,
@@ -544,5 +567,10 @@ export function buildLinkedResult(
  */
 export function fitToSessionAndResult(input: FitToSessionInput): FitToSessionOutput {
   const derived = deriveFitActuals(input);
-  return buildBackfilledSessionAndResult(derived, input.sourceId, input.fileName);
+  return buildBackfilledSessionAndResult(
+    derived,
+    input.sourceId,
+    input.fileName,
+    input.resultConfirmation
+  );
 }

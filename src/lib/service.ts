@@ -152,6 +152,8 @@ import {
   deriveFitActuals,
   fitToSessionAndResult,
   type FitImportRecord,
+  type FitResultConfirmation,
+  isFitResultConfirmed,
 } from "./core/fitToSession";
 import type { FitParseResult } from "./core/fitParse";
 import type { IntervalClassifyResult, IntervalKind } from "./core/intervalClassify";
@@ -180,7 +182,7 @@ import {
  */
 export function heatFlaggedDates(repo: Store): Set<string> {
   const set = new Set<string>();
-  for (const r of repo.listResults()) {
+  for (const r of trustedResults(repo)) {
     if (r.heatFlagged) {
       set.add(r.date);
       continue;
@@ -197,7 +199,7 @@ export function heatFlaggedDates(repo: Store): Set<string> {
 /** 日付ごとの気温マップ（RULE-10 の判定に使う） */
 function dayTempsFromResults(repo: Store): Record<string, number> {
   const map: Record<string, number> = {};
-  for (const r of repo.listResults()) {
+  for (const r of trustedResults(repo)) {
     if (r.weatherTempC !== undefined) map[r.date] = r.weatherTempC;
   }
   return map;
@@ -220,7 +222,7 @@ function hasRecentLoadConcern(repo: Store, onDate: string): boolean {
         (check.sleepQuality ?? 5) <= 2)
   );
   const resultStart = addDays(onDate, -13);
-  const resultConcern = repo.listResults().some(
+  const resultConcern = trustedResults(repo).some(
     (result) =>
       result.date >= resultStart &&
       result.date <= onDate &&
@@ -240,7 +242,7 @@ export function buildRuleContext(repo: Store, evaluationDate: string): RuleConte
   // ルールの評価対象からは外す（過ぎた日の構成は今から直せないため。
   // 過去の構成そのものの診断は diagnosePastStructure が別に行う）。
   const sessions = allSessions.filter((s) => !s.backfilled);
-  const results = repo.listResults();
+  const results = trustedResults(repo);
   const resultsMap = new Map(results.map((r) => [r.sessionId, r]));
   const loads = dailyLoads({
     sessions: allSessions,
@@ -377,7 +379,7 @@ export function setupCfeIfNeeded(repo: Store, today: string): void {
 /** 完了済み自動生成セッションだけを、次回の形式選択に使える履歴へ変換する。 */
 function completedTemplateHistory(repo: Store): TemplateHistoryEntry[] {
   const resultsBySessionId = new Map(
-    repo.listResults().map((result) => [result.sessionId, result])
+    trustedResults(repo).map((result) => [result.sessionId, result])
   );
   return repo.listSessions().flatMap((session) => {
     if (!session.generation || session.status !== "completed") return [];
@@ -502,7 +504,7 @@ export function regeneratePlan(repo: Store, startDate: string): {
   const acwrNow = acwr(
     dailyLoads({
       sessions: repo.listSessions(),
-      resultsBySessionId: new Map(repo.listResults().map((r) => [r.sessionId, r])),
+      resultsBySessionId: new Map(trustedResults(repo).map((r) => [r.sessionId, r])),
       strengthSessions: repo.listStrengths(),
     }),
     startDate
@@ -1189,7 +1191,7 @@ export function todaySession(
 
   const loads = dailyLoads({
     sessions: all,
-    resultsBySessionId: new Map(repo.listResults().map((r) => [r.sessionId, r])),
+    resultsBySessionId: new Map(trustedResults(repo).map((r) => [r.sessionId, r])),
     strengthSessions: repo.listStrengths(),
   });
 
@@ -1198,7 +1200,7 @@ export function todaySession(
     .sort((a, b) => a.date.localeCompare(b.date))
     .at(-1);
 
-  const resultsBySession = new Map(repo.listResults().map((r) => [r.sessionId, r]));
+  const resultsBySession = new Map(trustedResults(repo).map((r) => [r.sessionId, r]));
   const recentQualityResults = all
     .filter((s) => isHighLoadSession(s) && s.date < today && resultsBySession.has(s.id))
     .sort((a, b) => b.date.localeCompare(a.date))
@@ -1254,7 +1256,7 @@ export function dashboard(repo: Store, today: string) {
   // ここでそれを使うと過去データを入れてもACWRが埋まらない。
   const loads = dailyLoads({
     sessions: repo.listSessions(),
-    resultsBySessionId: new Map(repo.listResults().map((r) => [r.sessionId, r])),
+    resultsBySessionId: new Map(trustedResults(repo).map((r) => [r.sessionId, r])),
     strengthSessions: ctx.strengthSessions,
   });
   const acwrNow = acwr(loads, today);
@@ -1294,7 +1296,7 @@ export function dashboard(repo: Store, today: string) {
   // --- 改修A: ホーム再構成で必要になる派生値をここで用意する ---
   // UIに計算を持ち込まない（同じ数字が画面ごとに違う、という事故を防ぐ）。
   const allSessions = repo.listSessions();
-  const resultsAll = repo.listResults();
+  const resultsAll = trustedResults(repo);
   const resultBySession = new Map(resultsAll.map((r) => [r.sessionId, r]));
 
   // 今日のセッションの記録状況（TODAYの主アクションの出し分けに使う）
@@ -1498,7 +1500,7 @@ export function rebuildPastDerivedOnce(repo: Store): PastRebuildResult | undefin
 }
 
 // ---------------------------------------------------------------------------
-// FIT取込 Phase 4: 3層データモデルでの保存
+// FIT取込: 元ファイル・自動解析・手動修正・結果確認の信頼層を分離して保存
 // ---------------------------------------------------------------------------
 
 export interface ImportFitFileInput {
@@ -1515,6 +1517,19 @@ export interface ImportFitFileInput {
    * 文字列 = そのセッションIDへ紐付ける。null = 紐付けず新規のbackfilled記録にする。
    */
   linkToSessionId?: string | null;
+  /** 指定された場合だけ、同じ操作内で本人確認まで完了する。 */
+  resultConfirmation?: FitResultConfirmationInput;
+}
+
+export interface FitResultConfirmationInput {
+  category: SessionCategory;
+  rpe: number;
+  achievement: SessionResult["achievement"];
+  subjective: SessionResult["subjective"];
+}
+
+export interface ConfirmFitImportInput extends FitResultConfirmationInput {
+  fitImportId: string;
 }
 
 export interface FitPlannedCandidate {
@@ -1545,10 +1560,119 @@ export interface ImportFitFileOutput {
   processResult?: ProcessResultOutput;
 }
 
-export type ImportFitFileResult = ImportFitFileNeedsConfirmation | ImportFitFileOutput;
+/** 元FITと解析は保存したが、主観情報がまだ本人確認されていない状態。 */
+export interface ImportFitFilePendingResult {
+  needsResultConfirmation: true;
+  record: FitImportRecord;
+  date: string;
+  suggestedCategory: SessionCategory;
+  warnings: string[];
+  duplicate: boolean;
+  linked: boolean;
+}
+
+export interface PendingFitImportSummary {
+  id: string;
+  fileName: string;
+  date?: string;
+  suggestedCategory?: SessionCategory;
+  linked: boolean;
+  error?: string;
+}
+
+export type ImportFitFileResult =
+  | ImportFitFileNeedsConfirmation
+  | ImportFitFilePendingResult
+  | ImportFitFileOutput;
+
+const FIT_CONFIRMABLE_CATEGORIES = new Set<SessionCategory>([
+  "high_lactate",
+  "race_economy",
+  "modeling",
+  "neural",
+  "cv",
+  "threshold",
+  "aerobic",
+]);
+
+function confirmedFitResult(
+  input: FitResultConfirmationInput,
+  confirmedAtUtc = new Date().toISOString()
+): Extract<FitResultConfirmation, { status: "confirmed" }> {
+  if (!FIT_CONFIRMABLE_CATEGORIES.has(input.category)) {
+    throw new Error("FIT記録の練習カテゴリを確認してください");
+  }
+  if (!Number.isFinite(input.rpe) || input.rpe < 1 || input.rpe > 10) {
+    throw new Error("RPEは1〜10で入力してください");
+  }
+  if (!["achieved", "partial", "failed"].includes(input.achievement)) {
+    throw new Error("達成状態を確認してください");
+  }
+  if (!["easy", "moderate", "hard", "very_hard"].includes(input.subjective)) {
+    throw new Error("主観強度を確認してください");
+  }
+  return {
+    status: "confirmed",
+    confirmedAtUtc,
+    category: input.category,
+    rpe: input.rpe,
+    achievement: input.achievement,
+    subjective: input.subjective,
+  };
+}
+
+function linkedSessionIdOf(record: FitImportRecord): string | null {
+  if (record.linkToSessionId !== undefined) return record.linkToSessionId;
+  if (!record.sessionId || record.sessionId === `fit-s-${record.id}`) return null;
+  return record.sessionId;
+}
 
 /**
- * FITの「確認済み」内容を登録する。
+ * 本人未確認のFIT由来結果を、能力・負荷・完遂率の材料から外す。
+ *
+ * 旧形式には確認状態が無いため安全側で未確認とする。結果そのものは削除せず、
+ * 元FITと一緒に保持する。過去にCFEへ入ってしまった寄与だけはsessionIdを使って
+ * 取り消し、本人確認時のprocessResultで正しい値を入れ直す。
+ */
+export function trustedResults(repo: Store): SessionResult[] {
+  const pending = repo.listFitImports().filter((record) => !isFitResultConfirmed(record));
+  if (pending.length === 0) return repo.listResults();
+
+  const excludedResultIds = new Set<string>();
+  const excludedSessionIds = new Set<string>();
+  for (const record of pending) {
+    if (record.resultId) excludedResultIds.add(record.resultId);
+    if (record.sessionId) {
+      excludedSessionIds.add(record.sessionId);
+      const stored = repo.resultForSession(record.sessionId);
+      if (stored) excludedResultIds.add(stored.id);
+    }
+  }
+
+  const currentCfe = repo.getCfe();
+  if (currentCfe) {
+    let repaired = currentCfe;
+    for (const sessionId of excludedSessionIds) {
+      repaired = revertCfeForSession(repaired, sessionId);
+    }
+    if (
+      repaired.estimated800mSec !== currentCfe.estimated800mSec ||
+      repaired.history.length !== currentCfe.history.length
+    ) {
+      repo.saveCfe(repaired);
+    }
+  }
+
+  return repo
+    .listResults()
+    .filter(
+      (result) =>
+        !excludedResultIds.has(result.id) && !excludedSessionIds.has(result.sessionId)
+    );
+}
+
+/**
+ * FIT本体・解析・区間分類を保存し、本人確認値が渡された場合だけ正式結果を登録する。
  *
  * FIT取込 Phase 6: 計画済みセッションとの紐付け。
  * 導出した日付に`status: "planned"`のセッションがあれば、`linkToSessionId`を
@@ -1567,8 +1691,8 @@ export type ImportFitFileResult = ImportFitFileNeedsConfirmation | ImportFitFile
  *   ルールエンジンの評価対象・自動生成の上書き対象からは外れる
  *   （過去データの遡り入力と同じ扱い）。
  *
- * 元ファイル・自動解析（`FitImportRecord`）と導出したSession/SessionResultは
- * 1つのトランザクションで保存する（対象2と同じしくみ）。
+ * 元ファイル・自動解析は本人確認より先に保存する。正式結果の保存だけ失敗しても
+ * 再入力を求めないためで、Session/SessionResult側はトランザクションで保護する。
  *
  * FIT取込 Phase 5: 二重登録防止。生バイト列（元ファイル）が既存の取込と
  * 完全一致すれば、そのときのidをそのまま再利用する。`saveFitImport` /
@@ -1612,57 +1736,179 @@ export function importFitFile(repo: Store, input: ImportFitFileInput): ImportFit
   // 衝突しうる（衝突すると全く別の記録を上書きしてしまう）。二重登録防止の
   // 前提が崩れるため、乱数を足して衝突を避ける。
   const id = existing?.id ?? `fit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const selectedLink =
+    input.linkToSessionId !== undefined
+      ? input.linkToSessionId
+      : existing
+      ? linkedSessionIdOf(existing)
+      : null;
 
-  if (input.linkToSessionId) {
-    const target = repo.getSession(input.linkToSessionId);
-    if (!target) throw new Error("紐付け先のセッションが見つかりません");
-    const result = buildLinkedResult(derived, target.id, `fit-r-${id}`, input.fileName);
-    const { processOutput, record } = repo.transaction(() => {
-      const processOutput = processResult(repo, result);
-      const savedResult = repo.resultForSession(target.id)!;
-      const record: FitImportRecord = {
-        id,
-        importedAtUtc: new Date().toISOString(),
-        fileName: input.fileName,
-        rawBytesBase64: input.rawBytesBase64,
-        parse: input.parse,
-        autoClassification: input.autoClassification,
-        confirmedKinds: input.confirmedKinds,
-        sessionId: target.id,
-        resultId: savedResult.id,
-      };
-      repo.saveFitImport(record);
-      return { processOutput, record };
-    });
+  /*
+   * 同じ確認済みFITをもう一度選んだだけなら、正式結果を再処理しない。
+   * processResultを再実行するとCFE履歴を無用に作り直すため。
+   */
+  if (existing && isFitResultConfirmed(existing) && !input.resultConfirmation) {
+    const session = existing.sessionId ? repo.getSession(existing.sessionId) : undefined;
+    const result = existing.sessionId ? repo.resultForSession(existing.sessionId) : undefined;
+    if (!session || !result) {
+      throw new Error("確認済みFITの記録が見つかりません。データ管理から作り直してください");
+    }
     return {
-      record,
-      session: repo.getSession(target.id)!,
-      result: repo.resultForSession(target.id)!,
+      record: existing,
+      session,
+      result,
       warnings: derived.warnings,
-      duplicate: existing !== undefined,
-      linked: true,
-      processResult: processOutput,
+      duplicate: true,
+      linked: linkedSessionIdOf(existing) !== null,
     };
   }
 
-  const { session, result } = buildBackfilledSessionAndResult(derived, id, input.fileName);
+  // 主観情報はまだ受け取っていない。元FIT・解析・区間分類だけを先に保存する。
   const record: FitImportRecord = {
+    ...existing,
     id,
-    importedAtUtc: new Date().toISOString(),
+    importedAtUtc: existing?.importedAtUtc ?? new Date().toISOString(),
     fileName: input.fileName,
     rawBytesBase64: input.rawBytesBase64,
     parse: input.parse,
     autoClassification: input.autoClassification,
     confirmedKinds: input.confirmedKinds,
+    resultConfirmation: { status: "pending" },
+    linkToSessionId: selectedLink,
+  };
+  repo.saveFitImport(record);
+
+  if (input.resultConfirmation) {
+    const confirmed = confirmFitImport(repo, {
+      fitImportId: id,
+      ...input.resultConfirmation,
+    });
+    return { ...confirmed, duplicate: existing !== undefined };
+  }
+
+  return {
+    needsResultConfirmation: true,
+    record,
+    date: derived.date,
+    suggestedCategory: derived.category,
+    warnings: derived.warnings,
+    duplicate: existing !== undefined,
+    linked: selectedLink !== null,
+  };
+}
+
+/** 本人入力を受け取って初めて正式なSessionResultを作る。 */
+export function confirmFitImport(
+  repo: Store,
+  input: ConfirmFitImportInput
+): ImportFitFileOutput {
+  const record = repo.listFitImports().find((r) => r.id === input.fitImportId);
+  if (!record) throw new Error("確認するFIT取込が見つかりません");
+  const confirmation = confirmedFitResult(input);
+  const cfe = repo.getCfe();
+  const derived = deriveFitActuals({
+    parse: record.parse,
+    confirmedKinds: record.confirmedKinds,
+    grpSecPerM: cfe ? cfe.estimated800mSec / 800 : undefined,
+  });
+  const confirmedDerived = { ...derived, category: confirmation.category };
+  const linkToSessionId = linkedSessionIdOf(record);
+
+  if (linkToSessionId) {
+    const target = repo.getSession(linkToSessionId);
+    if (!target) throw new Error("紐付け先のセッションが見つかりません");
+    const result = buildLinkedResult(
+      confirmedDerived,
+      target.id,
+      record.resultId ?? `fit-r-${record.id}`,
+      record.fileName,
+      confirmation
+    );
+    const { processOutput, savedRecord } = repo.transaction(() => {
+      // 本人が確認した実際のカテゴリを評価元にする。予定時のカテゴリのままだと、
+      // RPEは正しくてもCFE・負荷分類だけが別種目として処理されてしまう。
+      if (target.category !== confirmation.category) {
+        repo.saveSession({ ...target, category: confirmation.category });
+      }
+      const processOutput = processResult(repo, result);
+      const savedResult = repo.resultForSession(target.id)!;
+      const savedRecord: FitImportRecord = {
+        ...record,
+        resultConfirmation: confirmation,
+        linkToSessionId: target.id,
+        sessionId: target.id,
+        resultId: savedResult.id,
+      };
+      repo.saveFitImport(savedRecord);
+      return { processOutput, savedRecord };
+    });
+    return {
+      record: savedRecord,
+      session: repo.getSession(target.id)!,
+      result: repo.resultForSession(target.id)!,
+      warnings: derived.warnings,
+      duplicate: isFitResultConfirmed(record),
+      linked: true,
+      processResult: processOutput,
+    };
+  }
+
+  const { session, result } = buildBackfilledSessionAndResult(
+    confirmedDerived,
+    record.id,
+    record.fileName,
+    confirmation
+  );
+  const savedRecord: FitImportRecord = {
+    ...record,
+    resultConfirmation: confirmation,
+    linkToSessionId: null,
     sessionId: session.id,
     resultId: result.id,
   };
   repo.transaction(() => {
-    repo.saveFitImport(record);
+    repo.saveFitImport(savedRecord);
     repo.saveSession(session);
     repo.saveResult(result);
   });
-  return { record, session, result, warnings: derived.warnings, duplicate: existing !== undefined, linked: false };
+  return {
+    record: savedRecord,
+    session,
+    result,
+    warnings: derived.warnings,
+    duplicate: isFitResultConfirmed(record),
+    linked: false,
+  };
+}
+
+export function pendingFitImportSummaries(repo: Store): PendingFitImportSummary[] {
+  const cfe = repo.getCfe();
+  return repo
+    .listFitImports()
+    .filter((record) => !isFitResultConfirmed(record))
+    .map((record) => {
+      try {
+        const derived = deriveFitActuals({
+          parse: record.parse,
+          confirmedKinds: record.confirmedKinds,
+          grpSecPerM: cfe ? cfe.estimated800mSec / 800 : undefined,
+        });
+        return {
+          id: record.id,
+          fileName: record.fileName,
+          date: derived.date,
+          suggestedCategory: derived.category,
+          linked: linkedSessionIdOf(record) !== null,
+        };
+      } catch (error) {
+        return {
+          id: record.id,
+          fileName: record.fileName,
+          linked: linkedSessionIdOf(record) !== null,
+          error: (error as Error).message,
+        };
+      }
+    });
 }
 
 /**
@@ -1684,16 +1930,24 @@ export function importFitFile(repo: Store, input: ImportFitFileInput): ImportFit
  */
 export function rebuildFitDerived(
   repo: Store
-): { imports: number; rebuilt: number; orphaned: number } {
+): { imports: number; rebuilt: number; orphaned: number; unconfirmed: number } {
   const imports = repo.listFitImports();
   const cfe = repo.getCfe();
   const grpSecPerM = cfe ? cfe.estimated800mSec / 800 : undefined;
   let rebuilt = 0;
   let orphaned = 0;
+  let unconfirmed = 0;
   for (const record of imports) {
-    const wasBackfilled = record.sessionId === `fit-s-${record.id}`;
+    if (!isFitResultConfirmed(record)) {
+      // 旧形式も確認済みと推測しない。元FITは残し、本人確認後にだけ再構築する。
+      unconfirmed++;
+      continue;
+    }
+    const confirmation = record.resultConfirmation;
+    const linkedSessionId = linkedSessionIdOf(record);
+    const wasBackfilled = linkedSessionId === null;
     if (!wasBackfilled) {
-      const target = repo.getSession(record.sessionId);
+      const target = repo.getSession(linkedSessionId);
       if (!target) {
         orphaned++;
         continue;
@@ -1703,7 +1957,16 @@ export function rebuildFitDerived(
         confirmedKinds: record.confirmedKinds,
         grpSecPerM,
       });
-      const result = buildLinkedResult(derived, target.id, record.resultId, record.fileName);
+      const result = buildLinkedResult(
+        { ...derived, category: confirmation.category },
+        target.id,
+        record.resultId ?? `fit-r-${record.id}`,
+        record.fileName,
+        confirmation
+      );
+      if (target.category !== confirmation.category) {
+        repo.saveSession({ ...target, category: confirmation.category });
+      }
       processResult(repo, result);
       rebuilt++;
       continue;
@@ -1714,12 +1977,13 @@ export function rebuildFitDerived(
       parse: record.parse,
       confirmedKinds: record.confirmedKinds,
       grpSecPerM,
+      resultConfirmation: confirmation,
     });
     repo.saveSession(session);
     repo.saveResult(result);
     rebuilt++;
   }
-  return { imports: imports.length, rebuilt, orphaned };
+  return { imports: imports.length, rebuilt, orphaned, unconfirmed };
 }
 
 export interface AssessFitnessOutput extends FitnessAssessment {
@@ -1827,7 +2091,7 @@ export function previousEntryFor(
   if (!session) return undefined;
   return findPreviousEntry(
     repo.listSessions(),
-    repo.listResults(),
+    trustedResults(repo),
     session.category,
     session.date,
     session.id
@@ -2015,7 +2279,7 @@ function raceSplitPlanInternal(repo: Store) {
  */
 export function performanceSummaries(repo: Store, today: string) {
   const sessions = repo.listSessions();
-  const resultsBySessionId = new Map(repo.listResults().map((r) => [r.sessionId, r]));
+  const resultsBySessionId = new Map(trustedResults(repo).map((r) => [r.sessionId, r]));
   const kinds: PeriodKind[] = ["week", "month", "year"];
   return kinds.map((kind) =>
     periodSummary({ sessions, resultsBySessionId, today, kind })
@@ -2023,7 +2287,7 @@ export function performanceSummaries(repo: Store, today: string) {
 }
 
 export function samePrescriptionGroups(repo: Store) {
-  return groupBySamePrescription(repo.listSessions(), repo.listResults());
+  return groupBySamePrescription(repo.listSessions(), trustedResults(repo));
 }
 
 /** H: CFEの予測レンジ（表示専用） */
@@ -2095,7 +2359,7 @@ export function adaptiveContext(
   env?: { wbgt?: number; tempC?: number; humidityPct?: number }
 ): AdaptiveContext {
   const sessions = repo.listSessions();
-  const results = repo.listResults();
+  const results = trustedResults(repo);
   const checks = repo.listDailyChecks();
   const athlete = repo.getAthlete();
 
@@ -2789,7 +3053,7 @@ export function coverageReview(repo: Store, today: string): CoverageReview | und
   const limiter = assessLimiter(athlete, goal?.targetTimeSec).limiter;
   return reviewCoverage({
     sessions: repo.listSessions(),
-    results: repo.listResults(),
+    results: trustedResults(repo),
     strengthSessions: repo.listStrengths(),
     today,
     phase,
@@ -2896,7 +3160,7 @@ function recentTrendByCategory(
   today: string
 ): Partial<Record<SessionCategory, TrendVerdict>> {
   const sessions = repo.listSessions();
-  const results = repo.listResults();
+  const results = trustedResults(repo);
   const out: Partial<Record<SessionCategory, TrendVerdict>> = {};
   for (const c of ["high_lactate", "race_economy", "modeling", "cv", "threshold", "neural"] as const) {
     out[c] = executionTrend(
@@ -2932,7 +3196,7 @@ export function sessionPlanVariants(
   const trend = executionTrend(
     executionSamples(
       repo.listSessions(),
-      repo.listResults(),
+      trustedResults(repo),
       session.category,
       session.date,
       undefined,
@@ -3085,7 +3349,7 @@ export function hrUsage(
 } {
   const athlete = repo.getAthlete();
   const sessions = repo.listSessions();
-  const results = repo.listResults();
+  const results = trustedResults(repo);
   const byId = new Map(sessions.map((s) => [s.id, s]));
   const reference = hrMaxReference(athlete, results, repo.listMarkers());
 
@@ -3179,7 +3443,7 @@ export function weeklyReview(repo: Store, today: string, weekStartDate?: string)
   const goal = repo.getGoal();
   const loads = dailyLoads({
     sessions: repo.listSessions(),
-    resultsBySessionId: new Map(repo.listResults().map((r) => [r.sessionId, r])),
+    resultsBySessionId: new Map(trustedResults(repo).map((r) => [r.sessionId, r])),
     strengthSessions: repo.listStrengths(),
   });
   let violations: RuleViolation[] = [];
@@ -3191,7 +3455,7 @@ export function weeklyReview(repo: Store, today: string, weekStartDate?: string)
   return buildWeeklyReview({
     weekStart: ws,
     sessions: repo.listSessions(),
-    results: repo.listResults(),
+    results: trustedResults(repo),
     checks: repo.listDailyChecks(),
     violations,
     acwr: acwr(loads, addDays(ws, 6)).acwr,

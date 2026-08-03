@@ -316,7 +316,7 @@ export class MemoryStore implements Store {
     return [...this.state.syncs].reverse().slice(0, limit);
   }
 
-  // ---- FIT取込（Phase 4: 3層データモデル） ----
+  // ---- FIT取込（元ファイル・解析・修正・結果確認の信頼層） ----
   saveFitImport(r: FitImportRecord): void {
     if (!this.state.fitImports) this.state.fitImports = [];
     const i = this.state.fitImports.findIndex((x) => x.id === r.id);

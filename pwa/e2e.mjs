@@ -773,22 +773,44 @@ if (changedValue !== "unknown") fail("区間種別を手動で修正できない
 step("FIT取込Phase3OK（ラップ→区間の自動分類・信頼度表示・手動修正が反映される）");
 
 /*
- * FIT取込 Phase 4: 3層データモデルでの保存。
+ * FIT取込: 元ファイル・解析・修正・結果確認を分離した保存。
  * 「この内容で登録する」を押すと、確認済み種別（直前でlap1を手動でunknownに
- * 直した状態のまま）からSession/SessionResultが実際に作られ、IndexedDBに
- * 保存されることを確認する（api-shim経由。/api/fit-import）。
+ * 直した状態のまま）と元FITだけが先に保存される。RPE・達成状態・主観強度を
+ * 本人確認するまではSession/SessionResultを作らず、確認後にだけ記録へ反映する。
  */
 await page.getByRole("button", { name: "この内容で登録する" }).click();
 await page.waitForTimeout(1000);
-const registerText = await page.textContent("body");
-if (!registerText.includes("登録しました") || !registerText.includes("2026-07-20")) {
-  fail("FIT取込の登録が完了しない: " + registerText.slice(0, 400));
+let registerText = await page.textContent("body");
+if (!registerText.includes("本人確認待ち") || !registerText.includes("2026-07-20")) {
+  fail("FIT本体・解析結果が本人確認待ちで保存されない: " + registerText.slice(0, 400));
 }
 // 二重登録を招かないよう、登録後はボタンが引っ込むこと
 if (await page.getByRole("button", { name: "この内容で登録する" }).count()) {
   fail("登録後もボタンが残っており、連打で二重登録できてしまう");
 }
-step("FIT取込Phase4OK（3層データモデルで保存・記録として登録される）");
+// 確認待ち状態がIndexedDBへ保存され、ページ再読み込み後にも戻れること。
+await page.waitForTimeout(500);
+await page.goto("about:blank");
+await page.goto("http://localhost:8791/#/data");
+await page
+  .waitForFunction(() => !document.getElementById("splash"), { timeout: 15000 })
+  .catch(() => fail("FIT確認待ち保存後の再読み込みで起動できない"));
+await page.waitForTimeout(600);
+registerText = await page.textContent("body");
+if (!registerText.includes("本人確認待ちのFIT（1件）")) {
+  fail("再読み込み後にFITの本人確認待ち状態が復元されない: " + registerText.slice(0, 400));
+}
+// FITだけでは分からない値は空欄であり、本人が明示入力する。
+await page.getByLabel("RPE（1〜10）").fill("8");
+await page.getByLabel("達成状態").selectOption("achieved");
+await page.getByLabel("主観強度").selectOption("hard");
+await page.getByRole("button", { name: "本人確認して記録へ反映する" }).click();
+await page.waitForTimeout(1000);
+registerText = await page.textContent("body");
+if (!registerText.includes("本人確認済みとして保存しました")) {
+  fail("FITの本人確認後に正式結果が保存されない: " + registerText.slice(0, 400));
+}
+step("FIT取込Phase4OK（実測保存→本人確認→正式結果の2段階で登録される）");
 
 /*
  * FIT取込 Phase 5: 二重登録防止。
@@ -809,8 +831,8 @@ await page.waitForTimeout(1000);
 await page.getByRole("button", { name: "この内容で登録する" }).click();
 await page.waitForTimeout(1000);
 const reRegisterText = await page.textContent("body");
-if (!reRegisterText.includes("既に取り込み済み") || !reRegisterText.includes("更新しました")) {
-  fail("同じFITの再登録が上書きとして扱われない: " + reRegisterText.slice(0, 400));
+if (!reRegisterText.includes("既に取り込み済み")) {
+  fail("同じFITの再登録が既存記録として扱われない: " + reRegisterText.slice(0, 400));
 }
 step("FIT取込Phase5OK（同じ元ファイルの再登録は新規ではなく上書き）");
 
@@ -868,9 +890,18 @@ if (!confirmText.includes("300m×5 計画")) {
 }
 await page.getByRole("button", { name: /300m×5 計画/ }).click();
 await page.waitForTimeout(1000);
-const linkedText = await page.textContent("body");
-if (!linkedText.includes("計画済みの練習に記録として反映しました")) {
-  fail("Phase6: 紐付け後の登録メッセージが出ない: " + linkedText.slice(0, 300));
+let linkedText = await page.textContent("body");
+if (!linkedText.includes("本人確認待ち")) {
+  fail("Phase6: 紐付け後に本人確認待ちにならない: " + linkedText.slice(0, 300));
+}
+await page.getByLabel("RPE（1〜10）").fill("8");
+await page.getByLabel("達成状態").selectOption("achieved");
+await page.getByLabel("主観強度").selectOption("hard");
+await page.getByRole("button", { name: "本人確認して記録へ反映する" }).click();
+await page.waitForTimeout(1000);
+linkedText = await page.textContent("body");
+if (!linkedText.includes("CFE・次回提案の評価経路へ反映しました")) {
+  fail("Phase6: 本人確認後の反映メッセージが出ない: " + linkedText.slice(0, 300));
 }
 const plannedAfter = await page.evaluate(async (id) => {
   const d = await fetch("/api/sessions?from=2000-01-01&to=2099-12-31").then((r) => r.json());

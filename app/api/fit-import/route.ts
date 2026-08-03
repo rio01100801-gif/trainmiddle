@@ -1,12 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openRepo } from "@/lib/db/node";
-import { importFitFile, rebuildFitDerived } from "@/lib/service";
+import {
+  confirmFitImport,
+  importFitFile,
+  pendingFitImportSummaries,
+  rebuildFitDerived,
+} from "@/lib/service";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const repo = openRepo();
-  return NextResponse.json({ imports: repo.listFitImports() });
+  return NextResponse.json({
+    imports: repo.listFitImports(),
+    pending: pendingFitImportSummaries(repo),
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -16,6 +24,22 @@ export async function POST(req: NextRequest) {
   if (body?.rebuild) {
     try {
       return NextResponse.json({ ok: true, rebuild: rebuildFitDerived(repo) });
+    } catch (e) {
+      return NextResponse.json({ error: (e as Error).message }, { status: 400 });
+    }
+  }
+  if (body?.confirmFitImportId) {
+    try {
+      return NextResponse.json({
+        ok: true,
+        ...confirmFitImport(repo, {
+          fitImportId: String(body.confirmFitImportId),
+          category: body.category,
+          rpe: Number(body.rpe),
+          achievement: body.achievement,
+          subjective: body.subjective,
+        }),
+      });
     } catch (e) {
       return NextResponse.json({ error: (e as Error).message }, { status: 400 });
     }

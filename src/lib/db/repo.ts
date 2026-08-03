@@ -321,7 +321,7 @@ export class Repo implements Store {
     ).map((r) => JSON.parse(r.json) as SyncRecord);
   }
 
-  // ---- FIT取込（Phase 4: 3層データモデル） ----
+  // ---- FIT取込（元ファイル・解析・修正・結果確認の信頼層） ----
   saveFitImport(r: FitImportRecord): void {
     this.db
       .prepare(

@@ -3,7 +3,12 @@
  * 機械的に導く純粋関数。`PastEntry` の `toSessionAndResult` と同じ考え方。
  */
 import { describe, expect, it } from "vitest";
-import { fitToSessionAndResult, snapToTrackDistance } from "@/lib/core/fitToSession";
+import {
+  deriveFitActuals,
+  fitToSessionAndResult as convertConfirmedFit,
+  snapToTrackDistance,
+  type FitToSessionInput,
+} from "@/lib/core/fitToSession";
 import type { FitParseLap, FitParseResult } from "@/lib/core/fitParse";
 import type { IntervalKind } from "@/lib/core/intervalClassify";
 
@@ -21,6 +26,22 @@ function baseParse(overrides: Partial<FitParseResult> = {}): FitParseResult {
 
 function lap(overrides: Partial<FitParseLap> & { index: number }): FitParseLap {
   return { index: overrides.index, ...overrides };
+}
+
+/** 各テストが検証する実測構造とは別に、本人確認値を明示して正式結果へ変換する。 */
+function fitToSessionAndResult(input: Omit<FitToSessionInput, "resultConfirmation">) {
+  const suggested = deriveFitActuals(input);
+  return convertConfirmedFit({
+    ...input,
+    resultConfirmation: {
+      status: "confirmed",
+      confirmedAtUtc: "2026-07-20T12:00:00Z",
+      category: suggested.category,
+      rpe: 8,
+      achievement: "achieved",
+      subjective: "hard",
+    },
+  });
 }
 
 // ウォームアップ→メイン×4（間にレストと明確なリカバリー）→クールダウン

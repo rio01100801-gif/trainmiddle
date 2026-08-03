@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openRepo } from "@/lib/db/node";
-import { deleteResult, previousEntryFor, processResult } from "@/lib/service";
+import { deleteResult, previousEntryFor, processResult, trustedResults } from "@/lib/service";
 import type { SessionResult } from "@/lib/core/types";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   if (prevFor) {
     return NextResponse.json({ previous: previousEntryFor(repo, prevFor) ?? null });
   }
-  return NextResponse.json({ results: repo.listResults() });
+  return NextResponse.json({ results: trustedResults(repo) });
 }
 
 export async function POST(req: NextRequest) {

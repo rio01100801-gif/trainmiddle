@@ -63,7 +63,10 @@ import {
   interpretPrescription,
   saveGoalAndRaces,
   importFitFile,
+  confirmFitImport,
+  pendingFitImportSummaries,
   rebuildFitDerived,
+  trustedResults,
 } from "../src/lib/service";
 import { parseContactCsv } from "../src/lib/core/contactTime";
 import type { PastEntry } from "../src/lib/core/backfill";
@@ -161,7 +164,7 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
     GET: (repo, _b, params) => {
       const prevFor = params.get("previousFor");
       if (prevFor) return { previous: previousEntryFor(repo, prevFor) ?? null };
-      return { results: repo.listResults() };
+      return { results: trustedResults(repo) };
     },
     POST: (repo, body) =>
       processResult(repo, { id: `res-${Date.now()}`, actualLapsSec: [], ...body } as SessionResult),
@@ -192,7 +195,7 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
   "/api/analysis": {
     GET: (repo, _b, params) => {
       const today = params.get("date") ?? localToday();
-      const results = repo.listResults();
+      const results = trustedResults(repo);
       const sessions = repo.listSessions();
       const sessionById = new Map(sessions.map((s) => [s.id, s]));
       const economyPoints = results
@@ -629,14 +632,33 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
     },
   },
 
-  // ---- FIT取込 Phase 4: 3層データモデルでの保存 ----
+  // ---- FIT取込: 元ファイル・解析・修正・結果確認の信頼層 ----
   "/api/fit-import": {
-    GET: (repo) => ({ imports: repo.listFitImports() }),
+    GET: (repo) => ({
+      imports: repo.listFitImports(),
+      pending: pendingFitImportSummaries(repo),
+    }),
     POST: (repo, body) => {
       // 保存してある元ファイルから、いまの解析ロジックで作り直す
       if (body?.rebuild) {
         try {
           return { ok: true, rebuild: rebuildFitDerived(repo) };
+        } catch (e) {
+          return { error: (e as Error).message };
+        }
+      }
+      if (body?.confirmFitImportId) {
+        try {
+          return {
+            ok: true,
+            ...confirmFitImport(repo, {
+              fitImportId: String(body.confirmFitImportId),
+              category: body.category,
+              rpe: Number(body.rpe),
+              achievement: body.achievement,
+              subjective: body.subjective,
+            }),
+          };
         } catch (e) {
           return { error: (e as Error).message };
         }

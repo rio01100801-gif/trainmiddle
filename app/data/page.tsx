@@ -73,6 +73,9 @@ export default function DataPage() {
         `${b.imports}件のFITを確認し、${b.rebuilt}件を作り直しました。` +
           (b.orphaned > 0
             ? `　うち${b.orphaned}件は紐付け先の予定が消えているため、そのままにしました。`
+            : "") +
+          (b.unconfirmed > 0
+            ? `　${b.unconfirmed}件はRPE・達成状態が本人未確認のため、能力評価へ反映せずそのまま保持しました。`
             : "")
       );
     } finally {

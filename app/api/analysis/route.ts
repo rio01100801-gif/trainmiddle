@@ -6,7 +6,12 @@ import { restingHrTrend } from "@/lib/core/signal";
 import { addDays, weekStart, localToday } from "@/lib/core/dates";
 import { weeklySummary } from "@/lib/core/rules";
 import { buildTimeline } from "@/lib/core/timeline";
-import { buildRuleContext, performanceSummaries, samePrescriptionGroups } from "@/lib/service";
+import {
+  buildRuleContext,
+  performanceSummaries,
+  samePrescriptionGroups,
+  trustedResults,
+} from "@/lib/service";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +21,7 @@ export async function GET(req: NextRequest) {
     req.nextUrl.searchParams.get("date") ?? localToday();
 
   // 経済走のRPE推移（4-5-6）
-  const results = repo.listResults();
+  const results = trustedResults(repo);
   const sessions = repo.listSessions();
   const sessionById = new Map(sessions.map((s) => [s.id, s]));
   const economyPoints = results

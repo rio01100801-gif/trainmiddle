@@ -28,6 +28,11 @@ import SyncPage from "../app/sync/page";
 import DiagnosticsPage from "../app/diagnostics/page";
 
 import type { FitParseResult } from "../src/lib/core/fitParse";
+import type {
+  Achievement,
+  SessionCategory,
+  Subjective,
+} from "../src/lib/core/types";
 import { validateHealthXmlSize } from "../src/lib/core/healthImport";
 import {
   classifyLaps,
@@ -263,9 +268,147 @@ function bytesToBase64(bytes: Uint8Array): string {
  * Phase 3: 解析済みのlapを区間（ウォームアップ／メイン疾走／リカバリー／
  * レスト／クールダウン）に自動分類し、信頼度とともに表示する
  * （`src/lib/core/intervalClassify.ts`。ルールベース、LLM不使用）。
- * ここでの手動修正はこのカード内だけの一時的なものであり、保存はしない
- * （3層データモデルでの保存・既存予定との紐付けはPhase 4以降）。
+ * ここでの手動修正は取込確認までの一時状態。登録後は元FIT・自動解析・手動修正を
+ * 保存するが、RPE等の結果確認が終わるまでは能力推定へ使用しない。
  */
+interface PendingFitImportView {
+  id: string;
+  fileName: string;
+  date?: string;
+  suggestedCategory?: SessionCategory;
+  linked: boolean;
+  error?: string;
+}
+
+const FIT_CATEGORY_OPTIONS: SessionCategory[] = [
+  "high_lactate",
+  "race_economy",
+  "modeling",
+  "neural",
+  "cv",
+  "threshold",
+  "aerobic",
+];
+
+function FitResultConfirmationForm({
+  item,
+  busy,
+  onConfirm,
+}: {
+  item: PendingFitImportView;
+  busy: boolean;
+  onConfirm: (input: {
+    category: SessionCategory;
+    rpe: number;
+    achievement: Achievement;
+    subjective: Subjective;
+  }) => void;
+}) {
+  const [category, setCategory] = React.useState<SessionCategory>(
+    item.suggestedCategory ?? "aerobic"
+  );
+  const [rpe, setRpe] = React.useState("");
+  const [achievement, setAchievement] = React.useState<Achievement | "">("");
+  const [subjective, setSubjective] = React.useState<Subjective | "">("");
+  const rpeNumber = Number(rpe);
+  const valid =
+    rpe !== "" &&
+    Number.isFinite(rpeNumber) &&
+    rpeNumber >= 1 &&
+    rpeNumber <= 10 &&
+    achievement !== "" &&
+    subjective !== "";
+
+  return (
+    <div className="rounded-xl border p-3" style={{ borderColor: "var(--border)" }}>
+      <p className="text-[12px] font-semibold break-all" style={{ color: "var(--text)" }}>
+        {item.fileName}
+      </p>
+      <p className="text-[11px] mt-1" style={{ color: "var(--text-3)" }}>
+        {item.date ?? "日付を確認できません"} ／ {item.linked ? "予定へ紐付け" : "新しい記録"}
+      </p>
+      {item.error ? (
+        <p className="text-[11px] mt-2" role="alert" style={{ color: "var(--red)" }}>
+          解析を確認できません: {item.error}
+        </p>
+      ) : (
+        <>
+          <p className="text-[11px] mt-2 leading-relaxed" style={{ color: "var(--amber)" }}>
+            本人確認待ちです。確認するまでCFE・完遂率・次回提案には反映されません。
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+            <label className="text-[11px]" style={{ color: "var(--text-2)" }}>
+              練習カテゴリ
+              <select
+                className="w-full min-h-[44px] mt-1 rounded-md px-2"
+                value={category}
+                onChange={(event) => setCategory(event.target.value as SessionCategory)}
+              >
+                {FIT_CATEGORY_OPTIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {CATEGORY_LABELS[value] ?? value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-[11px]" style={{ color: "var(--text-2)" }}>
+              RPE（1〜10）
+              <input
+                className="w-full min-h-[44px] mt-1"
+                inputMode="decimal"
+                type="number"
+                min="1"
+                max="10"
+                step="0.5"
+                value={rpe}
+                onChange={(event) => setRpe(event.target.value)}
+              />
+            </label>
+            <label className="text-[11px]" style={{ color: "var(--text-2)" }}>
+              達成状態
+              <select
+                className="w-full min-h-[44px] mt-1 rounded-md px-2"
+                value={achievement}
+                onChange={(event) => setAchievement(event.target.value as Achievement | "")}
+              >
+                <option value="">選択してください</option>
+                <option value="achieved">達成</option>
+                <option value="partial">一部達成</option>
+                <option value="failed">未達</option>
+              </select>
+            </label>
+            <label className="text-[11px]" style={{ color: "var(--text-2)" }}>
+              主観強度
+              <select
+                className="w-full min-h-[44px] mt-1 rounded-md px-2"
+                value={subjective}
+                onChange={(event) => setSubjective(event.target.value as Subjective | "")}
+              >
+                <option value="">選択してください</option>
+                <option value="easy">楽</option>
+                <option value="moderate">普通</option>
+                <option value="hard">きつい</option>
+                <option value="very_hard">非常にきつい</option>
+              </select>
+            </label>
+          </div>
+          <button
+            type="button"
+            className="btn-volt min-h-[44px] mt-3 w-full sm:w-auto"
+            disabled={busy || !valid}
+            onClick={() => {
+              if (!valid) return;
+              onConfirm({ category, rpe: rpeNumber, achievement, subjective });
+            }}
+          >
+            {busy ? "確認内容を保存中…" : "本人確認して記録へ反映する"}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function FitImportCard() {
   const [busy, setBusy] = React.useState(false);
   const [fileName, setFileName] = React.useState("");
@@ -284,13 +427,64 @@ function FitImportCard() {
   const [registering, setRegistering] = React.useState(false);
   const [registerResult, setRegisterResult] = React.useState<
     | { kind: "ok"; date: string; warnings: string[]; duplicate: boolean; linked: boolean }
+    | { kind: "pending"; date: string; warnings: string[]; duplicate: boolean; linked: boolean }
     | { kind: "error"; message: string }
     | null
   >(null);
+  const [pendingImports, setPendingImports] = React.useState<PendingFitImportView[]>([]);
+  const [confirmingId, setConfirmingId] = React.useState<string | null>(null);
+  const [confirmationMessage, setConfirmationMessage] = React.useState("");
   const [pendingLink, setPendingLink] = React.useState<{
     date: string;
     candidates: { id: string; name: string; prescription: string; category: string }[];
   } | null>(null);
+
+  const loadPendingImports = React.useCallback(() => {
+    fetch("/api/fit-import")
+      .then((response) => response.json())
+      .then((data) => setPendingImports(data.pending ?? []))
+      .catch((error: Error) =>
+        setConfirmationMessage(`確認待ちFITを読めませんでした: ${error.message}`)
+      );
+  }, []);
+  React.useEffect(loadPendingImports, [loadPendingImports]);
+
+  const confirmPendingImport = async (
+    item: PendingFitImportView,
+    values: {
+      category: SessionCategory;
+      rpe: number;
+      achievement: Achievement;
+      subjective: Subjective;
+    }
+  ) => {
+    if (confirmingId) return;
+    setConfirmingId(item.id);
+    setConfirmationMessage("");
+    try {
+      const response = await fetch("/api/fit-import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmFitImportId: item.id, ...values }),
+      });
+      const data = await response.json();
+      if (data.error) {
+        setConfirmationMessage(data.error);
+      } else {
+        setConfirmationMessage(
+          `${item.date ?? "FIT"} を本人確認済みとして保存しました。` +
+            (data.linked
+              ? " CFE・次回提案の評価経路へ反映しました。"
+              : " 記録として保存しました。")
+        );
+        loadPendingImports();
+      }
+    } catch (error) {
+      setConfirmationMessage(`確認内容を保存できませんでした: ${(error as Error).message}`);
+    } finally {
+      setConfirmingId(null);
+    }
+  };
 
   const handleFile = async (file: File) => {
     if (busy) return; // 二重送信防止
@@ -366,6 +560,16 @@ function FitImportCard() {
         setRegisterResult({ kind: "error", message: data.error });
       } else if (data.needsConfirmation) {
         setPendingLink({ date: data.date, candidates: data.candidates ?? [] });
+      } else if (data.needsResultConfirmation) {
+        setPendingLink(null);
+        setRegisterResult({
+          kind: "pending",
+          date: data.date,
+          warnings: data.warnings ?? [],
+          duplicate: !!data.duplicate,
+          linked: !!data.linked,
+        });
+        loadPendingImports();
       } else {
         setPendingLink(null);
         setRegisterResult({
@@ -534,7 +738,7 @@ function FitImportCard() {
             </p>
           ))}
 
-          {registerResult?.kind !== "ok" && !pendingLink ? (
+          {(!registerResult || registerResult.kind === "error") && !pendingLink ? (
             <button
               type="button"
               className="btn-volt w-full sm:w-auto min-h-[44px] mt-3"
@@ -582,7 +786,7 @@ function FitImportCard() {
             <div className="mt-3">
               <p className="text-[12px]" role="status" style={{ color: "var(--volt)" }}>
                 {registerResult.duplicate
-                  ? `✓ 既に取り込み済みのファイルでした。${registerResult.date}の記録の内容を更新しました。`
+                  ? `✓ 既に取り込み済み・本人確認済みのファイルです。${registerResult.date}の結果を新しく追加していません。`
                   : registerResult.linked
                   ? `✓ ${registerResult.date} の計画済みの練習に記録として反映しました。`
                   : `✓ ${registerResult.date} の練習として登録しました。`}
@@ -599,6 +803,16 @@ function FitImportCard() {
               ) : null}
             </div>
           ) : null}
+          {registerResult?.kind === "pending" ? (
+            <div className="mt-3">
+              <p className="text-[12px]" role="status" style={{ color: "var(--amber)" }}>
+                ✓ FIT本体と解析結果を保存しました。RPE・達成状態などはまだ本人確認待ちです。
+              </p>
+              <p className="text-[11px] mt-1" style={{ color: "var(--text-3)" }}>
+                下の確認欄を保存するまで、CFE・完遂率・次回提案には反映されません。
+              </p>
+            </div>
+          ) : null}
           {registerResult?.kind === "error" ? (
             <p className="text-[12px] mt-3" role="alert" style={{ color: "var(--red)" }}>
               {registerResult.message}
@@ -607,9 +821,44 @@ function FitImportCard() {
         </div>
       ) : null}
 
+      {pendingImports.length > 0 ? (
+        <div className="mt-4 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
+          <p className="text-[12px] font-semibold mb-2" style={{ color: "var(--text)" }}>
+            本人確認待ちのFIT（{pendingImports.length}件）
+          </p>
+          <div className="flex flex-col gap-2">
+            {pendingImports.map((item) => (
+              <FitResultConfirmationForm
+                key={item.id}
+                item={item}
+                busy={confirmingId === item.id}
+                onConfirm={(values) => confirmPendingImport(item, values)}
+              />
+            ))}
+          </div>
+          {confirmationMessage ? (
+            <p
+              className="text-[11.5px] mt-2"
+              role={confirmationMessage.includes("できません") ? "alert" : "status"}
+              style={{
+                color: confirmationMessage.includes("できません")
+                  ? "var(--red)"
+                  : "var(--volt)",
+              }}
+            >
+              {confirmationMessage}
+            </p>
+          ) : null}
+        </div>
+      ) : confirmationMessage ? (
+        <p className="text-[11.5px] mt-3" role="status" style={{ color: "var(--volt)" }}>
+          {confirmationMessage}
+        </p>
+      ) : null}
+
       <p className="text-[11px] mt-3 leading-relaxed" style={{ color: "var(--text-3)" }}>
-        分析への反映は今後の更新で対応します（二重登録は防止済み。計画済みの
-        練習がある日は、それに記録として反映するか新規に登録するか選べます）。
+        FITの実測と本人が確認した主観情報を分けて保存します。確認済みの記録だけが
+        CFE・完遂率・次回提案の材料になります。
       </p>
     </Card>
   );

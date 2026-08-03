@@ -91,7 +91,7 @@ export interface Store {
   saveSync(r: SyncRecord): void;
   listSyncs(limit?: number): SyncRecord[];
 
-  /** FIT取込 Phase 4: 3層データモデルでの保存（元ファイル・自動解析） */
+  /** FIT取込（元ファイル・自動解析・手動修正・結果確認状態）の保存 */
   saveFitImport(r: FitImportRecord): void;
   listFitImports(): FitImportRecord[];
 
