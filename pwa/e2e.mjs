@@ -449,6 +449,25 @@ if ((await page.locator('input[aria-label*="実施タイム"]').first().inputVal
   fail("N-2: 切り替えで1本ずつの入力値が消えている");
 }
 /*
+ * 予定距離より短く終えた本も入力できること。
+ * 4本目だけ100m短くし、保存後に予定距離と実距離が両方残るところまで確認する。
+ */
+const distanceToggle = page.getByText("実施距離が予定と違う本がある（途中中断など）");
+if ((await distanceToggle.count()) === 0) fail("本ごとの実施距離を変更する切り替えが無い");
+await distanceToggle.click();
+await page.waitForTimeout(200);
+const distanceInputs = page.locator('input[aria-label*="実施距離"]');
+if ((await distanceInputs.count()) !== 5) {
+  fail(`本ごとの実施距離欄が本数と合っていない（${await distanceInputs.count()}）`);
+}
+const fourthPlannedDistance = Number(await distanceInputs.nth(3).inputValue());
+const fourthActualDistance = fourthPlannedDistance - 100;
+await distanceInputs.nth(3).fill(String(fourthActualDistance));
+if ((await repInputs.nth(3).inputValue()) !== "41.5") {
+  fail("実施距離を変更したら同じ本のタイムが消えた");
+}
+step("本ごとの実施距離入力OK（予定より短い中断本を保持）");
+/*
  * Q-1: 1本ごとの平均心拍。任意項目なので既定では欄を出さない。
  * 出したときも iPhone 幅で実施タイムの欄が潰れないことを実測で見る。
  */
@@ -532,6 +551,20 @@ await page.waitForTimeout(1200);
 const resultText = await page.textContent("body");
 if (!resultText.includes("CFE:")) fail("補正結果が表示されない");
 if (!resultText.includes("変更差分")) console.log("note: 変更差分なし（ペース変化が閾値未満の可能性）");
+const storedDistanceResult = await page.evaluate(async () => {
+  const response = await fetch("/api/results");
+  return response.json();
+});
+const shortened = storedDistanceResult.results
+  ?.flatMap((result) => result.interval?.results ?? [])
+  .find((rep) => rep.plannedDistanceM !== undefined);
+if (
+  !shortened ||
+  shortened.distanceM !== fourthActualDistance ||
+  shortened.plannedDistanceM !== fourthPlannedDistance
+) {
+  fail("予定より短い本の実施距離と予定距離が保存されていない");
+}
 step("結果入力→CFE補正OK");
 await shot("06_result_correction");
 

@@ -19,6 +19,9 @@ export const REST_LABELS: Record<RestType, string> = {
   full: "完全休息",
 };
 
+/** FITの丸めなどによる1m未満の揺れを「途中中断」と誤認しないための許容幅。 */
+export const REP_DISTANCE_TOLERANCE_M = 0.5;
+
 // ---------------------------------------------------------------------------
 // 1-1. ジョグ・持続走
 // ---------------------------------------------------------------------------
@@ -114,26 +117,43 @@ export function buildRepResults(
   /** 複合セットの区間別設定。無い区間はセッション共通設定を使う。 */
   targetSecs: (number | undefined)[] = [],
   /** 「次の距離walk」など、区間別の距離レスト。 */
-  restAfterDistancesM: (number | undefined)[] = []
+  restAfterDistancesM: (number | undefined)[] = [],
+  /** 実距離と区別して残す1本ごとの予定距離。未指定なら実距離と同じ。 */
+  plannedDistancesM: (number | undefined)[] = []
 ): RepResult[] {
   // 心拍・距離・レストは「何本目か」で対応させる。先に間引くと、
   // 実施タイムが空の本があったときに1本ずつずれる
   const num = (v: number | undefined) =>
     v !== undefined && isFinite(v) && v > 0 ? v : undefined;
   return actualSecs
-    .map((actualSec, i) => ({
-      actualSec,
-      avgHr: avgHrs[i],
-      distanceM: distancesM[i],
-      restAfterSec: restAfterSecs[i],
-      restAfterDistanceM: restAfterDistancesM[i],
-      targetSec: targetSecs[i],
-    }))
+    .map((actualSec, i) => {
+      const actualDistanceM = num(distancesM[i]) ?? distanceM;
+      const plannedDistanceM = num(plannedDistancesM[i]) ?? actualDistanceM;
+      const plannedTargetSec = num(targetSecs[i]) ?? targetSec;
+      const distanceChanged =
+        Math.abs(actualDistanceM - plannedDistanceM) >= REP_DISTANCE_TOLERANCE_M;
+      return {
+        actualSec,
+        avgHr: avgHrs[i],
+        distanceM: actualDistanceM,
+        plannedDistanceM: distanceChanged ? plannedDistanceM : undefined,
+        restAfterSec: restAfterSecs[i],
+        restAfterDistanceM: restAfterDistancesM[i],
+        targetSec:
+          plannedTargetSec !== undefined && plannedDistanceM > 0
+            ? plannedTargetSec * (actualDistanceM / plannedDistanceM)
+            : undefined,
+        plannedTargetSec:
+          distanceChanged && plannedTargetSec !== undefined ? plannedTargetSec : undefined,
+      };
+    })
     .filter((x) => isFinite(x.actualSec) && x.actualSec > 0)
     .map((x, i) => ({
       index: i + 1,
-      distanceM: num(x.distanceM) ?? distanceM,
-      targetSec: num(x.targetSec) ?? targetSec,
+      distanceM: x.distanceM,
+      ...(x.plannedDistanceM !== undefined ? { plannedDistanceM: x.plannedDistanceM } : {}),
+      targetSec: num(x.targetSec),
+      ...(x.plannedTargetSec !== undefined ? { plannedTargetSec: x.plannedTargetSec } : {}),
       actualSec: x.actualSec,
       ...(num(x.avgHr) !== undefined ? { avgHr: x.avgHr } : {}),
       ...(num(x.restAfterSec) !== undefined ? { restAfterSec: x.restAfterSec } : {}),
@@ -141,6 +161,12 @@ export function buildRepResults(
         ? { restAfterDistanceM: x.restAfterDistanceM }
         : {}),
     }));
+}
+
+/** 距離が短縮・延長された本を、予定された基準距離のタイムへ比例換算する。 */
+export function equivalentRepSec(rep: RepResult, referenceDistanceM: number): number {
+  if (rep.distanceM <= 0 || referenceDistanceM <= 0) return rep.actualSec;
+  return rep.actualSec * (referenceDistanceM / rep.distanceM);
 }
 
 export interface LapTrend {
@@ -163,7 +189,13 @@ export interface LapTrend {
  * 800mの練習では「垂れ幅」が最も重要な情報なので、平均だけでなく必ず出す。
  */
 export function lapTrend(detail: IntervalDetail): LapTrend | undefined {
-  const values = detail.results.map((r) => r.actualSec).filter((v) => isFinite(v) && v > 0);
+  const values = detail.results
+    .map((rep) =>
+      detail.targetSec !== undefined
+        ? equivalentRepSec(rep, detail.distanceM)
+        : rep.actualSec
+    )
+    .filter((v) => isFinite(v) && v > 0);
   if (values.length === 0) return undefined;
 
   const fastest = Math.min(...values);
@@ -211,6 +243,14 @@ export function lapTrend(detail: IntervalDetail): LapTrend | undefined {
 export function inferAchievement(
   detail: IntervalDetail
 ): "achieved" | "partial" | "failed" | undefined {
+  // 短縮した本を「設定より速く完遂」と誤判定しない。実測は残し、評価は部分完遂にする。
+  if (
+    detail.results.some(
+      (rep) =>
+        rep.plannedDistanceM !== undefined &&
+        rep.distanceM + REP_DISTANCE_TOLERANCE_M < rep.plannedDistanceM
+    )
+  ) return "partial";
   const t = lapTrend(detail);
   if (!t || t.achievedReps === undefined) return undefined;
   const done = t.values.length;

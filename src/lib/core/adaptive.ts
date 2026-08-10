@@ -29,6 +29,7 @@ import type {
   TargetPace,
 } from "./types";
 import { diffDays } from "./dates";
+import { equivalentRepSec } from "./workoutLog";
 
 // ---------------------------------------------------------------------------
 // 閾値
@@ -71,7 +72,10 @@ export interface ExecutionSample {
 
 /** 実施タイムの平均。1本も無ければ undefined */
 function meanRepSec(r: SessionResult): number | undefined {
-  const times = r.interval?.results.map((x) => x.actualSec) ?? r.actualLapsSec;
+  const interval = r.interval;
+  const times = interval?.targetSec !== undefined && interval.distanceM > 0
+    ? interval.results.map((rep) => equivalentRepSec(rep, interval.distanceM))
+    : interval?.results.map((x) => x.actualSec) ?? r.actualLapsSec;
   if (!times || times.length === 0) return undefined;
   return times.reduce((a, b) => a + b, 0) / times.length;
 }

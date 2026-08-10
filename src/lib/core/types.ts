@@ -288,9 +288,20 @@ export type RestType = "jog" | "walk" | "full";
 /** インターバル/レペの1本ごとの実施記録（1-2） */
 export interface RepResult {
   index: number;
+  /** 実際に走った距離。予定距離より短い場合も、その実測をそのまま保存する。 */
   distanceM: number;
+  /**
+   * その本で予定していた距離。実距離と異なるときだけ保持する。
+   * 例: 500m予定の3本目を400mで中断した場合は plannedDistanceM=500, distanceM=400。
+   */
+  plannedDistanceM?: number;
   /** 設定タイム（秒） */
   targetSec?: number;
+  /**
+   * 予定距離に対する元の設定タイム。距離短縮時の targetSec は実距離へ比例換算し、
+   * 元の「500m 69.5秒」のような設定はこちらに残す。
+   */
+  plannedTargetSec?: number;
   /** 実施タイム（秒） */
   actualSec: number;
   /**

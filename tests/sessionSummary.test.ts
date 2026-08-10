@@ -44,6 +44,25 @@ describe("記録サマリー", () => {
     expect(v.reps.map((x) => x.isBest)).toEqual([false, false, true]);
   });
 
+  it("予定500mの最終本を400mで止めた場合は距離を明示し、比較値は500m換算にする", () => {
+    const { s, r } = interval([70.9, 67.7, 56], 500);
+    r.interval!.targetSec = 69.5;
+    r.interval!.results[2] = {
+      index: 3,
+      distanceM: 400,
+      plannedDistanceM: 500,
+      targetSec: 55.6,
+      plannedTargetSec: 69.5,
+      actualSec: 56,
+    };
+    const view = buildSessionSummary(s, r);
+    expect(view.headline).toBe("500m × 2 + 400m（中断）");
+    expect(view.avgSec).toBeCloseTo((70.9 + 67.7 + 70) / 3, 1);
+    expect(view.bestSec).toBe(67.7);
+    expect(view.reps[2]).toMatchObject({ sec: 56, distanceM: 400, plannedDistanceM: 500 });
+    expect(view.reps[2].isBest).toBe(false);
+  });
+
   it("インターバルの平均は「1本平均」であってペースではない", () => {
     const { s, r } = interval([85.7, 85.2, 84.3]);
     expect(buildSessionSummary(s, r).avgLabel).toBe("AVG LAP");

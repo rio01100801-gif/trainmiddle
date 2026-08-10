@@ -54,6 +54,48 @@ function res(
 }
 
 describe("直近の実行状況", () => {
+  it("短縮した最終本は予定距離へ換算し、速い500m実績と誤解しない", () => {
+    const session = makeSession("2026-07-15", "high_lactate", {
+      prescription: "500m×3 @69-70秒 r10分",
+      targetPaces: [{ distanceM: 500, targetSecFast: 69, targetSecSlow: 70 }],
+    });
+    const result: SessionResult = {
+      id: "r-shortened-500",
+      sessionId: session.id,
+      date: session.date,
+      actualLapsSec: [70.9, 67.7, 56],
+      lapDistancesM: [500, 500, 400],
+      interval: {
+        reps: 3,
+        distanceM: 500,
+        targetSec: 69.5,
+        restSec: 600,
+        results: [
+          { index: 1, distanceM: 500, targetSec: 69.5, actualSec: 70.9 },
+          { index: 2, distanceM: 500, targetSec: 69.5, actualSec: 67.7 },
+          {
+            index: 3,
+            distanceM: 400,
+            plannedDistanceM: 500,
+            targetSec: 55.6,
+            plannedTargetSec: 69.5,
+            actualSec: 56,
+          },
+        ],
+      },
+      completedReps: 2,
+      prescribedReps: 3,
+      aborted: true,
+      achievement: "partial",
+      rpe: 9,
+      subjective: "hard",
+    };
+    const samples = executionSamples([session], [result], "high_lactate", "2026-07-22");
+    expect(samples).toHaveLength(1);
+    expect(samples[0].actualMeanSec).toBeCloseTo((70.9 + 67.7 + 70) / 3, 5);
+    expect(samples[0].aborted).toBe(true);
+  });
+
   it("設定より遅い状態が3回続いたら緩める", () => {
     const s = [hl("2026-07-01"), hl("2026-07-08"), hl("2026-07-15")];
     const r = [

@@ -88,7 +88,12 @@ import { cfeRange, spreadOf } from "./core/backfill";
 import { groupBySamePrescription } from "./core/samePrescription";
 import { periodSummary, type PeriodKind } from "./core/periodSummary";
 import { planRaceSplits, type RaceLapSample } from "./core/racePlan";
-import { findPreviousEntry, inferAchievement, type PreviousEntry } from "./core/workoutLog";
+import {
+  findPreviousEntry,
+  inferAchievement,
+  REP_DISTANCE_TOLERANCE_M,
+  type PreviousEntry,
+} from "./core/workoutLog";
 import {
   hrvDeviation,
   parseAppleHealthExport,
@@ -871,6 +876,16 @@ function processResultCore(
   });
   // 1-2: 構造化記録があれば達成度を実測から機械的に決める（手入力より優先）
   const inferred = result.interval ? inferAchievement(result.interval) : undefined;
+  const shortenedRep = result.interval?.results.find(
+    (rep) =>
+      rep.plannedDistanceM !== undefined &&
+      rep.distanceM + REP_DISTANCE_TOLERANCE_M < rep.plannedDistanceM
+  );
+  const fullyCompletedReps = result.interval?.results.filter(
+    (rep) =>
+      rep.plannedDistanceM === undefined ||
+      rep.distanceM + REP_DISTANCE_TOLERANCE_M >= rep.plannedDistanceM
+  ).length;
 
   /*
    * M-1: 同じセッションの記録を直して入れ直したときは「上書き」にする。
@@ -883,8 +898,15 @@ function processResultCore(
     id: existing?.id ?? result.id,
     heatFlagged: env?.isHeatFlagged ?? result.heatFlagged,
     achievement: inferred ?? result.achievement,
+    aborted: shortenedRep !== undefined ? true : result.aborted,
+    abortReason:
+      result.abortReason ??
+      (shortenedRep
+        ? `${shortenedRep.index}本目を予定${shortenedRep.plannedDistanceM}mのうち${shortenedRep.distanceM}mで終了`
+        : undefined),
     completedReps:
-      result.completedReps ?? (result.interval ? result.interval.results.length : undefined),
+      result.completedReps ??
+      (shortenedRep !== undefined ? fullyCompletedReps : result.interval?.results.length),
     prescribedReps: result.prescribedReps ?? result.interval?.reps,
   };
 

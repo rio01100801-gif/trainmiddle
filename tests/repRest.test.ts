@@ -6,7 +6,12 @@
  */
 import { describe, expect, it } from "vitest";
 import { completeRunTriple } from "@/lib/core/inputFormat";
-import { buildRepResults, perRepRestNote, summarizeResult } from "@/lib/core/workoutLog";
+import {
+  buildRepResults,
+  inferAchievement,
+  perRepRestNote,
+  summarizeResult,
+} from "@/lib/core/workoutLog";
 import type { IntervalDetail, SessionResult } from "@/lib/core/types";
 
 describe("S-2 3値のうち2つで足りる", () => {
@@ -89,6 +94,36 @@ describe("S-4 本ごとのレスト", () => {
       expect.objectContaining({ distanceM: 300, targetSec: 42, restAfterDistanceM: 200 }),
       expect.objectContaining({ distanceM: 200, targetSec: 24 }),
     ]);
+  });
+});
+
+describe("実施距離が予定より短い本", () => {
+  it("500m×3の最終本を400mで止めた実測と元の設定を両方残す", () => {
+    const results = buildRepResults(
+      500,
+      [70.9, 67.7, 56.0],
+      69.5,
+      [],
+      [500, 500, 400],
+      [],
+      [],
+      [],
+      [500, 500, 500]
+    );
+    expect(results[2]).toMatchObject({
+      distanceM: 400,
+      plannedDistanceM: 500,
+      actualSec: 56,
+      targetSec: 55.6,
+      plannedTargetSec: 69.5,
+    });
+    expect(inferAchievement({
+      reps: 3,
+      distanceM: 500,
+      targetSec: 69.5,
+      restSec: 600,
+      results,
+    })).toBe("partial");
   });
 });
 

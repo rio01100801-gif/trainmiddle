@@ -994,6 +994,14 @@ function ResultForm({
       ? existing.actualLapsSec.map((t: number) => String(Math.round(t * 100) / 100))
       : []
   );
+  const [repDistances, setRepDistances] = useState<string[]>(
+    (ex?.results ?? []).map((result: { distanceM: number }) => String(result.distanceM))
+  );
+  const [withActualDistance, setWithActualDistance] = useState<boolean>(
+    (ex?.results ?? []).some(
+      (result: { plannedDistanceM?: number }) => result.plannedDistanceM !== undefined
+    )
+  );
   /*
    * Q-1: 1本ごとの平均心拍。任意。
    * 既定では出さない。時計から拾える人だけが入れる項目なのに常時2欄にすると、
@@ -1117,6 +1125,8 @@ function ResultForm({
       // 実施タイムは前回の値であって今日の結果ではないので、あえて空のままにする
       setTimes("");
       setRepTimes([]);
+      setRepDistances([]);
+      setWithActualDistance(false);
     } else if (r.continuous) {
       setMode("continuous");
       setDistanceKm(String(r.continuous.distanceKm ?? ""));
@@ -1262,8 +1272,19 @@ function ResultForm({
                   : { restDistanceM: slotRestDistances[index], restType: structureRestType };
               })
             : [];
-        // 複合セッション（300+600+300）は本ごとに距離が違う
-        const dists = perRep ? slotDistances : [];
+        // 予定距離と実距離を分ける。500m予定を400mで止めた本も400m実測として残す。
+        const plannedDists = perRep
+          ? Array.from({ length: slotCount }, (_, index) =>
+              slotDistances[index] ?? Number(distM)
+            )
+          : [];
+        const dists = perRep
+          ? plannedDists.map((plannedDistance, index) => {
+              if (!withActualDistance) return plannedDistance;
+              const entered = Number(repDistances[index]);
+              return isFinite(entered) && entered > 0 ? entered : plannedDistance;
+            })
+          : [];
         const hrs =
           perRep && withHr
             ? repHrs.map((v) => {
@@ -1279,7 +1300,8 @@ function ResultForm({
           dists,
           perRepRests.map((rest) => rest.restSec),
           slotTargets,
-          perRepRests.map((rest) => rest.restDistanceM)
+          perRepRests.map((rest) => rest.restDistanceM),
+          plannedDists
         );
         payload = {
           sessionId: session.id,
@@ -1556,6 +1578,18 @@ function ResultForm({
           </div>
           {perRep ? (
             <>
+              <label
+                className="flex items-center gap-1.5 text-[11px] mb-1"
+                style={{ color: "var(--text-3)" }}
+              >
+                <input
+                  type="checkbox"
+                  checked={withActualDistance}
+                  onChange={(event) => setWithActualDistance(event.target.checked)}
+                  style={{ width: 16, height: 16, padding: 0 }}
+                />
+                実施距離が予定と違う本がある（途中中断など）
+              </label>
               {/*
                 Q-1: 心拍の欄は既定では出さない。
                 常時出すと1行に6欄（3本×2欄）並び、iPhone幅では
@@ -1595,22 +1629,44 @@ function ResultForm({
               */}
               <div
                 className={`grid gap-1.5 ${
-                  withHr && withRest ? "grid-cols-1" : withHr || withRest ? "grid-cols-2" : "grid-cols-3"
+                  withActualDistance || (withHr && withRest)
+                    ? "grid-cols-1"
+                    : withHr || withRest ? "grid-cols-2" : "grid-cols-3"
                 }`}
               >
-                {Array.from({ length: slotCount }, (_, i) => (
-                  <div key={`rep-${i}`}>
+                {Array.from({ length: slotCount }, (_, i) => {
+                  const plannedDistance = slotDistances[i] ?? Number(distM);
+                  return <div key={`rep-${i}`}>
                     <span
                       className="block mb-0.5 num text-[10px]"
                       style={{ color: "var(--text-3)" }}
                     >
-                      {i + 1}本目 {slotDistances[i] ?? distM}m
+                      {i + 1}本目 予定{plannedDistance}m
                       {slotTargets[i] !== undefined ? `／設定 ${slotTargets[i]}秒` : ""}
                       {slotRestDistances[i] !== undefined
                         ? `／次まで ${slotRestDistances[i]}m walk`
                         : ""}
                     </span>
                     <div className="flex gap-1">
+                      {withActualDistance ? (
+                        <label className="flex-1 min-w-0">
+                          <input
+                            className="w-full !text-[12px] !py-1"
+                            inputMode="numeric"
+                            aria-label={`${i + 1}本目 実施距離`}
+                            value={repDistances[i] ?? String(plannedDistance)}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setRepDistances((previous) => {
+                                const next = [...previous];
+                                while (next.length <= i) next.push("");
+                                next[i] = value;
+                                return next;
+                              });
+                            }}
+                          />
+                        </label>
+                      ) : null}
                       <label className="flex-1 min-w-0">
                         <input
                           className="w-full !text-[12px] !py-1"
@@ -1673,8 +1729,13 @@ function ResultForm({
                       ) : null}
                     </div>
                   </div>
-                ))}
+                })}
               </div>
+              {withActualDistance ? (
+                <p className="text-[10.5px] mt-1" style={{ color: "var(--text-3)" }}>
+                  例: 500m予定の3本目を400mで止めた場合は、実施距離400・タイム56.0と入力します。
+                </p>
+              ) : null}
               {withRest ? (
                 <p className="text-[10.5px] mt-1" style={{ color: "var(--text-3)" }}>
                   「6分」「90秒」「300m walk」のように書けます。メニューに「次の距離walk」がある場合は自動で入ります。

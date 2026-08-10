@@ -18,6 +18,7 @@ import {
 import { makeRace, testAthlete, makeResult } from "./helpers";
 import type { Goal } from "@/lib/core/types";
 import { isHighLoadSession } from "@/lib/core/trainingClassification";
+import { buildRepResults } from "@/lib/core/workoutLog";
 
 
 function setup(): { repo: Repo; raceId: string } {
@@ -218,6 +219,54 @@ describe("サービス層: 有酸素の実測データ（FitnessMarker）", () =
 });
 
 describe("サービス層: 結果入力 → CFE → ペース再計算の連動", () => {
+  it("500m予定の最終本を400mで中断した距離・タイムを保存し、完遂扱いにしない", () => {
+    const { repo } = setup();
+    regeneratePlan(repo, "2026-06-08");
+    const base = repo.listSessions().find((session) => session.category === "high_lactate")!;
+    const session = {
+      ...base,
+      name: "500m×3",
+      prescription: "500m×3 @69-70秒 r10分",
+      targetPaces: [{ distanceM: 500, targetSecFast: 69, targetSecSlow: 70 }],
+    };
+    repo.saveSession(session);
+    const reps = buildRepResults(
+      500,
+      [70.9, 67.7, 56],
+      69.5,
+      [],
+      [500, 500, 400],
+      [],
+      [],
+      [],
+      [500, 500, 500]
+    );
+
+    processResult(repo, makeResult(session, {
+      actualLapsSec: reps.map((rep) => rep.actualSec),
+      lapDistancesM: reps.map((rep) => rep.distanceM),
+      interval: {
+        reps: 3,
+        distanceM: 500,
+        targetSec: 69.5,
+        restSec: 600,
+        results: reps,
+      },
+    }));
+
+    const saved = repo.resultForSession(session.id)!;
+    expect(saved.lapDistancesM).toEqual([500, 500, 400]);
+    expect(saved.interval?.results[2]).toMatchObject({
+      distanceM: 400,
+      plannedDistanceM: 500,
+      actualSec: 56,
+    });
+    expect(saved.achievement).toBe("partial");
+    expect(saved.aborted).toBe(true);
+    expect(saved.completedReps).toBe(2);
+    expect(saved.abortReason).toContain("3本目");
+  });
+
   it("きつい未達の結果でCFEが悪化し、未来の特異的セッションのペースが遅くなる", () => {
     const { repo } = setup();
     regeneratePlan(repo, "2026-06-08");

@@ -10,6 +10,7 @@
  */
 import type { Session, SessionResult, DailyCheck, RuleViolation } from "./types";
 import { addDays, diffDays, fmtTime } from "./dates";
+import { equivalentRepSec } from "./workoutLog";
 
 export interface WeeklyReviewInput {
   weekStart: string;
@@ -79,7 +80,9 @@ export function buildWeeklyReview(input: WeeklyReviewInput): WeeklyReview {
   for (const r of weekResults) {
     const s = byId.get(r.sessionId)!;
     if (!r.interval) continue;
-    const times = r.interval.results.map((x) => x.actualSec);
+    const times = r.interval.targetSec !== undefined
+      ? r.interval.results.map((rep) => equivalentRepSec(rep, r.interval!.distanceM))
+      : r.interval.results.map((rep) => rep.actualSec);
     if (times.length === 0) continue;
     const mean = times.reduce((a, b) => a + b, 0) / times.length;
     const target = r.interval.targetSec;

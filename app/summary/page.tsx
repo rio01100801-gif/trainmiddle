@@ -125,6 +125,12 @@ export default function SummaryPage() {
               <span className="num text-[15px] font-bold w-[62px] flex-shrink-0">
                 {fmtLap(rep.sec)}
               </span>
+              {rep.distanceM !== undefined ? (
+                <span className="num text-[10px] flex-shrink-0" style={{ color: "var(--text-3)" }}>
+                  {rep.distanceM}m
+                  {rep.plannedDistanceM !== undefined ? `／予定${rep.plannedDistanceM}m` : ""}
+                </span>
+              ) : null}
               {/* 本ごとの差を長さで見せる。数字だけだと差が読み取りにくい */}
               <span className="flex-1 min-w-0 h-[3px] rounded-full" style={{ background: "var(--surface-3)" }}>
                 <i

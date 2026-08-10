@@ -14,10 +14,13 @@
  * 種別に応じて呼び分ける（`avgLabel`）。
  */
 import type { Session, SessionResult } from "./types";
+import { equivalentRepSec } from "./workoutLog";
 
 export interface SummaryRep {
   index: number;
   sec: number;
+  distanceM?: number;
+  plannedDistanceM?: number;
   /** その日の最速か */
   isBest: boolean;
   /**
@@ -65,12 +68,20 @@ export function buildSessionSummary(
   const times = done.map((r) => r.actualSec);
 
   if (iv && times.length > 0) {
-    const best = Math.min(...times);
+    const comparisonTimes = iv.targetSec !== undefined
+      ? done.map((rep) => equivalentRepSec(rep, iv.distanceM))
+      : times;
+    const best = Math.min(...comparisonTimes);
     const total = times.reduce((a, b) => a + b, 0);
+    const showRepDistances =
+      done.some((rep) => rep.plannedDistanceM !== undefined) ||
+      new Set(done.map((rep) => rep.distanceM)).size > 1;
     const reps: SummaryRep[] = times.map((sec, i) => ({
       index: i + 1,
       sec,
-      isBest: sec === best,
+      distanceM: showRepDistances ? done[i].distanceM : undefined,
+      plannedDistanceM: showRepDistances ? done[i].plannedDistanceM : undefined,
+      isBest: comparisonTimes[i] === best,
       splitsSec: done[i].splitsSec,
       /*
        * 最速を1、遅い本ほど短くする。0起点だと差が誇張されすぎ、
@@ -78,14 +89,23 @@ export function buildSessionSummary(
        * 丸めを小数1桁にすると本どうしの差（数%）が潰れて全部同じ長さになるため、
        * 表示幅として意味のある桁まで残す。
        */
-      ratio: Math.min(1, Math.round((0.55 + 0.45 * (best / sec)) * 1000) / 1000),
+      ratio: Math.min(
+        1,
+        Math.round((0.55 + 0.45 * (best / comparisonTimes[i])) * 1000) / 1000
+      ),
     }));
+    const shortened = done.filter(
+      (rep) => rep.plannedDistanceM !== undefined && rep.distanceM < rep.plannedDistanceM
+    );
+    const completedCount = done.length - shortened.length;
     return {
       date: result.date,
-      headline: `${iv.distanceM}m × ${times.length}`,
+      headline: shortened.length > 0
+        ? `${iv.distanceM}m × ${completedCount} + ${shortened.map((rep) => `${rep.distanceM}m`).join(" + ")}（中断）`
+        : `${iv.distanceM}m × ${times.length}`,
       prescription: session.prescription,
       totalSec: round1(total),
-      avgSec: round1(total / times.length),
+      avgSec: round1(comparisonTimes.reduce((a, b) => a + b, 0) / comparisonTimes.length),
       avgLabel: "AVG LAP",
       bestSec: round1(best),
       reps,
