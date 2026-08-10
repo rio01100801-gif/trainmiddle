@@ -540,13 +540,24 @@ function rule05(ctx: RuleContext): RuleViolation[] {
   return out;
 }
 
-/** RULE-06 [WARN] 連続する3週で high_lactate が3回以上 → VLaMax上昇リスク */
+/**
+ * RULE-06 [WARN] 3週(21日)で high_lactate が週1本の頻度を上回る → VLaMax上昇リスク
+ *
+ * Specific期の意図した処方は「高乳酸 週1」（periodization.ts、仕様書4-6）。
+ * 週1を守っている限り、どの3週の窓を切り取っても高乳酸はちょうど3回になる。
+ * 閾値を3回にしていた頃は、計画通りに進んでいるだけで常時点灯していた
+ * （設計が意図した頻度そのものを「リスク」として警告し続けていた）。
+ * 4回以上（＝どこかで週1を超えて詰め込まれた場合）にだけ鳴らすことで、
+ * 「積み上がっている」という信号として意味を持たせる。
+ */
+const RULE06_THRESHOLD = 4;
+
 function rule06(ctx: RuleContext): RuleViolation[] {
   const out: RuleViolation[] = [];
   const hl = sorted(
     ctx.sessions.filter((s) => active(s) && s.category === "high_lactate")
   );
-  if (hl.length < 3) return out;
+  if (hl.length < RULE06_THRESHOLD) return out;
   const weeks = [...new Set(hl.map((s) => weekStart(s.date)))].sort();
   const reported = new Set<string>();
   for (const w of weeks) {
@@ -554,7 +565,7 @@ function rule06(ctx: RuleContext): RuleViolation[] {
     const inWindow = hl.filter(
       (s) => s.date >= w && s.date <= windowEnd
     );
-    if (inWindow.length >= 3) {
+    if (inWindow.length >= RULE06_THRESHOLD) {
       const key = inWindow.map((s) => s.id).join(",");
       if (reported.has(key)) continue;
       reported.add(key);

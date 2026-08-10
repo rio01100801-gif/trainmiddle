@@ -358,12 +358,36 @@ describe("RULE-05 有酸素偏重の検出", () => {
 });
 
 describe("RULE-06 VLaMaxリスク", () => {
-  it("連続3週で高乳酸3回以上でWARN", () => {
+  /*
+   * Specific期の意図した処方は「高乳酸 週1」（periodization.ts、仕様書4-6）。
+   * 週1を守っている限り、どの3週を切り取っても高乳酸はちょうど3回になる。
+   * 以前はこれ自体でWARNが出ていた——計画通りに進んでいるだけで常時点灯し、
+   * 「頻度が積み上がっている」という信号として機能していなかった
+   * （README「既知の注意点」に運用上の注記が要るほどの状態だった）。
+   * 週1を6週続けても鳴らないことを確認する。
+   */
+  it("週1のまま6週続けてもWARNにならない（Specific期の意図した頻度）", () => {
     const c = ctx({
       sessions: [
         makeSession("2026-04-06", "high_lactate"),
-        makeSession("2026-04-14", "high_lactate"),
-        makeSession("2026-04-22", "high_lactate"),
+        makeSession("2026-04-13", "high_lactate"),
+        makeSession("2026-04-20", "high_lactate"),
+        makeSession("2026-04-27", "high_lactate"),
+        makeSession("2026-05-04", "high_lactate"),
+        makeSession("2026-05-11", "high_lactate"),
+      ],
+    });
+    expect(violationsOf(runRuleEngine(c), "RULE-06")).toHaveLength(0);
+  });
+
+  it("週1本を上回る頻度（3週で4回）でWARN", () => {
+    const c = ctx({
+      sessions: [
+        makeSession("2026-04-06", "high_lactate"),
+        makeSession("2026-04-13", "high_lactate"),
+        // 同じ週にもう1本（自作メニューの重複・生成側の不具合等を想定）
+        makeSession("2026-04-16", "high_lactate"),
+        makeSession("2026-04-20", "high_lactate"),
       ],
     });
     expect(violationsOf(runRuleEngine(c), "RULE-06").length).toBeGreaterThan(0);
