@@ -13,8 +13,10 @@ import {
 import {
   captureAuthRedirect,
   clearSyncConfig,
+  clearLastSynced,
   consumeAuthMessage,
   currentOAuthRedirectTo,
+  deleteSnapshot,
   fetchSnapshot,
   getLastSynced,
   getSession,
@@ -469,6 +471,30 @@ export default function SyncPage() {
           {" ／ 今日: "}
           {localToday()}
         </p>
+        <div className="mt-3 pt-3" style={{ borderTop: "1px solid var(--line)" }}>
+          <ConfirmButton
+            label="クラウド上のバックアップを削除"
+            title="クラウド上のバックアップを削除しますか？"
+            message="この端末の練習データは削除しません。現在サインイン中の利用者のsnapshot.jsonだけを削除します。元に戻せません。"
+            className="btn-ghost"
+            disabled={!configured || !session || busy}
+            onConfirm={async () => {
+              if (!session) return;
+              setBusy(true);
+              try {
+                await deleteSnapshot(getSyncConfig() as SyncConfig, session);
+                clearLastSynced();
+                setLastSynced(undefined);
+                setDecision(null);
+                setMsg("クラウド上のバックアップだけを削除しました。この端末の練習データは残っています。");
+              } catch (error) {
+                setMsg(error instanceof Error ? error.message : String(error));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          />
+        </div>
       </Card>
 
       <Card title="接続診断">

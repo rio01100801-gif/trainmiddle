@@ -12,6 +12,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
+import { createHash } from "crypto";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const from = path.join(root, "pwa");
@@ -78,23 +79,44 @@ fs.writeFileSync(
 );
 
 /*
- * 運用整備で追加: 配信物がどのソースコミットから作られたかを追跡できるようにする。
- * 秘密情報は含まない（version・commit・生成時刻のみ）。診断画面（app/settings）が
- * これを読んで表示する。commitが取れない環境（gitが無い等）でも失敗させない。
+ * 配信物とソースの対応を追跡する。ただしコミットID・現在時刻を直接書くと、
+ * 同じソースをCIで再ビルドしただけでpwa-distへ差分が出る。
+ * tracked + untracked（ignore除外）の入力内容から指紋を作り、再現可能にする。
  */
-function currentCommit() {
+function sourceFingerprint() {
   try {
-    const dirty = execSync("git status --porcelain", { cwd: root }).toString().trim().length > 0;
-    const hash = execSync("git rev-parse --short HEAD", { cwd: root }).toString().trim();
-    return dirty ? `${hash}-dirty` : hash;
-  } catch {
-    return "unknown";
+    const files = execSync("git ls-files --cached --others --exclude-standard -z", {
+      cwd: root,
+    })
+      .toString()
+      .split("\0")
+      .filter((file) => file && !file.startsWith("pwa-dist/"))
+      .sort();
+    const hash = createHash("sha256");
+    for (const file of files) {
+      hash.update(file);
+      hash.update("\0");
+      const absolutePath = path.join(root, file);
+      // `git ls-files --cached`には作業ツリーで削除した追跡ファイルも含まれる。
+      // 削除を無視せず明示的なマーカーとしてfingerprintへ含める。
+      hash.update(fs.existsSync(absolutePath) ? fs.readFileSync(absolutePath) : "<deleted>");
+      hash.update("\0");
+    }
+    return `source-${hash.digest("hex").slice(0, 12)}`;
+  } catch (error) {
+    throw new Error("ソースfingerprintを生成できませんでした", { cause: error });
   }
 }
 fs.writeFileSync(
   path.join(to, "build-info.json"),
   JSON.stringify(
-    { version: v, commit: currentCommit(), builtAt: new Date().toISOString() },
+    {
+      version: v,
+      commit: sourceFingerprint(),
+      builtAt: process.env.SOURCE_DATE_EPOCH
+        ? new Date(Number(process.env.SOURCE_DATE_EPOCH) * 1000).toISOString()
+        : "reproducible",
+    },
     null,
     2
   )

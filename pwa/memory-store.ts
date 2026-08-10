@@ -180,8 +180,10 @@ export class MemoryStore implements Store {
 
   // ---- Result ----
   saveResult(r: SessionResult): void {
-    const i = this.state.results.findIndex((x) => x.id === r.id);
-    if (i >= 0) this.state.results[i] = r;
+    const i = this.state.results.findIndex(
+      (x) => x.id === r.id || x.sessionId === r.sessionId
+    );
+    if (i >= 0) this.state.results[i] = { ...r, id: this.state.results[i].id };
     else this.state.results.push(r);
     this.touch();
   }
@@ -427,30 +429,107 @@ function openDb(): Promise<IDBDatabase> {
   });
 }
 
-export async function loadState(): Promise<AppState> {
-  try {
-    const db = await openDb();
-    const state = await new Promise<AppState | undefined>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readonly");
-      const req = tx.objectStore(STORE_NAME).get(KEY);
-      req.onsuccess = () => resolve(req.result as AppState | undefined);
-      req.onerror = () => reject(req.error);
-    });
-    db.close();
-    if (state && state.version === 1) {
-      // マイグレーション: 後から追加したコレクションが無い旧データを補完する
-      return { ...emptyState(), ...state };
-    }
-  } catch {
-    // IndexedDB不可（プライベートブラウズ等）→ localStorageフォールバック
-    try {
-      const raw = localStorage.getItem(DB_NAME);
-      if (raw) return { ...emptyState(), ...(JSON.parse(raw) as AppState) };
-    } catch {
-      /* 何もできない */
+export interface StateIndexedDbReader {
+  get(key: string): Promise<unknown>;
+}
+
+export interface StateLocalStorageReader {
+  getItem(key: string): string | null;
+}
+
+export interface LoadStateDeps {
+  indexedDb?: StateIndexedDbReader;
+  localStorageImpl?: StateLocalStorageReader;
+}
+
+const STATE_ARRAY_KEYS = [
+  "races",
+  "sessions",
+  "strengths",
+  "results",
+  "dailyChecks",
+  "markers",
+  "heatBlocks",
+  "heatEntries",
+  "injuries",
+  "syncs",
+  "customMenus",
+  "pastEntries",
+  "phrases",
+  "fitImports",
+  "kv",
+  "changeLog",
+] as const;
+
+/** 旧版で後から追加された配列は補完するが、壊れた値を空配列で隠さない。 */
+export function hydrateState(value: unknown): AppState {
+  if (!value || typeof value !== "object") {
+    throw new Error("保存データの形式が正しくありません");
+  }
+  const candidate = value as Partial<AppState>;
+  if (candidate.version !== 1) {
+    throw new Error(`未対応の保存データ版です（version=${String(candidate.version)}）`);
+  }
+  for (const key of STATE_ARRAY_KEYS) {
+    const field = candidate[key];
+    if (field !== undefined && !Array.isArray(field)) {
+      throw new Error(`保存データの ${key} が壊れています`);
     }
   }
-  return emptyState();
+  return { ...emptyState(), ...candidate } as AppState;
+}
+
+function defaultIndexedDbReader(): StateIndexedDbReader {
+  return {
+    get: async (key) => {
+      const db = await openDb();
+      try {
+        return await new Promise<unknown>((resolve, reject) => {
+          const tx = db.transaction(STORE_NAME, "readonly");
+          const req = tx.objectStore(STORE_NAME).get(key);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+      } finally {
+        db.close();
+      }
+    },
+  };
+}
+
+function defaultLocalStorageReader(): StateLocalStorageReader {
+  return { getItem: (key) => localStorage.getItem(key) };
+}
+
+export async function loadState(deps: LoadStateDeps = {}): Promise<AppState> {
+  const indexedDbReader = deps.indexedDb ?? defaultIndexedDbReader();
+  try {
+    const state = await indexedDbReader.get(KEY);
+    if (state === undefined) return emptyState();
+    return hydrateState(state);
+  } catch (indexedDbError) {
+    // IndexedDB不可時は、旧フォールバックに実データがある場合だけ復旧する。
+    // 両方を読めない状態で空データを返すと、その後の保存で既存データを
+    // 空状態から上書きしうるため、起動を止めて本人へ明示する。
+    try {
+      const storage = deps.localStorageImpl ?? defaultLocalStorageReader();
+      const raw = storage.getItem(DB_NAME);
+      if (raw) return hydrateState(JSON.parse(raw) as unknown);
+    } catch (localStorageError) {
+      const idbDetail = errorText(indexedDbError);
+      const localDetail = errorText(localStorageError);
+      throw new Error(
+        `端末データを安全に読み込めませんでした。書き込みは開始していません。` +
+          `再読み込みしても直らない場合は、ストレージ設定を確認してください。` +
+          `（IndexedDB: ${idbDetail} / localStorage: ${localDetail}）`
+      );
+    }
+    throw new Error(
+      `端末データを安全に読み込めませんでした。書き込みは開始していません。` +
+        `IndexedDBへアクセスできず、復旧用データも見つかりません。` +
+        `（${errorText(indexedDbError)}）`
+    );
+  }
 }
 
 /**

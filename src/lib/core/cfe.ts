@@ -287,7 +287,8 @@ export function goalFeasibility(
     requiredSecPerWeek: rate,
     warn,
     message: warn
-      ? `必要改善速度 ${rate.toFixed(2)}秒/週 は現実的な上限(0.3秒/週)を超えています。目標の再設定またはレース日の見直しを検討してください。`
+      ? `必要改善速度 ${rate.toFixed(2)}秒/週 はFORGEの設定ペース運用上限(0.3秒/週)を超えています。` +
+        `これは安全な理想値の断定ではありません。目標ペースをそのまま処方へ混ぜず、実測能力を優先します。`
       : undefined,
   };
 }
@@ -309,6 +310,25 @@ export const PHASE_GOAL_WEIGHT: Record<Phase, number> = {
 export function baseTime(cfeSec: number, targetSec: number, phase: Phase): number {
   const w = PHASE_GOAL_WEIGHT[phase];
   return cfeSec * (1 - w) + targetSec * w;
+}
+
+/**
+ * 目標達成に必要な改善速度が運用上限を超える場合、目標値を設定ペースへ
+ * 混ぜない。目標自体は保持し、CFEが追いついた後に通常のフェーズ配分へ戻す。
+ */
+export function guardedBaseTime(
+  cfeSec: number,
+  targetSec: number,
+  phase: Phase,
+  weeksRemaining: number
+): { timeSec: number; guarded: boolean; message?: string } {
+  const feasibility = goalFeasibility(cfeSec, targetSec, weeksRemaining);
+  const guarded = targetSec < cfeSec && feasibility.warn;
+  return {
+    timeSec: guarded ? cfeSec : baseTime(cfeSec, targetSec, phase),
+    guarded,
+    message: guarded ? feasibility.message : undefined,
+  };
 }
 
 // ---------------------------------------------------------------------------

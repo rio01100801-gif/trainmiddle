@@ -253,6 +253,33 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+/** 解析不能でも元FITを失わず、書き出しバックアップへ含められるようにする。 */
+async function preserveFailedFit(
+  fileName: string,
+  bytes: Uint8Array,
+  parseError: string
+): Promise<string> {
+  const hashInput = new Uint8Array(bytes.byteLength);
+  hashInput.set(bytes);
+  const digest = await crypto.subtle.digest("SHA-256", hashInput.buffer);
+  const fingerprint = Array.from(new Uint8Array(digest).slice(0, 12))
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+  const id = `fit-parse-failure-${fingerprint}`;
+  storeRef.saveKv(id, {
+    id,
+    fileName,
+    importedAtUtc: new Date().toISOString(),
+    rawBytesBase64: bytesToBase64(bytes),
+    parseError,
+  });
+  const outcome = await flushPendingState();
+  if (outcome && !outcome.ok) {
+    throw new Error(`元FITの退避にも失敗しました: ${outcome.detail}`);
+  }
+  return id;
+}
+
 /**
  * FIT取込 Phase 1: ファイル選択と安全な受信（構造検証のみ）。
  *
@@ -525,7 +552,19 @@ function FitImportCard() {
         }
       } catch (e) {
         // 構造は正しいが解析に失敗した場合。解析失敗を成功として扱わない。
-        setParseError(`解析できませんでした: ${(e as Error).message}`);
+        const detail = e instanceof Error ? e.message : String(e);
+        try {
+          const failureId = await preserveFailedFit(file.name, bytes, detail);
+          setParseError(
+            `解析できませんでした: ${detail}。元FITは端末内へ退避しました（${failureId}）。`
+          );
+        } catch (preserveError) {
+          setParseError(
+            `解析できませんでした: ${detail}。${
+              preserveError instanceof Error ? preserveError.message : String(preserveError)
+            }`
+          );
+        }
       }
     } catch (e) {
       setValidation({ kind: "error", message: `読み込めませんでした: ${(e as Error).message}` });

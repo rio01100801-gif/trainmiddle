@@ -20,14 +20,14 @@ import type { Store } from "./db/store";
 import { addDays, diffDays, fmtTime, weekStart } from "./core/dates";
 import {
   applyStaleness,
-  baseTime,
+  guardedBaseTime,
   goalFeasibility,
   updateCfeFromResult,
   initCfe,
   revertCfeForSession,
 } from "./core/cfe";
 import { buildAerobicProfile, GRP_RATIOS, specificPace } from "./core/pace";
-import { runRuleEngine, weeklySummary, RuleContext } from "./core/rules";
+import { activeInjuriesAt, runRuleEngine, weeklySummary, RuleContext } from "./core/rules";
 import { isHighLoadSession } from "./core/trainingClassification";
 import { generatePlan, phaseForDate } from "./core/periodization";
 import {
@@ -272,6 +272,7 @@ export function buildRuleContext(repo: Store, evaluationDate: string): RuleConte
     evaluationDate,
     currentAcwr: currentLoad.acwr,
     currentAcwrConfidence: currentLoad.confidence,
+    injuries: repo.listInjuries(),
   };
 }
 
@@ -430,6 +431,25 @@ export function regeneratePlan(repo: Store, startDate: string): {
   sessionCount: number;
   strengthCount: number;
   violations: RuleViolation[];
+  templateViolations: RuleViolation[];
+  customMenusUsed: number;
+  limiterSwaps: { date: string; from: string; to: string; note: string }[];
+  limiterNote?: string;
+  unsafeSkipped: number;
+  safetyAdjustments: { date: string; sessionId: string; reason: string }[];
+} {
+  /*
+   * 再生成は「旧自動予定の削除 → 新予定の生成・保存」で1操作。
+   * 後半で例外が起きたときに削除だけが確定すると予定を失うため、
+   * 保存層が提供するトランザクションで操作全体を原子的に扱う。
+   */
+  return repo.transaction(() => regeneratePlanCore(repo, startDate));
+}
+
+function regeneratePlanCore(repo: Store, startDate: string): {
+  sessionCount: number;
+  strengthCount: number;
+  violations: RuleViolation[];
   /** 3-1: 曜日テンプレート自体の問題（生成前に気づけるように別枠で返す） */
   templateViolations: RuleViolation[];
   customMenusUsed: number;
@@ -438,6 +458,7 @@ export function regeneratePlan(repo: Store, startDate: string): {
   limiterNote?: string;
   /** 対象6: 生成ロジックのバグで物理的にありえない設定ペースが出て、除外した枠数 */
   unsafeSkipped: number;
+  safetyAdjustments: { date: string; sessionId: string; reason: string }[];
 } {
   const athlete = repo.getAthlete();
   const goal = repo.getGoal();
@@ -562,13 +583,40 @@ export function regeneratePlan(repo: Store, startDate: string): {
   const candidateSessions = plan.sessions.filter(
     (session) => !occupiedSlots.has(`${session.date}|${session.timeOfDay}`)
   );
+  const injuryHistory = repo.listInjuries();
+  const safetyAdjustments: { date: string; sessionId: string; reason: string }[] = [];
+  const injuryProtectedSessions = candidateSessions.map((session) => {
+    const activeInjuries = activeInjuriesAt(injuryHistory, session.date);
+    if (activeInjuries.length === 0 || !isHighLoadSession(session)) return session;
+    const reason =
+      `継続中の故障記録（${activeInjuries
+        .map((injury) => `${injury.bodyPart}: 痛み${injury.painLevel}/10`)
+        .join("、")}）があるため、高負荷を回復メニューへ変更`;
+    safetyAdjustments.push({ date: session.date, sessionId: session.id, reason });
+    return {
+      ...session,
+      category: "aerobic" as const,
+      name: "回復ジョグ（故障保護）",
+      prescription:
+        "20〜30分・会話可能・RPE 2以下。痛みが増す、走動作が変わる場合は中止して完全休養。",
+      targetPaces: [],
+      transfer800m: 1,
+      transfer1500m: 1,
+      riskLevel: "low" as const,
+      durationMin: 25,
+      distanceKm: undefined,
+      paceSecPerKm: undefined,
+      aerobicPurpose: "recovery" as const,
+      origin: "recovery" as const,
+    };
+  });
   /*
    * 対象6: 危険なトレーニング提案の防止。
    * 生成ロジックのバグで物理的にありえない設定ペースが出た場合、
    * 全体の生成を止めるのではなく、その枠だけを除いて件数を報告する
    * （黙って混ぜない。1枠のバグで明日の練習全体が消えるのも避ける）。
    */
-  const generatedSessions = candidateSessions.filter(
+  const generatedSessions = injuryProtectedSessions.filter(
     (session) => !hasBlockingIssue(checkSessionPlausibility(session))
   );
   const unsafeSkipped = candidateSessions.length - generatedSessions.length;
@@ -601,6 +649,7 @@ export function regeneratePlan(repo: Store, startDate: string): {
           `${plan.limiterSwaps.length}枠を振り替えています（${plan.limiterSwaps[0].from} → ${plan.limiterSwaps[0].to} ほか）`
         : undefined,
     unsafeSkipped,
+    safetyAdjustments,
   };
 }
 
@@ -622,7 +671,16 @@ export function repaceFutureSessions(
 
   for (const s of sessions) {
     if (!(s.category in GRP_RATIOS)) continue; // 有酸素系はCFEから逆算しない（4-5-2）
-    const grpBase = baseTime(cfe.estimated800mSec, goal.targetTimeSec, s.phase);
+    const targetRace = repo.listRaces().find((race) => race.id === goal.targetRaceId);
+    const weeksRemaining = targetRace
+      ? Math.max(diffDays(s.date, targetRace.dateStart) / 7, 0)
+      : 0;
+    const grpBase = guardedBaseTime(
+      cfe.estimated800mSec,
+      goal.targetTimeSec,
+      s.phase,
+      weeksRemaining
+    ).timeSec;
     const newPaces = s.targetPaces.map((tp) =>
       specificPace(grpBase, s.category, tp.distanceM)
     );
@@ -661,6 +719,18 @@ export interface ProcessResultOutput {
 }
 
 export function processResult(
+  repo: Store,
+  result: SessionResult,
+  opts: { isRace?: boolean; raceTimeSec?: number } = {}
+): ProcessResultOutput {
+  /*
+   * 結果・完了状態・CFE・将来予定・変更履歴は同じ記録操作の一部。
+   * 途中失敗で一部だけ残さないよう、通常入力もFIT確認と同じ原子性を持たせる。
+   */
+  return repo.transaction(() => processResultCore(repo, result, opts));
+}
+
+function processResultCore(
   repo: Store,
   result: SessionResult,
   opts: { isRace?: boolean; raceTimeSec?: number } = {}
@@ -1830,7 +1900,7 @@ export function confirmFitImport(
       if (target.category !== confirmation.category) {
         repo.saveSession({ ...target, category: confirmation.category });
       }
-      const processOutput = processResult(repo, result);
+      const processOutput = processResultCore(repo, result);
       const savedResult = repo.resultForSession(target.id)!;
       const savedRecord: FitImportRecord = {
         ...record,

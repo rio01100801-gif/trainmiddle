@@ -17,6 +17,7 @@ import type {
   DailyCheck,
   Goal,
   HeatBlock,
+  InjuryLog,
   Race,
   RuleViolation,
   Session,
@@ -87,6 +88,28 @@ export interface RuleContext {
   /** load.ts で計算した現在のACWR（RULE-16） */
   currentAcwr?: number;
   currentAcwrConfidence?: "low" | "medium" | "high";
+  /** 故障ログ。未指定の旧呼び出しは故障情報なしとして扱う。 */
+  injuries?: InjuryLog[];
+}
+
+/**
+ * 指定日時点で継続中と判断できる故障を返す。
+ * 部位ごとの最新記録を使い、ongoingは回復記録が付くまで継続、onsetは
+ * 追記が無い場合でも発生後14日だけ安全側に扱う。痛み0は負荷制限に使わない。
+ */
+export function activeInjuriesAt(injuries: InjuryLog[], onDate: string): InjuryLog[] {
+  const latestByPart = new Map<string, InjuryLog>();
+  for (const injury of injuries
+    .filter((item) => item.date <= onDate)
+    .sort((a, b) => a.date.localeCompare(b.date))) {
+    latestByPart.set(injury.bodyPart.trim().toLowerCase(), injury);
+  }
+  return [...latestByPart.values()].filter(
+    (injury) =>
+      injury.painLevel > 0 &&
+      (injury.status === "ongoing" ||
+        (injury.status === "onset" && diffDays(injury.date, onDate) <= 14))
+  );
 }
 
 const active = (s: Session) => s.status !== "skipped" && s.category !== "off";
@@ -1099,6 +1122,34 @@ function rule22(ctx: RuleContext): RuleViolation[] {
   return out;
 }
 
+/** RULE-23: 継続中の故障がある期間に高負荷予定を置いたことを明示する。 */
+function rule23(ctx: RuleContext): RuleViolation[] {
+  const injuries = activeInjuriesAt(ctx.injuries ?? [], ctx.evaluationDate);
+  if (injuries.length === 0) return [];
+  const highLoad = ctx.sessions.filter(
+    (session) =>
+      session.date >= ctx.evaluationDate &&
+      active(session) &&
+      isHighLoadSession(session)
+  );
+  if (highLoad.length === 0) return [];
+  const maxPain = Math.max(...injuries.map((injury) => injury.painLevel));
+  const parts = injuries.map((injury) => `${injury.bodyPart}（痛み${injury.painLevel}/10）`);
+  return [
+    {
+      rule: "RULE-23",
+      level: maxPain >= 5 ? "ERROR" : "WARN",
+      message:
+        `継続中の故障記録（${parts.join("、")}）がある状態で、` +
+        `高負荷練習が${highLoad.length}件予定されています。`,
+      dates: highLoad.map((session) => session.date),
+      sessionIds: highLoad.map((session) => session.id),
+      suggestion:
+        "痛みと走動作を確認し、高負荷練習は回復メニューへ変更するか、医療・指導者の判断を優先してください。",
+    },
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // エンジン本体
 // ---------------------------------------------------------------------------
@@ -1126,6 +1177,7 @@ export function runRuleEngine(ctx: RuleContext): RuleViolation[] {
     ...rule20(ctx),
     ...rule21(ctx),
     ...rule22(ctx),
+    ...rule23(ctx),
   ];
   const order = { ERROR: 0, WARN: 1, INFO: 2 };
   return violations.sort((a, b) => order[a.level] - order[b.level]);

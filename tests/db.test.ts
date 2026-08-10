@@ -87,6 +87,18 @@ describe("DB リポジトリ層", () => {
     expect(r!.actualLapsSec.length).toBe(3);
   });
 
+  it("同じセッションへ異なる結果IDを保存してもDB上は1件に保つ", () => {
+    const repo = memRepo();
+    const session = makeSession("2026-04-01", "race_economy");
+    repo.saveSession(session);
+    repo.saveResult(makeResult(session, { id: "result-first", rpe: 6 }));
+    repo.saveResult(makeResult(session, { id: "result-second", rpe: 8 }));
+
+    const rows = repo.listResults().filter((result) => result.sessionId === session.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: "result-first", rpe: 8 });
+  });
+
   it("CFE の履歴が往復する", () => {
     const repo = memRepo();
     const cfe = initCfe(109.51, "2026-04-01");

@@ -633,6 +633,42 @@ describe("RULE-22 暑熱順化ブロック", () => {
   });
 });
 
+describe("RULE-23 継続中の故障", () => {
+  it("継続中の故障と将来の高負荷予定が重なると対象メニューを明示する", () => {
+    const hard = makeSession("2026-04-03", "high_lactate");
+    const c = ctx({
+      evaluationDate: "2026-04-01",
+      sessions: [hard, makeSession("2026-04-02", "aerobic")],
+      injuries: [
+        {
+          id: "inj-1",
+          date: "2026-03-31",
+          bodyPart: "右アキレス腱",
+          painLevel: 6,
+          status: "ongoing",
+        },
+      ],
+    });
+
+    const [violation] = violationsOf(runRuleEngine(c), "RULE-23");
+    expect(violation.level).toBe("ERROR");
+    expect(violation.sessionIds).toEqual([hard.id]);
+    expect(violation.message).toContain("右アキレス腱");
+  });
+
+  it("回復記録が最新なら警告しない", () => {
+    const c = ctx({
+      evaluationDate: "2026-04-01",
+      sessions: [makeSession("2026-04-03", "high_lactate")],
+      injuries: [
+        { id: "inj-1", date: "2026-03-20", bodyPart: "右足", painLevel: 5, status: "onset" },
+        { id: "inj-2", date: "2026-03-30", bodyPart: "右足", painLevel: 0, status: "recovered" },
+      ],
+    });
+    expect(violationsOf(runRuleEngine(c), "RULE-23")).toHaveLength(0);
+  });
+});
+
 describe("週次サマリー", () => {
   it("カテゴリ回数・転移度スコア・高乳酸28日頻度を計算する", () => {
     const c = ctx({

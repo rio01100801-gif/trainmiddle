@@ -54,5 +54,26 @@ describe("Store.transaction", () => {
         })
       ).toThrow("識別可能なメッセージ");
     });
+}
+
+describe("Storeの1セッション1結果制約", () => {
+  for (const [label, makeStore] of stores) {
+    it(`${label}: 異なる結果IDでも同じsessionIdなら上書きする`, () => {
+      const repo = makeStore();
+      const first = {
+        id: "result-a",
+        sessionId: "session-a",
+        date: "2026-07-01",
+        actualLapsSec: [],
+        rpe: 5,
+        achievement: "achieved" as const,
+        subjective: "moderate" as const,
+      };
+      repo.saveResult(first);
+      repo.saveResult({ ...first, id: "result-b", rpe: 8 });
+      expect(repo.listResults()).toHaveLength(1);
+      expect(repo.listResults()[0]).toMatchObject({ id: "result-a", rpe: 8 });
+    });
   }
+});
 });

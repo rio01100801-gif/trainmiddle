@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clearSyncConfig,
+  deleteSnapshot,
   fetchSnapshot,
   getLastSynced,
   getSession,
@@ -365,6 +366,19 @@ describe("Supabase Storage同期", () => {
       "/storage/v1/object/forge/user-abc/snapshot.json",
       "/storage/v1/object/forge/user-xyz/snapshot.json",
     ]);
+  });
+
+  it("クラウド削除は本人UID配下のsnapshotだけへDELETEする", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      expect(String(input)).toBe(
+        "https://storage.supabase.co/storage/v1/object/forge/user-abc/snapshot.json"
+      );
+      expect(init?.method).toBe("DELETE");
+      expect(new Headers(init?.headers).get("Authorization")).toContain("Bearer ");
+      return new Response(null, { status: 200 });
+    };
+
+    await expect(deleteSnapshot(config, session, { fetchImpl })).resolves.toBeUndefined();
   });
 
   it("アクセストークンから利用者IDを取り出せない場合は通信せず、値を含まない明確なエラーにする", async () => {

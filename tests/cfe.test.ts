@@ -5,6 +5,7 @@ import {
   applyStaleness,
   goalFeasibility,
   baseTime,
+  guardedBaseTime,
   PHASE_GOAL_WEIGHT,
 } from "@/lib/core/cfe";
 import { makeSession, makeResult } from "./helpers";
@@ -234,5 +235,26 @@ describe("4-5-2 基準タイム", () => {
     const before = baseTime(112.0, 108.0, "Specific");
     const after = baseTime(111.0, 108.0, "Specific");
     expect(after).toBeLessThan(before);
+  });
+});
+
+describe("goal pace safety guard", () => {
+  it("operational thresholdを超える速い目標は処方へ混ぜない", () => {
+    const result = guardedBaseTime(111.0, 108.0, "Specific", 8);
+    expect(result.guarded).toBe(true);
+    expect(result.timeSec).toBe(111.0);
+    expect(result.message).toContain("0.38秒/週");
+  });
+
+  it("十分な期間がある目標は従来のphase blendを維持する", () => {
+    const result = guardedBaseTime(111.0, 108.0, "Specific", 12);
+    expect(result.guarded).toBe(false);
+    expect(result.timeSec).toBeCloseTo(baseTime(111.0, 108.0, "Specific"), 3);
+  });
+
+  it("現在能力より遅い目標は安全ガードの対象外", () => {
+    const result = guardedBaseTime(108.0, 111.0, "Taper", 1);
+    expect(result.guarded).toBe(false);
+    expect(result.timeSec).toBeCloseTo(111.0, 3);
   });
 });

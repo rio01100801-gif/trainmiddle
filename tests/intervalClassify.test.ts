@@ -152,6 +152,15 @@ describe("classifyLaps", () => {
     expect(warnings.map((w) => w.code)).toEqual(["single_valid_lap"]);
   });
 
+  it("一時停止があるlapは経過時間ではなく実動時間でペースを算出する", () => {
+    const laps: FitParseLap[] = [
+      lap({ index: 0, distanceKm: 1, elapsedSec: 330, timerSec: 300 }),
+    ];
+
+    const { laps: result } = classifyLaps(laps);
+    expect(result[0].paceSecPerKm).toBe(300);
+  });
+
   it("lapが0件なら空の結果を返す", () => {
     const { laps: result, warnings } = classifyLaps([]);
     expect(result).toEqual([]);

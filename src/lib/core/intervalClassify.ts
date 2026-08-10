@@ -91,7 +91,8 @@ export function classifyLaps(laps: FitParseLap[]): IntervalClassifyResult {
       };
       return;
     }
-    if (lap.distanceKm === undefined || lap.elapsedSec === undefined || lap.elapsedSec === 0) {
+    const activeSec = lap.timerSec ?? lap.elapsedSec;
+    if (lap.distanceKm === undefined || activeSec === undefined || activeSec === 0) {
       result[arrayIndex] = {
         index: lap.index,
         kind: "unknown",
@@ -101,7 +102,7 @@ export function classifyLaps(laps: FitParseLap[]): IntervalClassifyResult {
       };
       return;
     }
-    valid.push({ arrayIndex, pace: lap.elapsedSec / lap.distanceKm });
+    valid.push({ arrayIndex, pace: activeSec / lap.distanceKm });
   });
 
   if (valid.length === 0) {

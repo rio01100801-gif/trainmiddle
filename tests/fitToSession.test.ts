@@ -234,6 +234,53 @@ describe("fitToSessionAndResult", () => {
     });
   });
 
+  it("一時停止がある持続走は総経過時間ではなく実動時間でペースを計算する", () => {
+    const parse = baseParse({
+      sessions: [
+        {
+          startTimeUtc: "2026-07-20T10:00:00Z",
+          totalDistanceKm: 10,
+          totalElapsedSec: 3300,
+          totalTimerSec: 3000,
+        },
+      ],
+      laps: [
+        lap({ index: 0, startTimeUtc: "2026-07-20T10:00:00Z", distanceKm: 10, elapsedSec: 3300, timerSec: 3000 }),
+      ],
+      utcOffsetSec: 0,
+    });
+    const { result } = fitToSessionAndResult({
+      sourceId: "paused-run",
+      fileName: "paused.fit",
+      parse,
+      confirmedKinds: ["warmup"],
+    });
+
+    expect(result.continuous).toMatchObject({
+      durationMin: 50,
+      avgPaceSecPerKm: 300,
+    });
+  });
+
+  it("複数アクティビティを1件の記録として混在させない", () => {
+    const parse = baseParse({
+      sessions: [
+        { startTimeUtc: "2026-07-20T10:00:00Z", totalDistanceKm: 5, totalTimerSec: 1500 },
+        { startTimeUtc: "2026-07-20T11:00:00Z", totalDistanceKm: 5, totalTimerSec: 1500 },
+      ],
+      laps: [lap({ index: 0, startTimeUtc: "2026-07-20T10:00:00Z", distanceKm: 5, elapsedSec: 1500 })],
+    });
+
+    expect(() =>
+      fitToSessionAndResult({
+        sourceId: "multi",
+        fileName: "multi.fit",
+        parse,
+        confirmedKinds: ["warmup"],
+      })
+    ).toThrow("複数アクティビティ");
+  });
+
   it("utcOffsetSecが無ければUTC基準の日付にし、警告を出す", () => {
     const parse = baseParse({ laps: INTERVAL_LAPS, utcOffsetSec: undefined });
     const { session, warnings } = fitToSessionAndResult({

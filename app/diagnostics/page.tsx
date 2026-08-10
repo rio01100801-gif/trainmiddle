@@ -95,8 +95,11 @@ export default function DiagnosticsPage() {
 
   const rows: { label: string; value: string }[] = [
     { label: "アプリバージョン", value: buildInfo?.version ?? (buildInfoError || "確認中…") },
-    { label: "ソースコミット", value: buildInfo?.commit ?? "-" },
-    { label: "ビルド日時", value: buildInfo?.builtAt ?? "-" },
+    { label: "ソース指紋", value: buildInfo?.commit ?? "-" },
+    {
+      label: "ビルド情報",
+      value: buildInfo?.builtAt === "reproducible" ? "再現可能ビルド" : buildInfo?.builtAt ?? "-",
+    },
     { label: "実行環境", value: diag?.environment ?? "-" },
     { label: "origin", value: diag?.origin ?? "-" },
     { label: "オンライン", value: online ? "オンライン" : "オフライン" },

@@ -29,6 +29,21 @@ import { SCHEMA_SQL } from "./schema";
 export class Repo implements Store {
   constructor(private db: DbDriver) {
     db.exec(SCHEMA_SQL);
+    /*
+     * 旧版は session_id に通常INDEXしかなく、異なるidなら同じ練習結果を
+     * 複数行へ保存できた。最終保存行を正として一度だけ重複を整理し、
+     * DB自身にも「1セッション=1結果」を保証させる。
+     */
+    db.exec(`
+      BEGIN;
+      DELETE FROM session_results
+      WHERE rowid NOT IN (
+        SELECT MAX(rowid) FROM session_results GROUP BY session_id
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_results_session
+        ON session_results(session_id);
+      COMMIT;
+    `);
   }
 
   // ---- Athlete ----
@@ -147,11 +162,14 @@ export class Repo implements Store {
 
   // ---- SessionResult ----
   saveResult(r: SessionResult): void {
+    const existing = this.resultForSession(r.sessionId);
+    const normalized = existing ? { ...r, id: existing.id } : r;
     this.db
       .prepare(
-        "INSERT INTO session_results (id, session_id, date, json) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json"
+        "INSERT INTO session_results (id, session_id, date, json) VALUES (?, ?, ?, ?) " +
+          "ON CONFLICT(session_id) DO UPDATE SET date = excluded.date, json = excluded.json"
       )
-      .run(r.id, r.sessionId, r.date, JSON.stringify(r));
+      .run(normalized.id, normalized.sessionId, normalized.date, JSON.stringify(normalized));
   }
   listResults(): SessionResult[] {
     return (

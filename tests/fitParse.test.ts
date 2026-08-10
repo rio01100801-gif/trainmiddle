@@ -31,6 +31,7 @@ describe("parseFitFile", () => {
           startTime: "2026-07-20T10:00:00Z",
           timestamp: "2026-07-20T10:02:30Z",
           totalElapsedSec: 150,
+          totalTimerSec: 145,
           totalDistanceM: 500,
           avgHr: 148,
           maxHr: 170,
@@ -56,6 +57,7 @@ describe("parseFitFile", () => {
     expect(result.laps).toHaveLength(1);
     expect(result.laps[0]).toMatchObject({
       elapsedSec: 150,
+      timerSec: 145,
       distanceKm: 0.5,
       avgHr: 148,
       maxHr: 170,

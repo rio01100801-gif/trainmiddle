@@ -98,8 +98,6 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # 既知の残存脆弱性（next@14系・vitest devDependency）はREADMEで判断済み・
-      # 対応を先送りにしているため、ここではビルドを止めない。ただし記録は残す。
-      - name: npm audit (report only, does not fail the build)
-        if: always()
-        run: npm audit || true
+      # 本番依存・開発依存を含め、既知の脆弱性を公開前に検出する。
+      - name: npm audit
+        run: npm audit

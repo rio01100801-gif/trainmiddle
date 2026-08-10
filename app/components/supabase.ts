@@ -160,6 +160,9 @@ export function saveLastSynced(
 ): void {
   writeJson(LAST_SYNCED_KEY, m, storage);
 }
+export function clearLastSynced(storage?: SyncStorage): void {
+  removeStored(LAST_SYNCED_KEY, storage);
+}
 
 /**
  * Googleでサインインする。
@@ -587,7 +590,7 @@ function storageErrorFields(value: unknown): string[] {
  */
 async function storageFailure(
   response: Response,
-  action: "読み取り" | "書き込み"
+  action: "読み取り" | "書き込み" | "削除"
 ): Promise<Error> {
   let fields: string[] = [];
   try {
@@ -706,4 +709,24 @@ export async function putSnapshot(
     body: JSON.stringify(file),
   });
   if (!r.ok) throw await storageFailure(r, "書き込み");
+}
+
+/** 本人のUID配下にあるクラウドスナップショットだけを削除する。 */
+export async function deleteSnapshot(
+  cfg: SyncConfig,
+  session: SyncSession,
+  options: StorageRequestOptions = {}
+): Promise<void> {
+  const runtime = createRuntime(cfg);
+  const objectPath = snapshotObjectPath(session);
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const response = await fetchImpl(
+    `${runtime.url}/storage/v1/object/${BUCKET}/${objectPath}`,
+    {
+      method: "DELETE",
+      headers: headers(runtime, session),
+    }
+  );
+  if (await isMissingSnapshot(response)) return;
+  if (!response.ok) throw await storageFailure(response, "削除");
 }

@@ -16,6 +16,7 @@ import {
 } from "@/lib/service";
 import { makeRace, testAthlete, makeResult } from "./helpers";
 import type { Goal } from "@/lib/core/types";
+import { isHighLoadSession } from "@/lib/core/trainingClassification";
 
 
 function setup(): { repo: Repo; raceId: string } {
@@ -64,6 +65,25 @@ describe("サービス層: プラン生成", () => {
     regeneratePlan(repo, "2026-06-08");
     const rec = repo.listSessions().filter((s) => s.isRecoveryProtocol);
     expect(rec.length).toBeGreaterThan(0);
+  });
+
+  it("継続中の故障があると自動生成の高負荷を理由付きで回復メニューへ変更する", () => {
+    const { repo } = setup();
+    repo.saveInjury({
+      id: "inj-active",
+      date: "2026-06-07",
+      bodyPart: "左ハムストリング",
+      painLevel: 4,
+      status: "ongoing",
+    });
+
+    const out = regeneratePlan(repo, "2026-06-08");
+    expect(out.safetyAdjustments.length).toBeGreaterThan(0);
+    expect(out.safetyAdjustments[0].reason).toContain("左ハムストリング");
+    expect(repo.listSessions().filter((session) => session.origin === "generated").some(isHighLoadSession))
+      .toBe(false);
+    expect(repo.listSessions().some((session) => session.name === "回復ジョグ（故障保護）"))
+      .toBe(true);
   });
 });
 
@@ -354,5 +374,28 @@ describe("サービス層: ダッシュボード", () => {
     expect(d.feasibility).toBeDefined();
     // 111.01 → 108.9 / 16週 = 0.13秒/週 → 現実的
     expect(d.feasibility!.warn).toBe(false);
+  });
+});
+
+describe("service: injury onset window", () => {
+  it("onset記録の14日保護を将来プラン全体へ延長しない", () => {
+    const { repo } = setup();
+    repo.saveInjury({
+      id: "inj-onset",
+      date: "2026-06-07",
+      bodyPart: "左ふくらはぎ",
+      painLevel: 3,
+      status: "onset",
+    });
+
+    const out = regeneratePlan(repo, "2026-06-08");
+    expect(out.safetyAdjustments.length).toBeGreaterThan(0);
+    expect(out.safetyAdjustments.every((item) => item.date <= "2026-06-21")).toBe(true);
+    expect(
+      repo
+        .listSessions()
+        .filter((session) => session.origin === "generated" && session.date > "2026-06-21")
+        .some(isHighLoadSession)
+    ).toBe(true);
   });
 });

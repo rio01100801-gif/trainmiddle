@@ -39,6 +39,7 @@ export interface FixtureLap extends FixtureDynamics {
   startTime: string;
   timestamp: string;
   totalElapsedSec?: number;
+  totalTimerSec?: number;
   totalDistanceM?: number;
   avgHr?: number;
   maxHr?: number;
@@ -126,6 +127,8 @@ export function buildFitFile(opts: {
     ];
     if (l.totalElapsedSec !== undefined)
       fields.push({ number: 7, size: 4, baseType: FitBaseType.Uint32, value: Math.round(l.totalElapsedSec * 1000) });
+    if (l.totalTimerSec !== undefined)
+      fields.push({ number: 8, size: 4, baseType: FitBaseType.Uint32, value: Math.round(l.totalTimerSec * 1000) });
     if (l.totalDistanceM !== undefined)
       fields.push({ number: 9, size: 4, baseType: FitBaseType.Uint32, value: Math.round(l.totalDistanceM * 100) });
     // lapメッセージはsessionと番号がずれる: avg_heart_rate=15, max_heart_rate=16

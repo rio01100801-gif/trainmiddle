@@ -17,7 +17,7 @@ import type {
   TargetPace,
 } from "./types";
 import { addDays, diffDays, fmtPacePerKm, fmtTime, weekStart } from "./dates";
-import { baseTime } from "./cfe";
+import { guardedBaseTime } from "./cfe";
 import { AerobicProfile, specificPace } from "./pace";
 import { rationaleFor } from "./rationale";
 import { buildSessionSpec, type TemplateHistoryEntry } from "./progression";
@@ -604,7 +604,13 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
     const midWeek = addDays(w, 3);
     const phase = phaseForDate(midWeek, raceDate);
     phaseByWeek.push({ weekStart: w, phase });
-    const grpBase = baseTime(cfeSec, goal.targetTimeSec, phase);
+    const paceBasis = guardedBaseTime(
+      cfeSec,
+      goal.targetTimeSec,
+      phase,
+      Math.max(diffDays(midWeek, raceDate) / 7, 0)
+    );
+    const grpBase = paceBasis.timeSec;
     const template = applyWeekPreferences(
       weekTemplate(phase, weekIndex % 2, economyWeek),
       input.weekTemplate,
@@ -746,7 +752,9 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
             templateId: spec.templateId,
             variationGroup: spec.variationGroup,
             progressionStage: spec.progressionStage,
-            selectionReasons: spec.selectionReasons,
+            selectionReasons: paceBasis.guarded
+              ? [...spec.selectionReasons, paceBasis.message!]
+              : spec.selectionReasons,
             alternativeTemplateIds: spec.alternativeTemplateIds,
             confidence: spec.confidence,
             repeatedForComparison: spec.repeatedForComparison,

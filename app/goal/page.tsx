@@ -192,6 +192,9 @@ export default function GoalPage() {
         (d.customMenusUsed ? ` ／ 自作メニュー${d.customMenusUsed}種類を使用` : "") +
         (d.unsafeSkipped > 0
           ? ` ／ 設定ペースが物理的にありえない${d.unsafeSkipped}枠は安全のため除外しました`
+          : "") +
+        (d.safetyAdjustments?.length
+          ? ` ／ 継続中の故障記録により高負荷${d.safetyAdjustments.length}枠を回復メニューへ変更しました`
           : "")
     );
     setViolations([...(d.templateViolations ?? []), ...(d.violations ?? [])]);

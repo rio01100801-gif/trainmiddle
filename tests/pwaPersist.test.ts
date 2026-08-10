@@ -12,7 +12,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   flushPendingState,
+  hydrateState,
+  loadState,
   persistState,
+  type LoadStateDeps,
   type PersistDeps,
 } from "../pwa/memory-store";
 import { emptyState } from "../pwa/memory-store";
@@ -37,6 +40,42 @@ function failingLocalStorage(error: unknown = new Error("localstorage boom")) {
 const STATE = emptyState();
 
 describe("対象1: PWAの保存保証", () => {
+  it("IndexedDBにデータが無い初回起動だけは空状態を返す", async () => {
+    const deps: LoadStateDeps = {
+      indexedDb: { get: vi.fn(async () => undefined) },
+      localStorageImpl: { getItem: vi.fn(() => null) },
+    };
+
+    await expect(loadState(deps)).resolves.toEqual(emptyState());
+    expect(deps.localStorageImpl?.getItem).not.toHaveBeenCalled();
+  });
+
+  it("IndexedDB読込失敗時は有効なlocalStorageデータから復旧する", async () => {
+    const saved = { ...emptyState(), athlete: { id: "athlete-from-fallback" } };
+    const deps: LoadStateDeps = {
+      indexedDb: { get: vi.fn(async () => { throw new Error("idb read failed"); }) },
+      localStorageImpl: { getItem: vi.fn(() => JSON.stringify(saved)) },
+    };
+
+    const loaded = await loadState(deps);
+    expect(loaded.athlete?.id).toBe("athlete-from-fallback");
+  });
+
+  it("IndexedDBを読めず復旧用データも無い場合は空状態にせず起動を止める", async () => {
+    const deps: LoadStateDeps = {
+      indexedDb: { get: vi.fn(async () => { throw new Error("idb read failed"); }) },
+      localStorageImpl: { getItem: vi.fn(() => null) },
+    };
+
+    await expect(loadState(deps)).rejects.toThrow("書き込みは開始していません");
+  });
+
+  it("壊れた保存データを旧データ補完として受け入れない", () => {
+    expect(() => hydrateState({ ...emptyState(), sessions: {}, version: 1 })).toThrow(
+      "sessions が壊れています"
+    );
+  });
+
   it("IndexedDBが成功すればlocalStorageに触らない", async () => {
     vi.useFakeTimers();
     const indexedDb = okIndexedDb();

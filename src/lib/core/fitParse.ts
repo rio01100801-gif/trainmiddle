@@ -55,6 +55,8 @@ export interface FitParseLap extends FitDynamics {
   startTimeUtc?: string;
   endTimeUtc?: string;
   elapsedSec?: number;
+  /** 一時停止を除く実動時間。ペース・練習負荷の計算ではこちらを優先する。 */
+  timerSec?: number;
   distanceKm?: number;
   avgHr?: number;
   maxHr?: number;
@@ -206,6 +208,7 @@ export async function parseFitFile(bytes: Uint8Array): Promise<FitParseResult> {
     startTimeUtc: toIso(l.start_time),
     endTimeUtc: toIso(l.timestamp),
     elapsedSec: safeNumber(l.total_elapsed_time, { allowZero: true }),
+    timerSec: safeNumber(l.total_timer_time, { allowZero: true }),
     distanceKm: safeNumber(l.total_distance, { allowZero: true }),
     avgHr: safeNumber(l.avg_heart_rate),
     maxHr: safeNumber(l.max_heart_rate),

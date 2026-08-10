@@ -252,7 +252,7 @@ function weightedHr(parts: FitParseLap[]): number | undefined {
   let weight = 0;
   for (const l of parts) {
     if (l.avgHr === undefined) continue;
-    const w = l.elapsedSec ?? 1;
+    const w = l.timerSec ?? l.elapsedSec ?? 1;
     sum += l.avgHr * w;
     weight += w;
   }
@@ -270,8 +270,9 @@ function sumLapRange(
   let any = false;
   for (let k = from; k < to; k++) {
     const lap = laps[k];
-    if (lap.elapsedSec !== undefined) {
-      sec += lap.elapsedSec;
+    const activeSec = lap.timerSec ?? lap.elapsedSec;
+    if (activeSec !== undefined) {
+      sec += activeSec;
       any = true;
     }
     if (lap.distanceKm !== undefined) m += lap.distanceKm * 1000;
@@ -288,6 +289,12 @@ export function deriveFitActuals(input: DeriveFitActualsInput): FitDerivedActual
   const { parse, confirmedKinds, grpSecPerM } = input;
   const laps = parse.laps;
   const warnings: string[] = [];
+
+  if (parse.sessions.length > 1) {
+    throw new Error(
+      "複数アクティビティを含むFITは1件の練習へ混在させず、アクティビティごとに書き出してください"
+    );
+  }
 
   if (laps.length === 0) {
     throw new Error("lapが無いFITファイルは記録として登録できません");
@@ -324,7 +331,7 @@ export function deriveFitActuals(input: DeriveFitActualsInput): FitDerivedActual
         confirmedKinds[i] === "main" &&
         laps[i].distanceKm !== undefined &&
         laps[i].distanceKm! > 0 &&
-        laps[i].elapsedSec !== undefined
+        (laps[i].timerSec ?? laps[i].elapsedSec) !== undefined
     );
 
   let category: SessionCategory;
@@ -359,7 +366,7 @@ export function deriveFitActuals(input: DeriveFitActualsInput): FitDerivedActual
       }
       const rest = sumLapRange(laps, last + 1, end);
       const parts = group.map((p) => laps[p]);
-      const splits = parts.map((l) => l.elapsedSec!);
+      const splits = parts.map((l) => (l.timerSec ?? l.elapsedSec)!);
       /*
        * 実測の距離を、狙って走ったであろうトラックの距離に丸める。
        * GPSはカーブで内側を結ぶぶん1%前後短く出るので、1000m×4が
@@ -419,7 +426,7 @@ export function deriveFitActuals(input: DeriveFitActualsInput): FitDerivedActual
   } else {
     const session0 = parse.sessions[0];
     let distanceKm = session0?.totalDistanceKm;
-    let elapsedSec = session0?.totalElapsedSec ?? session0?.totalTimerSec;
+    let elapsedSec = session0?.totalTimerSec ?? session0?.totalElapsedSec;
     if (distanceKm === undefined || elapsedSec === undefined) {
       const sums = sumLapRange(laps, 0, laps.length);
       distanceKm = sums.m !== undefined ? sums.m / 1000 : undefined;
@@ -451,7 +458,9 @@ export function deriveFitActuals(input: DeriveFitActualsInput): FitDerivedActual
     parse.sessions[0]?.totalDistanceKm ??
     laps.reduce((sum, l) => sum + (l.distanceKm ?? 0), 0);
   const totalDurationSec =
-    parse.sessions[0]?.totalElapsedSec ?? laps.reduce((sum, l) => sum + (l.elapsedSec ?? 0), 0);
+    parse.sessions[0]?.totalTimerSec ??
+    parse.sessions[0]?.totalElapsedSec ??
+    laps.reduce((sum, l) => sum + (l.timerSec ?? l.elapsedSec ?? 0), 0);
 
   return {
     date,

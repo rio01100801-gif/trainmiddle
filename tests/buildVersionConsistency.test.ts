@@ -25,8 +25,8 @@ describe("配信物のVERSION整合性", () => {
     expect(fs.existsSync(infoPath)).toBe(true);
     const info = JSON.parse(fs.readFileSync(infoPath, "utf8"));
     expect(typeof info.version).toBe("string");
-    expect(typeof info.commit).toBe("string");
-    expect(typeof info.builtAt).toBe("string");
+    expect(info.commit).toMatch(/^source-[0-9a-f]{12}$/);
+    expect(info.builtAt === "reproducible" || !Number.isNaN(Date.parse(info.builtAt))).toBe(true);
   });
 
   it("pwa/sw.jsとpwa-dist/sw.jsのVERSIONが一致する（ビルド忘れ検出）", () => {
