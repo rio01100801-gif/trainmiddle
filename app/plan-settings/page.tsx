@@ -8,6 +8,7 @@ import {
   UndoBar,
   ViolationList,
 } from "../components/ui";
+import { apiRequest } from "../components/api-client";
 import { PrescriptionFields, usePrescriptionFields } from "../components/prescription-fields";
 import {
   DOW_LABELS,
@@ -66,14 +67,18 @@ function WeekTemplateCard() {
   const errors = violations.filter((v) => v.level === "ERROR");
 
   const save = async () => {
-    await fetch("/api/plan-settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ weekTemplate: normalizeWeekTemplate(t) }),
-    });
-    setMsg(
-      "保存しました。「目標・レース」画面で『プランを自動生成』を押すとカレンダーに反映されます。"
-    );
+    try {
+      await apiRequest("/api/plan-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ weekTemplate: normalizeWeekTemplate(t) }),
+      });
+      setMsg(
+        "保存しました。「目標・レース」画面で『プランを自動生成』を押すとカレンダーに反映されます。"
+      );
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "保存できませんでした");
+    }
   };
 
   const setSlot = (dow: Dow, slot: WeekdaySlot) =>
@@ -348,61 +353,77 @@ function CustomMenuCard() {
       setMsg("名前と内容は必須です");
       return;
     }
-    await fetch("/api/plan-settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        customMenu: {
-          name: form.name,
-          category: form.category,
-          source: form.source,
-          prescription: form.prescription,
-          // S-3: 距離・本数・レストは本文の解釈から取る（手で入れ直させない）
-          distanceM: fields.slots[0]?.distanceM,
-          reps: fields.slots.length > 0 ? fields.slots.length : undefined,
-          restNote: fields.shape?.restNote,
-          // S-6: 換算できていれば、その設定と出どころを残す
-          targetSec: converted?.targetSec,
-          sourceAthlete:
-            fromOther && theirPbSec
-              ? { name: otherName || undefined, pb800Sec: theirPbSec }
-              : undefined,
-          note: form.note || undefined,
-        },
-      }),
-    });
-    setForm({ ...form, name: "", prescription: "", note: "" });
-    setOpen(false);
-    setMsg("登録しました。プランを再生成すると、このメニューが優先して使われます。");
-    load();
+    try {
+      await apiRequest("/api/plan-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customMenu: {
+            name: form.name,
+            category: form.category,
+            source: form.source,
+            prescription: form.prescription,
+            // S-3: 距離・本数・レストは本文の解釈から取る（手で入れ直させない）
+            distanceM: fields.slots[0]?.distanceM,
+            reps: fields.slots.length > 0 ? fields.slots.length : undefined,
+            restNote: fields.shape?.restNote,
+            // S-6: 換算できていれば、その設定と出どころを残す
+            targetSec: converted?.targetSec,
+            sourceAthlete:
+              fromOther && theirPbSec
+                ? { name: otherName || undefined, pb800Sec: theirPbSec }
+                : undefined,
+            note: form.note || undefined,
+          },
+        }),
+      });
+      setForm({ ...form, name: "", prescription: "", note: "" });
+      setOpen(false);
+      setMsg("登録しました。プランを再生成すると、このメニューが優先して使われます。");
+      load();
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "登録できませんでした");
+    }
   };
 
   const remove = async (m: CustomMenu) => {
-    await fetch(`/api/plan-settings?menuId=${encodeURIComponent(m.id)}`, {
-      method: "DELETE",
-    });
-    setUndo(m);
-    load();
+    try {
+      await apiRequest(`/api/plan-settings?menuId=${encodeURIComponent(m.id)}`, {
+        method: "DELETE",
+      });
+      setUndo(m);
+      load();
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "削除できませんでした");
+    }
   };
 
   const restore = async () => {
     if (!undo) return;
-    await fetch("/api/plan-settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ customMenu: undo }),
-    });
-    setUndo(null);
-    load();
+    try {
+      await apiRequest("/api/plan-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customMenu: undo }),
+      });
+      setUndo(null);
+      load();
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "元に戻せませんでした");
+    }
   };
 
   const toggleActive = async (m: CustomMenu) => {
-    await fetch("/api/plan-settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ customMenu: { ...m, active: m.active === false } }),
-    });
-    load();
+    try {
+      await apiRequest("/api/plan-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customMenu: { ...m, active: m.active === false } }),
+      });
+      load();
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "変更できませんでした");
+    }
   };
 
   const byCategory = new Map<string, CustomMenu[]>();

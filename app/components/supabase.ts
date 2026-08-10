@@ -563,6 +563,101 @@ function snapshotObjectPath(session: SyncSession): string {
 
 export interface StorageRequestOptions {
   fetchImpl?: typeof fetch;
+  storage?: SyncStorage;
+  /** テスト用。指定が無ければ現在時刻を使う */
+  nowSec?: number;
+}
+
+interface RefreshTokenResponse {
+  access_token?: unknown;
+  refresh_token?: unknown;
+  expires_at?: unknown;
+  expires_in?: unknown;
+  user?: { email?: unknown };
+}
+
+/**
+ * Storage通信の直前に期限を確認し、残り60秒以下ならSupabase Authで更新する。
+ * CFEや練習データとは無関係な認証処理なので、失敗時は同期だけを止め、
+ * ローカルデータや既存セッションを勝手に削除しない。
+ */
+export async function ensureFreshSession(
+  cfg: SyncConfig,
+  session: SyncSession,
+  options: StorageRequestOptions = {}
+): Promise<SyncSession> {
+  // 同じ同期操作の先行リクエストが更新済みなら、呼び出し元が保持している
+  // 古いオブジェクトより保存済みの新版を使う。refresh tokenはローテーション
+  // されるため、古いtokenで二度更新しない。
+  let current = session;
+  if (options.storage || typeof localStorage !== "undefined") {
+    const stored = getSession(options.storage);
+    const sameUser =
+      stored && jwtSubject(stored.accessToken) === jwtSubject(session.accessToken);
+    if (
+      stored &&
+      sameUser &&
+      (stored.expiresAt ?? 0) > (session.expiresAt ?? 0)
+    ) {
+      current = stored;
+    }
+  }
+  const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
+  if (current.expiresAt === undefined || current.expiresAt > nowSec + 60) return current;
+  if (!current.refreshToken) {
+    throw new Error(
+      "サインインの有効期限が切れています。Googleで再サインインしてから同期してください。"
+    );
+  }
+
+  const runtime = createRuntime(cfg);
+  const fetchImpl = options.fetchImpl ?? fetch;
+  let response: Response;
+  try {
+    response = await fetchImpl(`${runtime.url}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: {
+        apikey: runtime.anonKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ refresh_token: current.refreshToken }),
+    });
+  } catch (error) {
+    throw new Error(
+      `サインイン情報を更新できませんでした: ${errorText(error)}。通信を確認して再試行してください。`
+    );
+  }
+
+  let payload: RefreshTokenResponse = {};
+  try {
+    payload = (await response.json()) as RefreshTokenResponse;
+  } catch {
+    // 本文を秘密情報ごと表示せず、下の共通メッセージへ進む。
+  }
+  if (!response.ok || typeof payload.access_token !== "string" || !payload.access_token) {
+    throw new Error(
+      "サインイン情報を更新できませんでした。Googleで再サインインしてから同期してください。"
+    );
+  }
+
+  const expiresAt =
+    typeof payload.expires_at === "number"
+      ? payload.expires_at
+      : typeof payload.expires_in === "number"
+        ? nowSec + payload.expires_in
+        : undefined;
+  const next: SyncSession = {
+    accessToken: payload.access_token,
+    refreshToken:
+      typeof payload.refresh_token === "string" && payload.refresh_token
+        ? payload.refresh_token
+        : current.refreshToken,
+    expiresAt,
+    email:
+      typeof payload.user?.email === "string" ? payload.user.email : current.email,
+  };
+  saveSession(next, options.storage);
+  return next;
 }
 
 function headers(cfg: SyncConfig, session: SyncSession): Record<string, string> {
@@ -677,10 +772,11 @@ export async function fetchSnapshot(
   options: StorageRequestOptions = {}
 ): Promise<unknown | undefined> {
   const runtime = createRuntime(cfg);
-  const objectPath = snapshotObjectPath(session);
   const fetchImpl = options.fetchImpl ?? fetch;
+  const activeSession = await ensureFreshSession(runtime, session, options);
+  const objectPath = snapshotObjectPath(activeSession);
   const r = await fetchImpl(`${runtime.url}/storage/v1/object/${BUCKET}/${objectPath}`, {
-    headers: headers(runtime, session),
+    headers: headers(runtime, activeSession),
   });
   // 400全体を空扱いにはしない。Supabase固有の「Object not found」だけを
   // 初回状態として扱い、Bucket not found・RLS不備は詳細エラーへ進める。
@@ -697,12 +793,13 @@ export async function putSnapshot(
   options: StorageRequestOptions = {}
 ): Promise<void> {
   const runtime = createRuntime(cfg);
-  const objectPath = snapshotObjectPath(session);
   const fetchImpl = options.fetchImpl ?? fetch;
+  const activeSession = await ensureFreshSession(runtime, session, options);
+  const objectPath = snapshotObjectPath(activeSession);
   const r = await fetchImpl(`${runtime.url}/storage/v1/object/${BUCKET}/${objectPath}`, {
     method: "POST",
     headers: {
-      ...headers(runtime, session),
+      ...headers(runtime, activeSession),
       "Content-Type": "application/json",
       "x-upsert": "true",
     },
@@ -718,13 +815,14 @@ export async function deleteSnapshot(
   options: StorageRequestOptions = {}
 ): Promise<void> {
   const runtime = createRuntime(cfg);
-  const objectPath = snapshotObjectPath(session);
   const fetchImpl = options.fetchImpl ?? fetch;
+  const activeSession = await ensureFreshSession(runtime, session, options);
+  const objectPath = snapshotObjectPath(activeSession);
   const response = await fetchImpl(
     `${runtime.url}/storage/v1/object/${BUCKET}/${objectPath}`,
     {
       method: "DELETE",
-      headers: headers(runtime, session),
+      headers: headers(runtime, activeSession),
     }
   );
   if (await isMissingSnapshot(response)) return;

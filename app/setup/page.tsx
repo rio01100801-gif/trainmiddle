@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Card } from "../components/ui";
+import { apiRequest } from "../components/api-client";
 import { diagnose } from "@/lib/core/diagnosis";
 import { checkAchillesCare } from "@/lib/core/strength";
 import type { Athlete, Diagnosis } from "@/lib/core/types";
@@ -79,13 +80,17 @@ export default function SetupPage() {
       recoveryProfile: form.recoveryProfile as Athlete["recoveryProfile"],
       injuryHistory: [],
     };
-    await fetch("/api/athlete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(athlete),
-    });
-    setDiag(diagnose(athlete));
-    setMsg("保存しました。タイプ診断を表示します。");
+    try {
+      await apiRequest("/api/athlete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(athlete),
+      });
+      setDiag(diagnose(athlete));
+      setMsg("保存しました。タイプ診断を表示します。");
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "保存できませんでした");
+    }
   };
 
   const F = (

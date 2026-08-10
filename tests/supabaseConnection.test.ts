@@ -7,6 +7,7 @@ import {
   getSession,
   getSyncConfig,
   parseAuthRedirectHash,
+  ensureFreshSession,
   putSnapshot,
   saveLastSynced,
   saveSession,
@@ -219,6 +220,65 @@ describe("OAuth callbackの解析", () => {
       expect(parsed.message).toContain("bad_oauth_callback");
       expect(parsed.message).toContain("Denied");
     }
+  });
+});
+
+describe("Supabaseセッション更新", () => {
+  const config = { url: "https://refresh.supabase.co", anonKey: KEY };
+
+  it("期限が60秒より先なら通信せず現在のセッションを使う", async () => {
+    const session = { accessToken: "access", refreshToken: "refresh", expiresAt: 1_000 };
+    let called = false;
+    const fetchImpl: typeof fetch = async () => {
+      called = true;
+      return new Response();
+    };
+
+    await expect(
+      ensureFreshSession(config, session, { fetchImpl, nowSec: 900 })
+    ).resolves.toEqual(session);
+    expect(called).toBe(false);
+  });
+
+  it("期限が近ければrefresh tokenで更新し、保存後のセッションを返す", async () => {
+    const stored = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => stored.set(key, value),
+      removeItem: (key: string) => stored.delete(key),
+    };
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      expect(init?.body).toBe(JSON.stringify({ refresh_token: "old-refresh" }));
+      return new Response(
+        JSON.stringify({
+          access_token: "new-access",
+          refresh_token: "new-refresh",
+          expires_in: 3600,
+          user: { email: "runner@example.com" },
+        }),
+        { status: 200 }
+      );
+    };
+
+    const refreshed = await ensureFreshSession(
+      config,
+      { accessToken: "old-access", refreshToken: "old-refresh", expiresAt: 950 },
+      { fetchImpl, storage, nowSec: 900 }
+    );
+
+    expect(refreshed).toEqual({
+      accessToken: "new-access",
+      refreshToken: "new-refresh",
+      expiresAt: 4500,
+      email: "runner@example.com",
+    });
+    expect(stored.get("forge:sync:session")).toContain("new-access");
+  });
+
+  it("期限切れでrefresh tokenが無ければStorage通信を始めない", async () => {
+    await expect(
+      ensureFreshSession(config, { accessToken: "expired", expiresAt: 800 }, { nowSec: 900 })
+    ).rejects.toThrow("再サインイン");
   });
 });
 

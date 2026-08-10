@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { Card, Field, fmtSec } from "../components/ui";
+import { apiRequest } from "../components/api-client";
 import { localToday } from "@/lib/core/dates";
 
 /**
@@ -116,26 +117,30 @@ function BlockCard({ detail, onSaved }: { detail: any; onSaved: () => void }) {
     const paceSec = form.pace.includes(":")
       ? Number(form.pace.split(":")[0]) * 60 + Number(form.pace.split(":")[1])
       : Number(form.pace) || undefined;
-    await fetch("/api/heat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: "entry",
-        blockId: block.id,
-        entry: {
-          date: form.date,
-          tempC: Number(form.tempC),
-          humidityPct: form.humidityPct ? Number(form.humidityPct) : undefined,
-          avgHr: form.avgHr ? Number(form.avgHr) : undefined,
-          paceSecPerKm: paceSec,
-          weightBeforeKg: form.weightBeforeKg ? Number(form.weightBeforeKg) : undefined,
-          weightAfterKg: form.weightAfterKg ? Number(form.weightAfterKg) : undefined,
-          subjectiveStrain: Number(form.strain),
-        },
-      }),
-    });
-    setMsg("記録しました");
-    onSaved();
+    try {
+      await apiRequest("/api/heat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "entry",
+          blockId: block.id,
+          entry: {
+            date: form.date,
+            tempC: Number(form.tempC),
+            humidityPct: form.humidityPct ? Number(form.humidityPct) : undefined,
+            avgHr: form.avgHr ? Number(form.avgHr) : undefined,
+            paceSecPerKm: paceSec,
+            weightBeforeKg: form.weightBeforeKg ? Number(form.weightBeforeKg) : undefined,
+            weightAfterKg: form.weightAfterKg ? Number(form.weightAfterKg) : undefined,
+            subjectiveStrain: Number(form.strain),
+          },
+        }),
+      });
+      setMsg("記録しました");
+      onSaved();
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "記録できませんでした");
+    }
   };
 
   const dehydrated = assessment?.dehydrationErrors?.length > 0;

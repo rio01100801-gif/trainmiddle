@@ -505,7 +505,16 @@ export async function loadState(deps: LoadStateDeps = {}): Promise<AppState> {
   const indexedDbReader = deps.indexedDb ?? defaultIndexedDbReader();
   try {
     const state = await indexedDbReader.get(KEY);
-    if (state === undefined) return emptyState();
+    if (state === undefined) {
+      // 直前の保存でIndexedDBだけが失敗した場合、writeStateはlocalStorageへ
+      // フォールバックする。次回起動時にIndexedDB自体が復旧していても、まだ
+      // KEYが無ければ退避データを先に読む必要がある。ここで空状態を返すと、
+      // 実データが残っているのに「全部消えた」ように見え、その空状態で後から
+      // IndexedDBを上書きしかねない。
+      const storage = deps.localStorageImpl ?? defaultLocalStorageReader();
+      const raw = storage.getItem(DB_NAME);
+      return raw ? hydrateState(JSON.parse(raw) as unknown) : emptyState();
+    }
     return hydrateState(state);
   } catch (indexedDbError) {
     // IndexedDB不可時は、旧フォールバックに実データがある場合だけ復旧する。

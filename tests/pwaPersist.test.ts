@@ -40,14 +40,25 @@ function failingLocalStorage(error: unknown = new Error("localstorage boom")) {
 const STATE = emptyState();
 
 describe("対象1: PWAの保存保証", () => {
-  it("IndexedDBにデータが無い初回起動だけは空状態を返す", async () => {
+  it("IndexedDBとlocalStorageの両方にデータが無い初回起動だけは空状態を返す", async () => {
     const deps: LoadStateDeps = {
       indexedDb: { get: vi.fn(async () => undefined) },
       localStorageImpl: { getItem: vi.fn(() => null) },
     };
 
     await expect(loadState(deps)).resolves.toEqual(emptyState());
-    expect(deps.localStorageImpl?.getItem).not.toHaveBeenCalled();
+    expect(deps.localStorageImpl?.getItem).toHaveBeenCalledWith("train800");
+  });
+
+  it("IndexedDBが復旧して空でもlocalStorageへ退避したデータを見失わない", async () => {
+    const saved = { ...emptyState(), athlete: { id: "athlete-from-fallback" } };
+    const deps: LoadStateDeps = {
+      indexedDb: { get: vi.fn(async () => undefined) },
+      localStorageImpl: { getItem: vi.fn(() => JSON.stringify(saved)) },
+    };
+
+    const loaded = await loadState(deps);
+    expect(loaded.athlete?.id).toBe("athlete-from-fallback");
   });
 
   it("IndexedDB読込失敗時は有効なlocalStorageデータから復旧する", async () => {

@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { Card, ConfirmButton, StatusText, UndoBar, ViolationList, fmtSec } from "../components/ui";
+import { apiRequest } from "../components/api-client";
 import {
   PAST_KIND_LABELS,
   BACKFILL_WINDOW_WEEKS,
@@ -1096,6 +1097,7 @@ function TeachPhrase({ row, onDone }: { row: any; onDone: (phrase: string) => vo
   const [open, setOpen] = useState(false);
   const [phrase, setPhrase] = useState<string>(row.phraseDraft ?? "");
   const [busy, setBusy] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   if (!open) {
     return (
@@ -1112,8 +1114,9 @@ function TeachPhrase({ row, onDone }: { row: any; onDone: (phrase: string) => vo
     const w = phrase.trim();
     if (!w) return;
     setBusy(true);
+    setErrorMessage("");
     try {
-      await fetch("/api/phrases", {
+      await apiRequest("/api/phrases", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -1126,6 +1129,8 @@ function TeachPhrase({ row, onDone }: { row: any; onDone: (phrase: string) => vo
         }),
       });
       onDone(w);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "表記を保存できませんでした");
     } finally {
       setBusy(false);
     }
@@ -1151,6 +1156,7 @@ function TeachPhrase({ row, onDone }: { row: any; onDone: (phrase: string) => vo
       <button className="btn-ghost !text-[10.5px] !py-1" onClick={() => setOpen(false)}>
         やめる
       </button>
+      {errorMessage ? <StatusText kind="error">{errorMessage}</StatusText> : null}
     </div>
   );
 }

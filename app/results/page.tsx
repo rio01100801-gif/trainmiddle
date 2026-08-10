@@ -14,13 +14,14 @@ import {
   fmtPace,
   fmtSec,
 } from "../components/ui";
+import { apiRequest } from "../components/api-client";
 import { localToday } from "@/lib/core/dates";
 import { useQueryParam } from "../components/route-query";
 import { completeRunTriple, formatTimeInput } from "@/lib/core/inputFormat";
 import { parseRest } from "@/lib/core/bulkImport";
 import { avgPaceSecPerKm, buildRepResults, REST_LABELS } from "@/lib/core/workoutLog";
 import { evaluateEnvironment, environmentNote, WIND_LABELS } from "@/lib/core/environment";
-import type { FitnessMarkerPurpose, RestType, SessionCategory } from "@/lib/core/types";
+import type { FitnessMarkerPurpose, RestType, RuleViolation, SessionCategory } from "@/lib/core/types";
 import type { AerobicProfile } from "@/lib/core/pace";
 import type { PrescriptionStructure } from "@/lib/core/prescription";
 
@@ -224,6 +225,7 @@ function DailyCheckCard({ date }: { date: string }) {
   const [out, setOut] = useState<any | null>(null);
   const [history, setHistory] = useState<any[]>([]);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   const loadHistory = useCallback(() => {
     fetch("/api/daily")
@@ -249,23 +251,28 @@ function DailyCheckCard({ date }: { date: string }) {
   }, [date, history]);
 
   const submit = async () => {
-    const res = await fetch("/api/daily", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        // D-2: 選択中の日付で記録する（過去日の入力もできるようにする）
-        date,
-        restingHr: hr ? Number(hr) : undefined,
-        legFatigue,
-        overallFatigue,
-        sleepQuality,
-        motivation,
-        muscleTightness: legFatigue, // 旧項目との互換（脚の張りとして扱う）
-      }),
-    });
-    setOut(await res.json());
-    setSaved(true);
-    loadHistory();
+    setSaveError("");
+    try {
+      const result = await apiRequest("/api/daily", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          // D-2: 選択中の日付で記録する（過去日の入力もできるようにする）
+          date,
+          restingHr: hr ? Number(hr) : undefined,
+          legFatigue,
+          overallFatigue,
+          sleepQuality,
+          motivation,
+          muscleTightness: legFatigue, // 旧項目との互換（脚の張りとして扱う）
+        }),
+      });
+      setOut(result);
+      setSaved(true);
+      loadHistory();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "記録できませんでした");
+    }
   };
 
   const color: Record<string, string> = {
@@ -331,6 +338,8 @@ function DailyCheckCard({ date }: { date: string }) {
           onConfirm={submit}
         />
       </div>
+
+      {saveError ? <StatusText kind="error">{saveError}</StatusText> : null}
 
       {out ? (
         <div className="mt-3 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
@@ -411,6 +420,7 @@ function InjuryCard({ sessions, date }: { sessions: any[]; date: string }) {
   const [sessionId, setSessionId] = useState("");
   const [note, setNote] = useState("");
   const [undo, setUndo] = useState<any | null>(null);
+  const [errorMessage, setErrorMessage] = useState("");
 
   const load = useCallback(() => {
     fetch("/api/injuries")
@@ -421,39 +431,52 @@ function InjuryCard({ sessions, date }: { sessions: any[]; date: string }) {
 
   const save = async () => {
     if (!bodyPart) return;
-    await fetch("/api/injuries", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        date,
-        bodyPart,
-        painLevel: Number(painLevel),
-        status,
-        sessionId: sessionId || undefined,
-        note: note || undefined,
-      }),
-    });
-    setBodyPart("");
-    setNote("");
-    setOpen(false);
-    load();
+    setErrorMessage("");
+    try {
+      await apiRequest("/api/injuries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date,
+          bodyPart,
+          painLevel: Number(painLevel),
+          status,
+          sessionId: sessionId || undefined,
+          note: note || undefined,
+        }),
+      });
+      setBodyPart("");
+      setNote("");
+      setOpen(false);
+      load();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "故障ログを保存できませんでした");
+    }
   };
 
   const remove = async (inj: any) => {
-    await fetch(`/api/injuries?id=${encodeURIComponent(inj.id)}`, { method: "DELETE" });
-    setUndo(inj);
-    load();
+    try {
+      await apiRequest(`/api/injuries?id=${encodeURIComponent(inj.id)}`, { method: "DELETE" });
+      setUndo(inj);
+      load();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "故障ログを削除できませんでした");
+    }
   };
 
   const restore = async () => {
     if (!undo) return;
-    await fetch("/api/injuries", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(undo),
-    });
-    setUndo(null);
-    load();
+    try {
+      await apiRequest("/api/injuries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(undo),
+      });
+      setUndo(null);
+      load();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "故障ログを元に戻せませんでした");
+    }
   };
 
   const statusLabel: Record<string, string> = {
@@ -487,6 +510,7 @@ function InjuryCard({ sessions, date }: { sessions: any[]; date: string }) {
         </button>
       }
     >
+      {errorMessage ? <StatusText kind="error">{errorMessage}</StatusText> : null}
       {open ? (
         <div className="flex flex-col gap-2 mb-3 pb-3 border-b" style={{ borderColor: "var(--border)" }}>
           <div className="flex gap-2 flex-wrap items-end">
@@ -662,22 +686,25 @@ function AerobicMarkerForm({ defaultDate }: { defaultDate?: string }) {
       setMsg("LT推定には合計3km以上の持続的な走行が必要です");
       return;
     }
-    const res = await fetch("/api/markers", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        date: form.date,
-        type: form.type,
-        description: form.description || `${km}km 走`,
-        resultLapsSec: [sec],
-        lapDistancesM: [km * 1000],
-        avgHr: form.avgHr ? Number(form.avgHr) : undefined,
-        purpose: form.type === "race" ? "race" : form.purpose,
-      }),
-    });
-    const d = await res.json();
-    setProfile(d.aerobicProfile);
-    setMsg("登録しました。「目標・レース」で再生成すると設定に反映されます。");
+    try {
+      const d = await apiRequest<{ aerobicProfile?: AerobicProfile }>("/api/markers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date: form.date,
+          type: form.type,
+          description: form.description || `${km}km 走`,
+          resultLapsSec: [sec],
+          lapDistancesM: [km * 1000],
+          avgHr: form.avgHr ? Number(form.avgHr) : undefined,
+          purpose: form.type === "race" ? "race" : form.purpose,
+        }),
+      });
+      setProfile(d.aerobicProfile ?? null);
+      setMsg("登録しました。「目標・レース」で再生成すると設定に反映されます。");
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : "登録できませんでした");
+    }
   };
 
   const est = profile?.estimate;
@@ -1149,27 +1176,28 @@ function ResultForm({
             restMode === "time" ? ` ${restValue}秒` : ` ${restValue}m`
           }${targetSec ? ` 設定${targetSec}秒` : ""}`
         : `${distanceKm}km ${durationMin}分`;
-    const res = await fetch("/api/plan-settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        customMenu: {
-          name,
-          category: session.category,
-          source: "self",
-          prescription,
-          distanceM: mode === "interval" ? Number(distM) : undefined,
-          reps: mode === "interval" ? Number(reps) : undefined,
-          restNote: mode === "interval" ? `${REST_LABELS[restType]} ${restValue}` : undefined,
-        },
-      }),
-    });
-    const d = await res.json();
-    setSavedMsg(
-      d.error
-        ? d.error
-        : `「${name}」をメニューに保存しました。次回の生成から候補に入ります（メニュー設定で確認・削除できます）。`
-    );
+    try {
+      await apiRequest("/api/plan-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customMenu: {
+            name,
+            category: session.category,
+            source: "self",
+            prescription,
+            distanceM: mode === "interval" ? Number(distM) : undefined,
+            reps: mode === "interval" ? Number(reps) : undefined,
+            restNote: mode === "interval" ? `${REST_LABELS[restType]} ${restValue}` : undefined,
+          },
+        }),
+      });
+      setSavedMsg(
+        `「${name}」をメニューに保存しました。次回の生成から候補に入ります（メニュー設定で確認・削除できます）。`
+      );
+    } catch (error) {
+      setSavedMsg(error instanceof Error ? error.message : "メニューへ保存できませんでした");
+    }
   };
 
   /*
@@ -1202,12 +1230,14 @@ function ResultForm({
     setBusy(true);
     try {
       if (mode === "skip") {
-        const res = await fetch("/api/skip", {
+        const d = await apiRequest<{
+          decision?: { triggeredBy?: string; message?: string };
+          violations?: RuleViolation[];
+        }>("/api/skip", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sessionId: session.id, reason: skipReason }),
         });
-        const d = await res.json();
         onDone({
           cfeBefore: 0,
           cfeAfter: 0,
@@ -1332,12 +1362,14 @@ function ResultForm({
         };
       }
 
-      const res = await fetch("/api/results", {
+      const result = await apiRequest("/api/results", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      onDone(await res.json());
+      onDone(result);
+    } catch (error) {
+      setSavedMsg(error instanceof Error ? error.message : "練習結果を保存できませんでした");
     } finally {
       setBusy(false);
     }
@@ -1348,8 +1380,10 @@ function ResultForm({
     if (!existing) return;
     setBusy(true);
     try {
-      await fetch(`/api/results?id=${encodeURIComponent(existing.id)}`, { method: "DELETE" });
+      await apiRequest(`/api/results?id=${encodeURIComponent(existing.id)}`, { method: "DELETE" });
       onDeleted?.();
+    } catch (error) {
+      setSavedMsg(error instanceof Error ? error.message : "練習結果を削除できませんでした");
     } finally {
       setBusy(false);
     }

@@ -2,6 +2,7 @@
 import type { ReactNode } from "react";
 import { useEffect, useId, useRef, useState } from "react";
 import type { RuleViolation, SessionCategory, SessionChange } from "@/lib/core/types";
+import { apiRequest } from "./api-client";
 
 // ---------------------------------------------------------------------------
 // カテゴリ表現
@@ -406,27 +407,30 @@ export function ChangeList({ changes }: { changes: SessionChange[] }) {
   const [state, setState] = useState<Record<number, "accepted" | "rejected">>({});
   const [rejecting, setRejecting] = useState<number | null>(null);
   const [reason, setReason] = useState("");
+  const [saveError, setSaveError] = useState("");
 
   if (!changes || changes.length === 0) return null;
 
   const send = async (i: number, accepted: boolean, rejectReason?: string) => {
-    setState((s) => ({ ...s, [i]: accepted ? "accepted" : "rejected" }));
-    setRejecting(null);
-    setReason("");
+    setSaveError("");
     try {
-      await fetch("/api/changes", {
+      await apiRequest("/api/changes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ change: changes[i], accepted, rejectReason }),
       });
-    } catch {
-      /* ローカル記録のみ失敗。UI状態は維持する */
+      setState((s) => ({ ...s, [i]: accepted ? "accepted" : "rejected" }));
+      setRejecting(null);
+      setReason("");
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "判断を保存できませんでした");
     }
   };
 
   return (
     <div className="mt-2">
       <h3 className="text-[12px] font-bold mb-1.5">変更差分（変更前 → 変更後）</h3>
+      {saveError ? <StatusText kind="error">{saveError}</StatusText> : null}
       <ul className="space-y-1.5">
         {changes.map((c, i) => (
           <li
