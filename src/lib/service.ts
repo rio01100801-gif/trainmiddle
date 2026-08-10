@@ -139,7 +139,12 @@ import {
   splitTrend,
   type SplitTrend,
 } from "./core/split600";
-import { assessContactTime, type ContactAssessment, type ContactSample } from "./core/contactTime";
+import {
+  assessContactTime,
+  contactSamplesFromResults,
+  type ContactAssessment,
+  type ContactSample,
+} from "./core/contactTime";
 import { buildWeeklyReview, type WeeklyReview } from "./core/weeklyReview";
 import {
   BACKUP_FORMAT,
@@ -3650,8 +3655,33 @@ export function importContactSamples(
   return { imported, total: merged.length };
 }
 
+/**
+ * 判定に使う接地時間の材料。
+ *
+ * CSV取り込みぶん（`listContactSamples`）と、記録そのものから導いたぶんを合わせる。
+ * FIT取込は前からランニングダイナミクスを保存していたのに、判定はCSVぶんしか
+ * 見ておらず、アプリの中に値があるのに「時計から書き出してください」と
+ * 案内し続けていた。
+ *
+ * 本人未確認のFIT結果は入れない（`trustedResults`）。確認前の値を分析へ流さない
+ * という既存の切り分けに合わせる。
+ *
+ * 同じ日・同じ値は片方だけ数える。同じ練習をCSVとFITの両方から入れると
+ * 二重になり、判定に必要な件数（6件）を実際より早く満たしてしまう。
+ */
+function allContactSamples(repo: Store): ContactSample[] {
+  const merged = new Map<string, ContactSample>();
+  for (const s of [
+    ...listContactSamples(repo),
+    ...contactSamplesFromResults(trustedResults(repo)),
+  ]) {
+    merged.set(`${s.date}|${s.contactMs}`, s);
+  }
+  return [...merged.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
 export function contactTimeStatus(repo: Store, today: string): ContactAssessment {
-  return assessContactTime(listContactSamples(repo), today);
+  return assessContactTime(allContactSamples(repo), today);
 }
 
 /** M-11: 週次レビュー */

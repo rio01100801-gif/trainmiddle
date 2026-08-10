@@ -14,6 +14,7 @@
  * データが無ければ何も出さない。推測で埋めない。
  */
 import { diffDays } from "./dates";
+import type { SessionResult } from "./types";
 
 export interface ContactSample {
   date: string;
@@ -64,7 +65,7 @@ export function assessContactTime(
       sampleCount: inWindow.length,
       narrative:
         inWindow.length === 0
-          ? "接地時間のデータがありません。時計から書き出すと、主観より早く疲労を拾えます"
+          ? "接地時間のデータがありません。接地時間を記録する時計のFITを取り込むと、主観より早く疲労を拾えます"
           : `接地時間のデータが${inWindow.length}件です。判定には6件必要です`,
     };
   }
@@ -114,6 +115,48 @@ export function assessContactTime(
       ? `同じペース帯の接地時間が基準の${Math.round(baselineMs)}msから${Math.round(recentMs)}ms（${(deltaPct * 100).toFixed(1)}%増）に伸び、${consecutiveDays}日続いています。疲労が抜けていない可能性が高く、故障の予兆としても見てください`
       : `同じペース帯の接地時間は基準${Math.round(baselineMs)}msに対して直近${Math.round(recentMs)}ms（${(deltaPct * 100).toFixed(1)}%）。範囲内です`,
   };
+}
+
+/**
+ * その記録の代表的なペース（秒/km）。
+ *
+ * 接地時間はペース帯をそろえないと比べられないので、材料には必ずペースを添える。
+ * 持続走は平均ペースをそのまま、インターバルは疾走部分の合計距離と合計時間から出す
+ * （レストを含めると「その接地時間で走っていた速さ」とずれる）。
+ */
+function paceOf(result: SessionResult): number | undefined {
+  if (result.continuous?.avgPaceSecPerKm) return result.continuous.avgPaceSecPerKm;
+  let sec = 0;
+  let meters = 0;
+  for (const rep of result.interval?.results ?? []) {
+    if (rep.actualSec > 0 && rep.distanceM > 0) {
+      sec += rep.actualSec;
+      meters += rep.distanceM;
+    }
+  }
+  return meters > 0 ? (sec / meters) * 1000 : undefined;
+}
+
+/**
+ * 記録から接地時間の材料を作る。
+ *
+ * FIT取込は `SessionResult.avgGroundContactTimeMs` を保存していたのに、
+ * 判定側はCSV取り込み専用の保存領域しか見ておらず、アプリの中にある値が
+ * 使われないまま「時計から書き出してください」と案内していた。
+ *
+ * 接地時間が入っていない記録は材料にしない（対応していない時計では
+ * undefined のまま来る。0で埋めない）。
+ */
+export function contactSamplesFromResults(results: SessionResult[]): ContactSample[] {
+  return results
+    .filter((r) => r.avgGroundContactTimeMs !== undefined && r.avgGroundContactTimeMs > 0)
+    .map((r) => ({
+      date: r.date,
+      contactMs: r.avgGroundContactTimeMs!,
+      paceSecPerKm: paceOf(r),
+      source: "時計の記録",
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 /**
