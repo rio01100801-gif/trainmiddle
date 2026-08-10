@@ -1170,7 +1170,26 @@ function rule23(ctx: RuleContext): RuleViolation[] {
 // エンジン本体
 // ---------------------------------------------------------------------------
 
+/**
+ * 同じ `RuleContext` に対する評価結果。
+ *
+ * ルール評価はセッション数に対しておよそ二次で伸びる（800件で約250ms）。
+ * そして `weeklySummary` が内部で `runRuleEngine` を呼ぶため、
+ * ホームは2回（自分＋週サマリー）、分析タブは5回（自分＋4週ぶん）、
+ * まったく同じ計算を繰り返していた。記録が増えるほどこの重複が
+ * そのまま待ち時間になる（実測: 800件でホーム750ms → 重複を除くと約半分）。
+ *
+ * ルールは ctx の純関数で、ctx は `buildRuleContext` で組み立てたあと
+ * 変更されない（リクエストごとに新しいオブジェクトになる）。
+ * WeakMapにしているのは、ctxが不要になったらキャッシュも一緒に回収させるため。
+ */
+const ruleEngineCache = new WeakMap<RuleContext, RuleViolation[]>();
+
 export function runRuleEngine(ctx: RuleContext): RuleViolation[] {
+  const cached = ruleEngineCache.get(ctx);
+  // 呼び出し側が並べ替えたり足したりしてもキャッシュを壊さないよう、複製を返す
+  if (cached) return [...cached];
+
   const violations = [
     ...rule01(ctx),
     ...rule02(ctx),
@@ -1196,7 +1215,9 @@ export function runRuleEngine(ctx: RuleContext): RuleViolation[] {
     ...rule23(ctx),
   ];
   const order = { ERROR: 0, WARN: 1, INFO: 2 };
-  return violations.sort((a, b) => order[a.level] - order[b.level]);
+  violations.sort((a, b) => order[a.level] - order[b.level]);
+  ruleEngineCache.set(ctx, violations);
+  return [...violations];
 }
 
 // ---------------------------------------------------------------------------
