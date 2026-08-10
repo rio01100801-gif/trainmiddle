@@ -11,7 +11,7 @@
  * そのため中身は `parseRow`（一括入力の1行解析）に日付を足して渡しているだけで、
  * このファイルがやるのは「入力欄を組むための形に整える」ことだけ。
  */
-import type { SessionCategory } from "./types";
+import type { RestType, SessionCategory } from "./types";
 import type { PastEntryKind } from "./backfill";
 import { parseRow, type BulkParseOptions, type StrengthKind } from "./bulkImport";
 
@@ -22,6 +22,9 @@ export interface RepSlot {
   distanceM: number;
   /** 本文から読めた設定タイム */
   targetSec?: number;
+  /** この区間のあとのレスト。複合セットでは区間ごとに異なり得る。 */
+  restAfterDistanceM?: number;
+  restType?: RestType;
 }
 
 export interface PrescriptionStructure {
@@ -124,7 +127,16 @@ function buildSlots(row: ReturnType<typeof parseRow>): RepSlot[] {
   // 区間ごとに設定が違うので、1つの設定欄では表せない。
   const segs = row.segments ?? [];
   if (segs.length >= 2) {
-    return segs.map((g, i) => ({ index: i + 1, distanceM: g.distanceM, targetSec: g.targetSec }));
+    return segs.map((g, i) => ({
+      index: i + 1,
+      distanceM: g.distanceM,
+      targetSec: g.targetSec,
+      restAfterDistanceM:
+        row.restFollowsNextDistance && i < segs.length - 1
+          ? segs[i + 1].distanceM
+          : undefined,
+      restType: row.restFollowsNextDistance && i < segs.length - 1 ? "walk" : undefined,
+    }));
   }
 
   const dist = row.repDistanceM;

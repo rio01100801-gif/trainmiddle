@@ -155,6 +155,34 @@ describe("4-2 ペース自動計算", () => {
     expect(profile.cvSourceDescription).toContain("異なる2距離");
   });
 
+  it("良好に完遂したCV実績があればLT固定差ではなく次のCV処方へ使う", () => {
+    const markers: FitnessMarker[] = [
+      {
+        id: "lt",
+        date: "2026-03-25",
+        type: "workout",
+        purpose: "threshold",
+        description: "閾値走",
+        resultLapsSec: [8 * 220],
+        lapDistancesM: [8000],
+      },
+      {
+        id: "cv-result",
+        date: "2026-03-30",
+        type: "workout",
+        purpose: "cv",
+        description: "1000m×4 CV（正式結果）",
+        resultLapsSec: [207, 208, 207, 208],
+        lapDistancesM: [1000, 1000, 1000, 1000],
+        rpe: 7,
+      },
+    ];
+    const profile = buildAerobicProfile(markers, "2026-04-01");
+    expect(profile.cvPaceSecPerKm.fast).toBeCloseTo(206.5, 1);
+    expect(profile.cvPaceSecPerKm.slow).toBeCloseTo(208.5, 1);
+    expect(profile.cvSourceDescription).toContain("完遂CV実績1件");
+  });
+
   it("グレーゾーン判定: LT+30〜50秒/km", () => {
     expect(isGrayZonePace(260, 230)).toBe(true);
     expect(isGrayZonePace(300, 230)).toBe(false);

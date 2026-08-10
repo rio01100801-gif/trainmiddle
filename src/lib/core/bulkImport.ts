@@ -52,6 +52,8 @@ export interface ParsedRow {
   restSec?: number;
   restDistanceM?: number;
   restType?: RestType;
+  /** 複合セットの「r次の距離walk」。各区間の次の距離をレスト距離として使う。 */
+  restFollowsNextDistance?: boolean;
   /** 設定タイム（括弧内）。カテゴリ推定と表示に使う */
   targetSec?: number;
 
@@ -786,8 +788,13 @@ export function parseRow(
       row.reps = rep?.reps ?? (times.length > 0 ? times.length : undefined);
     }
 
+    const followsNextDistance = /[rR]\s*次の距離\s*(?:walk|ウォーク)/i.test(content);
     const rest = /[rR]\s*(\d+\s*(?:min|分|秒|m)?\s*(?:jog|walk|ジョグ|ウォーク)?)/.exec(content);
-    if (rest) {
+    if (followsNextDistance) {
+      row.restNote = "r次の距離walk";
+      row.restType = "walk";
+      row.restFollowsNextDistance = true;
+    } else if (rest) {
       row.restNote = `r${rest[1].trim()}`;
       Object.assign(row, parseRest(rest[1]));
     }

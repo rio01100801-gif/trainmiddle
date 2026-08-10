@@ -197,6 +197,26 @@ describe("複数テンプレート選択", () => {
     expect(buildSessionSpec(input)!.templateId).toBe(buildSessionSpec(input)!.templateId);
   });
 
+  it("CVの初期段階は隔週で距離形式を循環し同じ処方へ固定しない", () => {
+    const ids = [
+      { weekIndex: 0, onDate: "2026-07-06" },
+      { weekIndex: 2, onDate: "2026-07-20" },
+      { weekIndex: 4, onDate: "2026-08-03" },
+    ].map(
+      ({ weekIndex, onDate }) =>
+        buildSessionSpec({
+          category: "cv",
+          phase: "Build",
+          weekIndex,
+          cfeSec: CFE,
+          aerobicProfile: AEROBIC,
+          athleteType: "speed",
+          onDate,
+        })!.templateId
+    );
+    expect(new Set(ids).size).toBe(3);
+  });
+
   it("直近14日の同一テンプレートを理由なく連続選択しない", () => {
     const first = buildSessionSpec({
       category: "race_economy",

@@ -166,6 +166,21 @@ function recoveryEvidence(ctx: RuleContext, sessions: Session[], week: string): 
   };
 }
 
+/**
+ * 過去セッションについて「カテゴリ名」ではなく実施反応を確認する。
+ * 予定には結果が無いので false となり、将来の安全制御は従来どおり維持される。
+ */
+function hasObservedGoodResponse(ctx: RuleContext, session: Session): boolean {
+  const result = ctx.resultsBySessionId?.get(session.id);
+  return (
+    session.status === "completed" &&
+    result?.achievement === "achieved" &&
+    result.aborted !== true &&
+    result.rpe <= 8 &&
+    (result.nextDayLegs === "fresh" || result.nextDayLegs === "normal")
+  );
+}
+
 function sorted(sessions: Session[]): Session[] {
   return [...sessions].sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -227,7 +242,6 @@ function isHotDay(ctx: RuleContext, date: string): boolean {
 function rule01(ctx: RuleContext): RuleViolation[] {
   const out: RuleViolation[] = [];
   const hl = sorted(ctx.sessions.filter((s) => active(s) && isHlEquiv(s.category)));
-  const exemptIds = new Set<string>();
 
   for (let i = 1; i < hl.length; i++) {
     const prev = hl[i - 1];
@@ -235,14 +249,15 @@ function rule01(ctx: RuleContext): RuleViolation[] {
     const gap = diffDays(prev.date, cur.date);
     if (gap >= 5) continue;
 
-    const prevDose = glycolyticDose(prev);
-    const curDose = glycolyticDose(cur);
     const prevResult = ctx.resultsBySessionId?.get(prev.id);
+    const curResult = ctx.resultsBySessionId?.get(cur.id);
+    const prevDose = glycolyticDose(prev, prevResult);
+    const curDose = glycolyticDose(cur, curResult);
     const recoveredResult =
       prevResult?.achievement === "achieved" &&
       prevResult.aborted !== true &&
       prevResult.rpe <= 8 &&
-      prevResult.nextDayLegs !== "heavy";
+      (prevResult.nextDayLegs === "fresh" || prevResult.nextDayLegs === "normal");
     const recoveryConcern = ctx.dailyChecks.some(
       (check) =>
         check.date > prev.date &&
@@ -261,8 +276,6 @@ function rule01(ctx: RuleContext): RuleViolation[] {
       !recoveryConcern;
 
     if (fourDayReview) {
-        exemptIds.add(prev.id);
-        exemptIds.add(cur.id);
       out.push(
         finalize(
           {
@@ -301,31 +314,6 @@ function rule01(ctx: RuleContext): RuleViolation[] {
     );
   }
 
-  // 同一週内2回チェック（例外ペアを除く）
-  for (const [w, list] of groupByWeek(hl)) {
-    const counted = list.filter((s) => !exemptIds.has(s.id));
-    if (counted.length > 1) {
-      // 間隔5日以上でも同一週2回は違反（例: 月曜と土曜）
-      const already = out.some((v) =>
-        counted.every((s) => v.sessionIds.includes(s.id))
-      );
-      if (!already) {
-        out.push(
-          finalize(
-            {
-              rule: "RULE-01",
-              level: "ERROR",
-              message: `週(${w}〜)内に高乳酸系セッションが${counted.length}回あります。同一週内は1回までです。`,
-              dates: counted.map((s) => s.date),
-              sessionIds: counted.map((s) => s.id),
-              suggestion: "1回を翌週へ移動するか、race_economy / neural に置き換えてください。",
-            },
-            counted
-          )
-        );
-      }
-    }
-  }
   return out;
 }
 
@@ -395,18 +383,26 @@ function rule03(ctx: RuleContext): RuleViolation[] {
     const cur = q[i];
     const gap = diffDays(prev.date, cur.date);
     if (gap <= 1) {
+      const completedWithGoodResponse =
+        gap === 1 &&
+        hasObservedGoodResponse(ctx, prev) &&
+        hasObservedGoodResponse(ctx, cur);
       out.push(
         finalize(
           {
             rule: "RULE-03",
-            level: "ERROR",
+            level: completedWithGoodResponse ? "WARN" : "ERROR",
             message:
               gap === 0
                 ? `同日(${cur.date})に高負荷練習「${prev.name}」「${cur.name}」が配置されています。`
-                : `${prev.name}と${cur.name}が連日(${prev.date} → ${cur.date})です。高負荷の種類が違っても回復日は必要です。`,
+                : completedWithGoodResponse
+                  ? `${prev.name}と${cur.name}を連日(${prev.date} → ${cur.date})実施しました。両方とも完遂・RPE8以下・翌日の脚に重さなしですが、連日高負荷だった事実は経過観察します。`
+                  : `${prev.name}と${cur.name}が連日(${prev.date} → ${cur.date})です。高負荷の種類が違っても回復日は必要です。`,
             dates: [prev.date, cur.date],
             sessionIds: [prev.id, cur.id],
-            suggestion: `${cur.name} を ${addDays(prev.date, 2)} 以降へ移動してください。`,
+            suggestion: completedWithGoodResponse
+              ? "カテゴリだけで大きなダメージと断定しません。次の48時間の疲労・筋肉痛・睡眠を確認し、同じ並びを自動反復しないでください。"
+              : `${cur.name} を ${addDays(prev.date, 2)} 以降へ移動してください。`,
           },
           [prev, cur]
         )
@@ -432,11 +428,15 @@ function rule04(ctx: RuleContext): RuleViolation[] {
     const tooManySpecific = demandingDays > 2;
     const tooManyOverall = highLoadDays > 3;
     if (tooManySpecific || tooManyOverall) {
+      const allCompletedWithGoodResponse =
+        list.length > 0 &&
+        list.every((session) => hasObservedGoodResponse(ctx, session)) &&
+        !recovery.hasConcern;
       out.push(
         finalize(
           {
             rule: "RULE-04",
-            level: "ERROR",
+            level: allCompletedWithGoodResponse ? "WARN" : "ERROR",
             message:
               `週(${w}〜)に高負荷日が${highLoadDays}日あります。` +
               `内訳は高乳酸・解糖系${glycolytic.length}回、中距離特異的${specific.length}回、` +
@@ -448,10 +448,15 @@ function rule04(ctx: RuleContext): RuleViolation[] {
               (tooManySpecific
                 ? "高乳酸・中距離特異的な疲労が同じ週に集中しています。"
                 : "種類を問わず高負荷日が同じ週に集中しています。") +
-              recovery.note,
+              recovery.note +
+              (allCompletedWithGoodResponse
+                ? " 全セッションで良好な実施反応（完遂・RPE8以下・翌日の脚に重さなし）を確認したため、過去実績への判定は警告に留めます。"
+                : ""),
             dates: list.map((s) => s.date),
             sessionIds: list.map((s) => s.id),
-            suggestion: recovery.hasConcern
+            suggestion: allCompletedWithGoodResponse
+              ? "良好な実施反応は保持します。ただし同じ高負荷構成を次週へ機械的に繰り返さず、その後の疲労・睡眠・筋肉痛を確認してください。"
+              : recovery.hasConcern
               ? "実施・回復記録に負担の兆候があります。次の高負荷1回を低強度有酸素または回復へ変更する案があります。"
               : tooManySpecific
                 ? "高乳酸・中距離特異的の1回を有酸素系または回復メニューへ変更する案があります。"

@@ -63,15 +63,21 @@ export function buildContinuous(input: {
  * 全部同じ／入っていないなら undefined（セッション共通のレストを出せばよい）。
  */
 export function perRepRestNote(d: IntervalDetail): string | undefined {
-  const rests = d.results.map((r) => r.restAfterSec);
-  const given = rests.filter((v): v is number => v !== undefined);
+  const rests = d.results.map((r) =>
+    r.restAfterDistanceM !== undefined
+      ? `${r.restAfterDistanceM}m${d.restType ? REST_LABELS[d.restType] : ""}`
+      : r.restAfterSec !== undefined
+        ? formatRest(r.restAfterSec)
+        : undefined
+  );
+  const given = rests.filter((v): v is string => v !== undefined);
   if (given.length === 0) return undefined;
   const uniq = new Set(given);
   if (uniq.size === 1 && given.length === rests.length) return undefined;
   // 最終本のあとのレストは意味が無いので落とす
   const shown = rests.slice(0, -1);
   if (shown.every((v) => v === undefined)) return undefined;
-  return `レスト ${shown.map((v) => (v === undefined ? "-" : formatRest(v))).join(" / ")}`;
+  return `レスト ${shown.map((v) => v ?? "-").join(" / ")}`;
 }
 
 export function describeInterval(d: IntervalDetail): string {
@@ -104,7 +110,11 @@ export function buildRepResults(
   /** 1本ごとの距離（S-4）。複合セッションで区間の距離が違うとき */
   distancesM: (number | undefined)[] = [],
   /** その本のあとのレスト秒（S-4）。任意 */
-  restAfterSecs: (number | undefined)[] = []
+  restAfterSecs: (number | undefined)[] = [],
+  /** 複合セットの区間別設定。無い区間はセッション共通設定を使う。 */
+  targetSecs: (number | undefined)[] = [],
+  /** 「次の距離walk」など、区間別の距離レスト。 */
+  restAfterDistancesM: (number | undefined)[] = []
 ): RepResult[] {
   // 心拍・距離・レストは「何本目か」で対応させる。先に間引くと、
   // 実施タイムが空の本があったときに1本ずつずれる
@@ -116,15 +126,20 @@ export function buildRepResults(
       avgHr: avgHrs[i],
       distanceM: distancesM[i],
       restAfterSec: restAfterSecs[i],
+      restAfterDistanceM: restAfterDistancesM[i],
+      targetSec: targetSecs[i],
     }))
     .filter((x) => isFinite(x.actualSec) && x.actualSec > 0)
     .map((x, i) => ({
       index: i + 1,
       distanceM: num(x.distanceM) ?? distanceM,
-      targetSec,
+      targetSec: num(x.targetSec) ?? targetSec,
       actualSec: x.actualSec,
       ...(num(x.avgHr) !== undefined ? { avgHr: x.avgHr } : {}),
       ...(num(x.restAfterSec) !== undefined ? { restAfterSec: x.restAfterSec } : {}),
+      ...(num(x.restAfterDistanceM) !== undefined
+        ? { restAfterDistanceM: x.restAfterDistanceM }
+        : {}),
     }));
 }
 

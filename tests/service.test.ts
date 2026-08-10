@@ -13,6 +13,7 @@ import {
   processDailyCheck,
   processRaceResult,
   dashboard,
+  aerobicEvidenceMarkers,
 } from "@/lib/service";
 import { makeRace, testAthlete, makeResult } from "./helpers";
 import type { Goal } from "@/lib/core/types";
@@ -145,6 +146,73 @@ describe("サービス層: 有酸素の実測データ（FitnessMarker）", () =
     expect(after.targetPaces[0].targetSecFast).toBeCloseTo(
       before.targetPaces[0].targetSecFast,
       3
+    );
+  });
+
+  it("結果保存後に種類をCVへ直すとセッション・分析根拠・次回処方へ反映する", () => {
+    const { repo } = setup();
+    regeneratePlan(repo, "2026-06-08");
+    const threshold = repo
+      .listSessions()
+      .find((session) => session.category === "threshold" && session.date < "2026-09-01")!;
+    const result = makeResult(threshold, {
+      actualLapsSec: [210, 209, 210, 209],
+      achievement: "achieved",
+      rpe: 7,
+      nextDayLegs: "normal",
+      interval: {
+        reps: 4,
+        distanceM: 1000,
+        targetSec: 210,
+        restSec: 120,
+        restType: "jog",
+        results: [210, 209, 210, 209].map((actualSec, index) => ({
+          index: index + 1,
+          distanceM: 1000,
+          targetSec: 210,
+          actualSec,
+        })),
+      },
+    });
+    processResult(repo, result);
+
+    const out = processResult(repo, result, { sessionCategory: "cv" });
+    const saved = repo.getSession(threshold.id)!;
+    expect(out.categoryChange).toEqual({ before: "threshold", after: "cv" });
+    expect(saved.category).toBe("cv");
+    expect(saved.userEdited).toBe(true);
+    expect(saved.generation).toBeUndefined();
+    expect(repo.listResults().filter((item) => item.sessionId === threshold.id)).toHaveLength(1);
+    expect(
+      aerobicEvidenceMarkers(repo).find((marker) => marker.id === `result-fm-${threshold.id}`)
+        ?.purpose
+    ).toBe("cv");
+
+    const profile = dashboard(repo, result.date).aerobicProfile;
+    expect(profile.cvSourceDescription).toContain("完遂CV実績");
+  });
+
+  it("旧形式のCV結果もラップ距離が対応していれば処方根拠へ互換採用する", () => {
+    const { repo } = setup();
+    regeneratePlan(repo, "2026-06-08");
+    const planned = repo.listSessions().find((session) => session.category === "threshold");
+    if (!planned) throw new Error("テスト用の有酸素高強度セッションがありません");
+    const cv = { ...planned, category: "cv" as const, status: "completed" as const };
+    repo.saveSession(cv);
+    repo.saveResult(
+      makeResult(cv, {
+        actualLapsSec: [210, 209, 210, 209],
+        lapDistancesM: [1000, 1000, 1000, 1000],
+        rpe: 7,
+        nextDayLegs: "normal",
+      })
+    );
+    expect(aerobicEvidenceMarkers(repo)).toContainEqual(
+      expect.objectContaining({
+        id: `result-fm-${cv.id}`,
+        purpose: "cv",
+        description: expect.stringContaining("旧形式"),
+      })
     );
   });
 });

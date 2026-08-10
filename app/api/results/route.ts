@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openRepo } from "@/lib/db/node";
 import { deleteResult, previousEntryFor, processResult, trustedResults } from "@/lib/service";
-import type { SessionResult } from "@/lib/core/types";
+import type { SessionCategory, SessionResult } from "@/lib/core/types";
 
 export const dynamic = "force-dynamic";
 
@@ -20,11 +20,14 @@ export async function POST(req: NextRequest) {
   const repo = openRepo();
   const body = await req.json();
   try {
+    const { sessionCategory, ...resultBody } = body;
     const out = processResult(repo, {
       id: `res-${Date.now()}`,
       actualLapsSec: [],
-      ...body,
-    } as SessionResult);
+      ...resultBody,
+    } as SessionResult, {
+      sessionCategory: sessionCategory as SessionCategory | undefined,
+    });
     return NextResponse.json(out);
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 400 });

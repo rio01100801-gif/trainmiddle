@@ -6,6 +6,7 @@
  */
 import type {
   DailyCheck,
+  FitnessMarker,
   Goal,
   Phase,
   Race,
@@ -250,7 +251,7 @@ export function buildRuleContext(repo: Store, evaluationDate: string): RuleConte
     strengthSessions: repo.listStrengths(),
   });
   const currentLoad = acwr(loads, evaluationDate);
-  const markers = repo.listMarkers();
+  const markers = aerobicEvidenceMarkers(repo);
   const aerobic = buildAerobicProfile(
     markers,
     evaluationDate,
@@ -274,6 +275,93 @@ export function buildRuleContext(repo: Store, evaluationDate: string): RuleConte
     currentAcwrConfidence: currentLoad.confidence,
     injuries: repo.listInjuries(),
   };
+}
+
+/**
+ * 手入力マーカーに、正式な練習結果から得られるCV/閾値の実測を加える。
+ * 予定の設定値ではなく、完遂・非暑熱・過大負担なしの実測だけを採用する。
+ * Session/Resultから毎回再構成するため、結果後にカテゴリを直すと即時に反映される。
+ */
+export function aerobicEvidenceMarkers(repo: Store): FitnessMarker[] {
+  const saved = repo.listMarkers();
+  const sessionsById = new Map(repo.listSessions().map((session) => [session.id, session]));
+  const derived = trustedResults(repo).flatMap((result): FitnessMarker[] => {
+    const session = sessionsById.get(result.sessionId);
+    if (
+      !session ||
+      session.status !== "completed" ||
+      (session.category !== "cv" && session.category !== "threshold")
+    ) {
+      return [];
+    }
+    if (
+      result.heatFlagged ||
+      result.aborted ||
+      result.achievement !== "achieved" ||
+      result.rpe > 8 ||
+      (result.nextDayLegs !== "fresh" && result.nextDayLegs !== "normal")
+    ) {
+      return [];
+    }
+    if (result.interval) {
+      const reps = result.interval.results.filter(
+        (rep) => rep.actualSec > 0 && rep.distanceM > 0
+      );
+      if (reps.length === 0) return [];
+      return [
+        {
+          id: `result-fm-${session.id}`,
+          date: result.date,
+          type: "workout",
+          purpose: session.category,
+          description: `${session.name}（正式結果）`,
+          resultLapsSec: reps.map((rep) => rep.actualSec),
+          lapDistancesM: reps.map((rep) => rep.distanceM),
+          rpe: result.rpe,
+        },
+      ];
+    }
+    if (result.continuous?.distanceKm && result.continuous.durationMin) {
+      return [
+        {
+          id: `result-fm-${session.id}`,
+          date: result.date,
+          type: "workout",
+          purpose: session.category,
+          description: `${session.name}（正式結果）`,
+          resultLapsSec: [result.continuous.durationMin * 60],
+          lapDistancesM: [result.continuous.distanceKm * 1000],
+          avgHr: result.continuous.avgHr,
+          maxHr: result.continuous.maxHr,
+          rpe: result.rpe,
+        },
+      ];
+    }
+    // 旧形式はactualLapsSec/lapDistancesMだけを持つ。読める実測を捨てず、
+    // 距離が各ラップに対応すると確認できる場合だけ互換採用する。
+    if (
+      result.actualLapsSec.length > 0 &&
+      result.lapDistancesM?.length === result.actualLapsSec.length &&
+      result.actualLapsSec.every((seconds) => seconds > 0) &&
+      result.lapDistancesM.every((distance) => distance > 0)
+    ) {
+      return [
+        {
+          id: `result-fm-${session.id}`,
+          date: result.date,
+          type: "workout",
+          purpose: session.category,
+          description: `${session.name}（正式結果・旧形式）`,
+          resultLapsSec: result.actualLapsSec,
+          lapDistancesM: result.lapDistancesM,
+          rpe: result.rpe,
+        },
+      ];
+    }
+    return [];
+  });
+  const derivedIds = new Set(derived.map((marker) => marker.id));
+  return [...saved.filter((marker) => !derivedIds.has(marker.id)), ...derived];
 }
 
 // ---------------------------------------------------------------------------
@@ -471,7 +559,7 @@ function regeneratePlanCore(repo: Store, startDate: string): {
   for (const r of races) repo.saveRace(r);
 
   const aerobic = buildAerobicProfile(
-    repo.listMarkers(),
+    aerobicEvidenceMarkers(repo),
     startDate,
     cfe.estimated800mSec,
     heatFlaggedDates(repo)
@@ -716,12 +804,30 @@ export interface ProcessResultOutput {
   changes: SessionChange[];
   violations: RuleViolation[];
   economySignalNote?: string;
+  categoryChange?: { before: SessionCategory; after: SessionCategory };
 }
+
+export interface ProcessResultOptions {
+  isRace?: boolean;
+  raceTimeSec?: number;
+  /** 予定時ではなく、実際に行った内容の分類。結果の再保存でも再計算する。 */
+  sessionCategory?: SessionCategory;
+}
+
+const RESULT_SESSION_CATEGORIES: readonly SessionCategory[] = [
+  "high_lactate",
+  "race_economy",
+  "modeling",
+  "neural",
+  "cv",
+  "threshold",
+  "aerobic",
+];
 
 export function processResult(
   repo: Store,
   result: SessionResult,
-  opts: { isRace?: boolean; raceTimeSec?: number } = {}
+  opts: ProcessResultOptions = {}
 ): ProcessResultOutput {
   /*
    * 結果・完了状態・CFE・将来予定・変更履歴は同じ記録操作の一部。
@@ -733,10 +839,29 @@ export function processResult(
 function processResultCore(
   repo: Store,
   result: SessionResult,
-  opts: { isRace?: boolean; raceTimeSec?: number } = {}
+  opts: ProcessResultOptions = {}
 ): ProcessResultOutput {
-  const session = repo.getSession(result.sessionId);
-  if (!session) throw new Error("セッションが見つかりません");
+  const storedSession = repo.getSession(result.sessionId);
+  if (!storedSession) throw new Error("セッションが見つかりません");
+  if (
+    opts.sessionCategory !== undefined &&
+    !RESULT_SESSION_CATEGORIES.includes(opts.sessionCategory)
+  ) {
+    throw new Error("実際に行ったメニューの種類が正しくありません");
+  }
+  const categoryChange =
+    opts.sessionCategory !== undefined && opts.sessionCategory !== storedSession.category
+      ? { before: storedSession.category, after: opts.sessionCategory }
+      : undefined;
+  const session: Session = categoryChange
+    ? {
+        ...storedSession,
+        category: categoryChange.after,
+        userEdited: true,
+        generation: undefined,
+        rationale: undefined,
+      }
+    : storedSession;
   const athlete = repo.getAthlete()!;
 
   // 2-1: 環境条件から暑熱フラグを自動判定して記録に埋め込む
@@ -870,6 +995,7 @@ function processResultCore(
     changes,
     violations,
     economySignalNote,
+    categoryChange,
   };
 }
 
@@ -1343,7 +1469,7 @@ export function dashboard(repo: Store, today: string) {
         )
       : undefined;
   const aerobicProfile = buildAerobicProfile(
-    repo.listMarkers(),
+    aerobicEvidenceMarkers(repo),
     today,
     cfe?.estimated800mSec,
     heatFlaggedDates(repo)
@@ -3274,7 +3400,7 @@ export function sessionPlanVariants(
     )
   ).verdict;
   const aerobicProfile = buildAerobicProfile(
-    repo.listMarkers(),
+    aerobicEvidenceMarkers(repo),
     session.date,
     cfe.estimated800mSec,
     heatFlaggedDates(repo)

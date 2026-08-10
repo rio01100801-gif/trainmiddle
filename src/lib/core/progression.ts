@@ -356,7 +356,6 @@ const RECIPE_CATALOG: Partial<
         progressionStage: 0,
         primaryStimulus: "aerobic_high",
         secondaryStimuli: ["middle_distance_specific"],
-        athleteTypes: ["endurance"],
         difficulty: 3,
         neuralLoad: 2,
         glycolyticLoad: 2,
@@ -369,6 +368,53 @@ const RECIPE_CATALOG: Partial<
         restType: "jog",
         paceDistanceM: [800],
         durationMin: 55,
+        distanceKm: 9,
+      },
+      {
+        id: "cv-600-track",
+        name: "CVトラックインターバル",
+        variationGroup: "cv-track-short",
+        progressionStage: 0,
+        primaryStimulus: "aerobic_high",
+        secondaryStimuli: ["middle_distance_specific"],
+        difficulty: 3,
+        neuralLoad: 2,
+        glycolyticLoad: 2,
+        aerobicLoad: 4,
+        muscleDamageRisk: 1,
+        recoveryDays: 2,
+        paceSource: "cv",
+        blocks: [{ distanceM: 600, reps: 6 }],
+        restSec: 75,
+        restType: "jog",
+        paceDistanceM: [600],
+        durationMin: 52,
+        distanceKm: 9,
+      },
+      {
+        id: "cv-mixed-descending",
+        name: "CVミックスインターバル",
+        variationGroup: "cv-mixed",
+        progressionStage: 1,
+        primaryStimulus: "aerobic_high",
+        secondaryStimuli: ["middle_distance_specific"],
+        athleteTypes: ["balanced", "speed"],
+        difficulty: 4,
+        neuralLoad: 2,
+        glycolyticLoad: 2,
+        aerobicLoad: 5,
+        muscleDamageRisk: 1,
+        recoveryDays: 2,
+        paceSource: "cv",
+        blocks: [
+          { distanceM: 1200, reps: 1 },
+          { distanceM: 1000, reps: 1 },
+          { distanceM: 800, reps: 1 },
+        ],
+        restSec: 120,
+        restType: "jog",
+        paceDistanceM: [1200, 1000, 800],
+        durationMin: 56,
         distanceKm: 9,
       },
     ],
@@ -719,8 +765,24 @@ function selectTemplate(
     if (fatigueAvoided) score -= 2;
     return { candidate, score, reasons, fatigueAvoided };
   });
+  const minimumStage = Math.min(...candidates.map((candidate) => candidate.progressionStage));
+  const rotationPool = candidates.filter(
+    (candidate) => candidate.progressionStage === minimumStage
+  );
+  const rotation =
+    input.category === "cv" && completed.length === 0
+      ? Math.floor(Math.abs(input.weekIndex) / 2) % rotationPool.length
+      : 0;
+  const rotationRank = (candidate: SessionTemplateCandidate) => {
+    const index = rotationPool.findIndex((item) => item.id === candidate.id);
+    if (index < 0) return rotationPool.length;
+    return (index - rotation + rotationPool.length) % rotationPool.length;
+  };
   scored.sort(
-    (a, b) => b.score - a.score || a.candidate.id.localeCompare(b.candidate.id)
+    (a, b) =>
+      b.score - a.score ||
+      rotationRank(a.candidate) - rotationRank(b.candidate) ||
+      a.candidate.id.localeCompare(b.candidate.id)
   );
   const selected = scored[0];
   const repeatedForComparison =

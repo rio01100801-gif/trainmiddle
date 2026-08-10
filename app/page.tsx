@@ -7,6 +7,7 @@ import { withQuery } from "./components/route-query";
 import { SessionEditSheet } from "./components/session-edit-sheet";
 import { saveSplashSummary } from "./components/splash-cache";
 import { ForgeTrack } from "./components/brand/forge-track";
+import { weekSessionForDisplay, weekSessionLetter } from "@/lib/core/weekDisplay";
 
 /**
  * ホーム画面（改修指示書 フェーズA）
@@ -920,17 +921,6 @@ function MiniMetric({
 // ② 週ストリップ（固定）
 // ---------------------------------------------------------------------------
 
-const CAT_LETTER: Record<string, string> = {
-  high_lactate: "H",
-  race_economy: "R",
-  modeling: "M",
-  neural: "N",
-  cv: "C",
-  threshold: "T",
-  aerobic: "A",
-  off: "—",
-};
-
 function WeekStrip({ d, today }: { d: any; today: string }) {
   const start = d.weeklySummary?.weekStart ?? today;
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
@@ -950,8 +940,7 @@ function WeekStrip({ d, today }: { d: any; today: string }) {
       <div className="grid grid-cols-7 gap-1">
         {days.map((date) => {
           const list = byDate.get(date) ?? [];
-          const main =
-            list.find((s) => s.category !== "off" && s.category !== "aerobic") ?? list[0];
+          const main = weekSessionForDisplay(list);
           const isToday = date === today;
           return (
             <Link
@@ -973,7 +962,7 @@ function WeekStrip({ d, today }: { d: any; today: string }) {
                 className="text-[13px] font-bold num"
                 style={{ color: main ? "var(--text)" : "var(--text-3)" }}
               >
-                {main ? CAT_LETTER[main.category] ?? "?" : "—"}
+                {weekSessionLetter(main)}
               </span>
             </Link>
           );

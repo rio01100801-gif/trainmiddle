@@ -23,7 +23,7 @@ describe("RULE-01 高乳酸の頻度と間隔", () => {
     expect(v[0].level).toBe("ERROR");
   });
 
-  it("同一週内2回（間隔5日以上でも）でERROR", () => {
+  it("同一週でも5日以上空いていればカテゴリ回数だけでERRORにしない", () => {
     // 月曜と土曜: 間隔5日だが同一週
     const c = ctx({
       sessions: [
@@ -31,7 +31,7 @@ describe("RULE-01 高乳酸の頻度と間隔", () => {
         makeSession("2026-04-11", "high_lactate"), // 土
       ],
     });
-    expect(violationsOf(runRuleEngine(c), "RULE-01").length).toBeGreaterThan(0);
+    expect(violationsOf(runRuleEngine(c), "RULE-01")).toEqual([]);
   });
 
   it("週1回・5日以上間隔なら違反なし", () => {
@@ -163,6 +163,35 @@ describe("RULE-03 高負荷練習の間隔", () => {
     });
     expect(violationsOf(runRuleEngine(c), "RULE-03").length).toBe(1);
   });
+
+  it("実施済みの連日セッションが両方良好なら過去実績への判定はWARN", () => {
+    const first = makeSession("2026-04-06", "race_economy", { status: "completed" });
+    const second = makeSession("2026-04-07", "threshold", { status: "completed" });
+    const c = ctx({
+      sessions: [first, second],
+      resultsBySessionId: new Map([
+        [first.id, makeResult(first, { achievement: "achieved", rpe: 7, nextDayLegs: "normal" })],
+        [second.id, makeResult(second, { achievement: "achieved", rpe: 8, nextDayLegs: "normal" })],
+      ]),
+    });
+    const violation = violationsOf(runRuleEngine(c), "RULE-03")[0];
+    expect(violation.level).toBe("WARN");
+    expect(violation.message).toContain("両方とも完遂");
+    expect(violation.suggestion).toContain("カテゴリだけで大きなダメージと断定しません");
+  });
+
+  it("片方が未達なら実施済みでも連日高負荷はERRORのまま", () => {
+    const first = makeSession("2026-04-06", "race_economy", { status: "completed" });
+    const second = makeSession("2026-04-07", "threshold", { status: "completed" });
+    const c = ctx({
+      sessions: [first, second],
+      resultsBySessionId: new Map([
+        [first.id, makeResult(first, { achievement: "achieved", rpe: 7 })],
+        [second.id, makeResult(second, { achievement: "failed", rpe: 9 })],
+      ]),
+    });
+    expect(violationsOf(runRuleEngine(c), "RULE-03")[0].level).toBe("ERROR");
+  });
 });
 
 describe("RULE-04 週内高負荷の種類と組み合わせ", () => {
@@ -234,6 +263,26 @@ describe("RULE-04 週内高負荷の種類と組み合わせ", () => {
       ],
     });
     expect(violationsOf(runRuleEngine(c), "RULE-04")[0].level).toBe("ERROR");
+  });
+
+  it("週3日の特異的実績がすべて良好ならカテゴリ名だけでERRORにしない", () => {
+    const sessions = [
+      makeSession("2026-04-06", "high_lactate", { status: "completed" }),
+      makeSession("2026-04-08", "race_economy", { status: "completed" }),
+      makeSession("2026-04-10", "modeling", { status: "completed" }),
+    ];
+    const c = ctx({
+      sessions,
+      resultsBySessionId: new Map(
+        sessions.map((session) => [
+          session.id,
+          makeResult(session, { achievement: "achieved", rpe: 7, nextDayLegs: "normal" }),
+        ])
+      ),
+    });
+    const violation = violationsOf(runRuleEngine(c), "RULE-04")[0];
+    expect(violation.level).toBe("WARN");
+    expect(violation.message).toContain("実施反応");
   });
 
   it("有酸素高強度が週4日なら理由と変更案を一致させる", () => {

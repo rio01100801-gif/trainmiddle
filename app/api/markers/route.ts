@@ -3,7 +3,7 @@ import { openRepo } from "@/lib/db/node";
 import { buildAerobicProfile } from "@/lib/core/pace";
 import type { FitnessMarker } from "@/lib/core/types";
 import { localToday } from "@/lib/core/dates";
-import { heatFlaggedDates } from "@/lib/service";
+import { aerobicEvidenceMarkers, heatFlaggedDates } from "@/lib/service";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   const repo = openRepo();
   const today =
     req.nextUrl.searchParams.get("date") ?? localToday();
-  const markers = repo.listMarkers();
+  const markers = aerobicEvidenceMarkers(repo);
   return NextResponse.json({
     markers,
     aerobicProfile: buildAerobicProfile(
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     purpose: body.purpose,
   };
   repo.saveMarker(marker);
-  const markers = repo.listMarkers();
+  const markers = aerobicEvidenceMarkers(repo);
   return NextResponse.json({
     ok: true,
     aerobicProfile: buildAerobicProfile(

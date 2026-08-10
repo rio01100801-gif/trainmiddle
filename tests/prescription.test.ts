@@ -42,6 +42,16 @@ describe("インターバル", () => {
     expect(s.mixed).toBe(true);
   });
 
+  it("次の距離walkは各区間の直後へ対応する距離レストとして展開する", () => {
+    const s = parsePrescription("400(56)＋300(42)＋200(24) r次の距離walk", {
+      grpSecPerM: GRP,
+    });
+    expect(s.slots.map((slot) => slot.distanceM)).toEqual([400, 300, 200]);
+    expect(s.slots.map((slot) => slot.targetSec)).toEqual([56, 42, 24]);
+    expect(s.slots.map((slot) => slot.restAfterDistanceM)).toEqual([300, 200, undefined]);
+    expect(s.slots.slice(0, 2).map((slot) => slot.restType)).toEqual(["walk", "walk"]);
+  });
+
   it("2セット表記は総本数になる", () => {
     const s = parsePrescription("300(41-42)×2×2 r100walk", { grpSecPerM: GRP });
     expect(s.slots).toHaveLength(4);
@@ -148,6 +158,7 @@ describe("読み取れないとき", () => {
 describe("一括入力と同じ解釈になること", () => {
   const cases = [
     "300(42)＋600(1:26)＋600(1:26) r15min",
+    "400(56)＋300(42)＋200(24) r次の距離walk",
     "1000(3:15-25)×4 r200jog",
     "ジョグ40分",
     "レース 800m 1:56.0(56.0-60.0)",

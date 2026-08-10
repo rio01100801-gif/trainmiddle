@@ -72,6 +72,24 @@ describe("S-4 本ごとのレスト", () => {
     const out = buildRepResults(300, [42, 86, 86], undefined, [], [300, 600, 600]);
     expect(out.map((x) => x.distanceM)).toEqual([300, 600, 600]);
   });
+
+  it("複合セットの設定タイムと次区間までのwalk距離を本ごとに保持する", () => {
+    const out = buildRepResults(
+      400,
+      [55.8, 41.9, 24.2],
+      undefined,
+      [],
+      [400, 300, 200],
+      [],
+      [56, 42, 24],
+      [300, 200, undefined]
+    );
+    expect(out).toEqual([
+      expect.objectContaining({ distanceM: 400, targetSec: 56, restAfterDistanceM: 300 }),
+      expect.objectContaining({ distanceM: 300, targetSec: 42, restAfterDistanceM: 200 }),
+      expect.objectContaining({ distanceM: 200, targetSec: 24 }),
+    ]);
+  });
 });
 
 describe("S-4 表示", () => {
@@ -107,5 +125,24 @@ describe("S-4 表示", () => {
       subjective: "hard",
     } as SessionResult;
     expect(summarizeResult(r)).toContain("レスト");
+  });
+
+  it("距離walkも一覧へ順番どおり表示する", () => {
+    const interval: IntervalDetail = {
+      reps: 3,
+      distanceM: 400,
+      restType: "walk",
+      results: buildRepResults(
+        400,
+        [55.8, 41.9, 24.2],
+        undefined,
+        [],
+        [400, 300, 200],
+        [],
+        [56, 42, 24],
+        [300, 200, undefined]
+      ),
+    };
+    expect(perRepRestNote(interval)).toBe("レスト 300mwalk / 200mwalk");
   });
 });

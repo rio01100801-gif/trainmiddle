@@ -1,4 +1,4 @@
-import type { Session, SessionCategory, StrengthSession } from "./types";
+import type { Session, SessionCategory, SessionResult, StrengthSession } from "./types";
 
 export type TrainingLoadClass =
   | "glycolytic"
@@ -194,13 +194,20 @@ export interface GlycolyticDose {
  * 60%以下を「低容量候補」として拾う運用境界で、実際の4日化には前回の完遂・
  * RPE・翌日の脚・日次疲労をRULE-01側で追加確認する。
  */
-export function glycolyticDose(session: Session): GlycolyticDose {
+export function glycolyticDose(session: Session, result?: SessionResult): GlycolyticDose {
   const text = `${session.name} ${session.prescription}`.replace(/\s+/g, " ");
   const repeated = /(\d{2,4})\s*m\s*[×xX]\s*(\d{1,2})/i.exec(text);
   const repDistanceM = repeated ? firstNumber(repeated[1]) : undefined;
   const reps = repeated ? firstNumber(repeated[2]) : undefined;
   let fastVolumeM =
     repDistanceM !== undefined && reps !== undefined ? repDistanceM * reps : undefined;
+  const actualFastVolumeM = result?.interval?.results.reduce(
+    (sum, rep) => sum + (rep.actualSec > 0 ? rep.distanceM : 0),
+    0
+  );
+  if (actualFastVolumeM !== undefined && actualFastVolumeM > 0) {
+    fastVolumeM = actualFastVolumeM;
+  }
   if (fastVolumeM === undefined && /\+/.test(text)) {
     const distances = [...text.matchAll(/(\d{2,4})\s*m/gi)]
       .map((match) => firstNumber(match[1]))
@@ -214,12 +221,20 @@ export function glycolyticDose(session: Session): GlycolyticDose {
     : restSeconds
       ? Number(restSeconds[1])
       : undefined;
-  const fullRecovery = /完全休息|完全回復/i.test(text) || (restSec !== undefined && restSec >= 300);
+  const observedGoodResponse =
+    result?.achievement === "achieved" &&
+    result.aborted !== true &&
+    result.rpe <= 8 &&
+    (result.nextDayLegs === "fresh" || result.nextDayLegs === "normal");
+  const fullRecovery =
+    /完全休息|完全回復/i.test(text) ||
+    (restSec !== undefined && restSec >= 300) ||
+    (result?.interval?.restSec !== undefined && result.interval.restSec >= 300);
   const lowVolumeReviewCandidate =
     (session.category === "high_lactate" || session.category === "modeling") &&
     fastVolumeM !== undefined &&
     fastVolumeM <= 900 &&
-    fullRecovery &&
+    (fullRecovery || observedGoodResponse) &&
     session.riskLevel !== "high";
   return {
     fastVolumeM,
@@ -231,10 +246,12 @@ export function glycolyticDose(session: Session): GlycolyticDose {
     reason:
       fastVolumeM === undefined
         ? "高速区間の総量を本文から確認できません"
-        : !fullRecovery
-          ? `高速区間${fastVolumeM}mですが完全回復を確認できません`
+        : !fullRecovery && !observedGoodResponse
+          ? `高速区間${fastVolumeM}mですが完全回復または良好な実施反応を確認できません`
           : lowVolumeReviewCandidate
-            ? `高速区間${fastVolumeM}m・完全回復の低容量候補`
+            ? `高速区間${fastVolumeM}m・${
+                fullRecovery ? "完全回復" : "完遂/RPE/翌日の脚が良好"
+              }の低容量候補`
             : `高速区間${fastVolumeM}mで標準5日間隔を維持します`,
   };
 }

@@ -6,6 +6,7 @@
 import type { Store } from "../src/lib/db/store";
 import {
   buildRuleContext,
+  aerobicEvidenceMarkers,
   dashboard,
   deleteResult,
   heatFlaggedDates,
@@ -166,8 +167,14 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
       if (prevFor) return { previous: previousEntryFor(repo, prevFor) ?? null };
       return { results: trustedResults(repo) };
     },
-    POST: (repo, body) =>
-      processResult(repo, { id: `res-${Date.now()}`, actualLapsSec: [], ...body } as SessionResult),
+    POST: (repo, body) => {
+      const { sessionCategory, ...resultBody } = body;
+      return processResult(
+        repo,
+        { id: `res-${Date.now()}`, actualLapsSec: [], ...resultBody } as SessionResult,
+        { sessionCategory }
+      );
+    },
     DELETE: (repo, _b, params) => {
       const id = params.get("id");
       if (!id) return { error: "id が必要です" };
@@ -298,7 +305,7 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
   "/api/markers": {
     GET: (repo, _b, params) => {
       const today = params.get("date") ?? localToday();
-      const markers = repo.listMarkers();
+      const markers = aerobicEvidenceMarkers(repo);
       return {
         markers,
         aerobicProfile: buildAerobicProfile(
@@ -327,7 +334,7 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
       return {
         ok: true,
         aerobicProfile: buildAerobicProfile(
-          repo.listMarkers(),
+          aerobicEvidenceMarkers(repo),
           marker.date,
           repo.getCfe()?.estimated800mSec,
           heatFlaggedDates(repo)

@@ -78,7 +78,7 @@ export interface AerobicProfile {
   refreshHint?: string;
   /** 実測の本数・用途・新しさから見た推定の信頼度 */
   confidence: "low" | "medium" | "high";
-  /** CVをLT固定差で出したか、複数距離の実測から出したか */
+  /** CVをLT固定差、CV完遂実績、複数距離実測のどれから出したか */
   cvSourceDescription: string;
   cvEstimate?: CriticalVelocityEstimate;
 }
@@ -314,6 +314,63 @@ export function estimateCriticalVelocity(
   };
 }
 
+/**
+ * 本人がCVとして完遂した反復の実測ペースを、次のCV処方へ戻す。
+ * これは生理学的なCritical Velocityの断定ではなく「成功した処方」の再利用。
+ */
+export function estimateCvPrescriptionFromMarkers(
+  markers: FitnessMarker[],
+  today: string,
+  ltPaceSecPerKm: number,
+  heatFlaggedDates?: Set<string>
+): CriticalVelocityEstimate | undefined {
+  const samples = markers
+    .filter(
+      (marker) =>
+        marker.purpose === "cv" &&
+        diffDays(marker.date, today) >= 0 &&
+        diffDays(marker.date, today) <= 56 &&
+        !heatFlaggedDates?.has(marker.date) &&
+        (marker.rpe === undefined || marker.rpe <= 8)
+    )
+    .map((marker) => {
+      const distances = marker.lapDistancesM ?? marker.resultLapsSec.map(() => 1000);
+      const distanceM = distances.reduce((sum, distance) => sum + distance, 0);
+      const totalSec = marker.resultLapsSec.reduce((sum, seconds) => sum + seconds, 0);
+      return { marker, distanceM, totalSec };
+    })
+    .filter(({ distanceM, totalSec }) => distanceM >= 2400 && totalSec > 0)
+    .map(({ marker, distanceM, totalSec }) => ({
+      date: marker.date,
+      description: marker.description,
+      distanceM,
+      totalSec,
+      paceSecPerKm: (totalSec / distanceM) * 1000,
+      weight: recencyWeight(diffDays(marker.date, today)),
+    }))
+    .filter(
+      (sample) =>
+        sample.paceSecPerKm < ltPaceSecPerKm &&
+        sample.paceSecPerKm >= ltPaceSecPerKm - 20
+    )
+    .sort((a, b) => b.date.localeCompare(a.date));
+  if (samples.length === 0) return undefined;
+  const totalWeight = samples.reduce((sum, sample) => sum + sample.weight, 0);
+  const paceSecPerKm =
+    samples.reduce((sum, sample) => sum + sample.paceSecPerKm * sample.weight, 0) /
+    totalWeight;
+  return {
+    paceSecPerKm,
+    samples: samples.map(({ date, description, distanceM, totalSec }) => ({
+      date,
+      description,
+      distanceM,
+      totalSec,
+    })),
+    source: `直近8週の完遂CV実績${samples.length}件から処方ペースを算出（能力値の断定ではありません）`,
+  };
+}
+
 /** 2-5. LTの更新を促すべきか（推奨更新頻度 3〜4週間） */
 export const LT_REFRESH_DAYS = 28;
 
@@ -355,7 +412,9 @@ export function buildAerobicProfile(
     source = "実測データ不足のためCFEからの推定値（精度低。閾値走の実測入力を推奨）";
     confidence = "low";
   }
-  const cvEstimate = estimateCriticalVelocity(markers, today, lt, heatFlaggedDates);
+  const cvEstimate =
+    estimateCriticalVelocity(markers, today, lt, heatFlaggedDates) ??
+    estimateCvPrescriptionFromMarkers(markers, today, lt, heatFlaggedDates);
   const cv = cvEstimate
     ? { fast: cvEstimate.paceSecPerKm - 1, slow: cvEstimate.paceSecPerKm + 1 }
     : { fast: lt - 8, slow: lt - 6 };
@@ -371,7 +430,8 @@ export function buildAerobicProfile(
     refreshHint: ltNeedsRefresh(est),
     confidence,
     cvSourceDescription:
-      cvEstimate?.source ?? "異なる距離のレース/テスト実測が不足しているためLTより6〜8秒/km速い範囲",
+      cvEstimate?.source ??
+      "完遂CVまたは異なる距離のレース/テスト実測が不足しているためLTより6〜8秒/km速い暫定範囲",
     cvEstimate,
   };
 }

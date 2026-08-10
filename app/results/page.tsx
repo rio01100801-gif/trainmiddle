@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Card,
   CategoryBadge,
+  CATEGORY_LABELS,
   ChangeList,
   ConfirmButton,
   Scale5,
@@ -19,8 +20,9 @@ import { completeRunTriple, formatTimeInput } from "@/lib/core/inputFormat";
 import { parseRest } from "@/lib/core/bulkImport";
 import { avgPaceSecPerKm, buildRepResults, REST_LABELS } from "@/lib/core/workoutLog";
 import { evaluateEnvironment, environmentNote, WIND_LABELS } from "@/lib/core/environment";
-import type { FitnessMarkerPurpose, RestType } from "@/lib/core/types";
+import type { FitnessMarkerPurpose, RestType, SessionCategory } from "@/lib/core/types";
 import type { AerobicProfile } from "@/lib/core/pace";
+import type { PrescriptionStructure } from "@/lib/core/prescription";
 
 // ---------------------------------------------------------------------------
 
@@ -878,9 +880,24 @@ function parseRestInput(v: string): number | undefined {
   return isFinite(n) && n > 0 ? n : undefined;
 }
 
+function parsePerRepRestInput(v: string): {
+  restSec?: number;
+  restDistanceM?: number;
+  restType?: RestType;
+} {
+  const parsed = parseRest(v.trim());
+  if (parsed.restSec !== undefined || parsed.restDistanceM !== undefined) return parsed;
+  const restSec = parseRestInput(v);
+  return restSec !== undefined ? { restSec, restType: parsed.restType } : parsed;
+}
+
 /** 秒を入力欄に戻す。60の倍数なら分で書く（打ったとおりに近い形にする） */
 function fmtRestInput(sec: number): string {
   return sec % 60 === 0 ? `${sec / 60}分` : `${sec}秒`;
+}
+
+function asRestType(value: unknown, fallback: RestType): RestType {
+  return value === "jog" || value === "walk" || value === "full" ? value : fallback;
 }
 
 /**
@@ -920,6 +937,7 @@ function ResultForm({
   );
   const [busy, setBusy] = useState(false);
   const [showEnv, setShowEnv] = useState(false);
+  const [sessionCategory, setSessionCategory] = useState<SessionCategory>(session.category);
 
   /*
    * M-1: 既に登録済みならその値を初期値にする。
@@ -970,7 +988,7 @@ function ResultForm({
    * 処方の解釈は一括入力・編集シートと同じものを使う（/api/prescription）。
    */
   const [perRep, setPerRep] = useState(true);
-  const [structure, setStructure] = useState<any | null>(null);
+  const [structure, setStructure] = useState<PrescriptionStructure | null>(null);
   const [repTimes, setRepTimes] = useState<string[]>(
     existing?.actualLapsSec?.length
       ? existing.actualLapsSec.map((t: number) => String(Math.round(t * 100) / 100))
@@ -994,12 +1012,19 @@ function ResultForm({
    * セッションに1つのレストだけでは記録できない。
    */
   const [repRests, setRepRests] = useState<string[]>(
-    (ex?.results ?? []).map((r: any) =>
-      r.restAfterSec !== undefined ? fmtRestInput(r.restAfterSec) : ""
+    (ex?.results ?? []).map((r: { restAfterDistanceM?: number; restAfterSec?: number }) =>
+      r.restAfterDistanceM !== undefined
+        ? `${r.restAfterDistanceM}m ${REST_LABELS[asRestType(ex?.restType, "walk")]}`
+        : r.restAfterSec !== undefined
+          ? fmtRestInput(r.restAfterSec)
+          : ""
     )
   );
   const [withRest, setWithRest] = useState<boolean>(
-    (ex?.results ?? []).some((r: any) => r.restAfterSec !== undefined)
+    (ex?.results ?? []).some(
+      (r: { restAfterDistanceM?: number; restAfterSec?: number }) =>
+        r.restAfterSec !== undefined || r.restAfterDistanceM !== undefined
+    )
   );
 
   useEffect(() => {
@@ -1009,11 +1034,33 @@ function ResultForm({
       body: JSON.stringify({ text: session.prescription ?? "" }),
     })
       .then((r) => r.json())
-      .then((d) => setStructure(d?.recognized ? d : null))
+      .then((d: PrescriptionStructure) => {
+        const next = d?.recognized ? d : null;
+        setStructure(next);
+        // 初回入力では本文の構造をフォーム初期値にも反映する。
+        // 400+300+200を「400m×5」のまま表示すると、欄数も設定も誤解させる。
+        if (!existing?.interval && next?.kind === "interval" && next.slots.length > 0) {
+          setReps(String(next.slots.length));
+          setDistM(String(next.slots[0].distanceM));
+          if (!next.mixed && next.slots[0].targetSec !== undefined) {
+            setTargetSec(String(next.slots[0].targetSec));
+          }
+        }
+      })
       .catch(() => setStructure(null));
-  }, [session.id, session.prescription]);
+  }, [existing?.interval, session.id, session.prescription]);
 
-  const slotDistances: number[] = (structure?.slots ?? []).map((x: any) => x.distanceM);
+  const slotDistances = (structure?.slots ?? []).map((slot) => slot.distanceM);
+  const slotTargets = (structure?.slots ?? []).map((slot) => slot.targetSec);
+  const slotRestDistances = (structure?.slots ?? []).map(
+    (slot) => slot.restAfterDistanceM
+  );
+  const structureRestType = (structure?.slots ?? []).find((slot) => slot.restType)?.restType;
+  const hasStructuredPerRepRest = slotRestDistances.some((distance) => distance !== undefined);
+
+  useEffect(() => {
+    if (hasStructuredPerRepRest) setWithRest(true);
+  }, [hasStructuredPerRepRest]);
   // 欄の数は「処方の本数」と「既に入れた本数」の多い方。
   // 打ち切って本数が減っても、入れた値が消えないようにする
   const slotCount = Math.max(
@@ -1181,6 +1228,7 @@ function ResultForm({
         }
         payload = {
           sessionId: session.id,
+          sessionCategory,
           date: session.date,
           continuous: {
             distanceKm: Math.round(km * 100) / 100,
@@ -1203,12 +1251,16 @@ function ResultForm({
         const source = perRep ? repTimes.join(",") : times;
         // 心拍と「何本目か」で対応させるため、間引く前の並びも残す
         const parsedTimes = source.split(",").map((x: string) => parseRepTime(x) ?? 0);
-        const actual = parsedTimes.filter((x: number) => x > 0);
         const t = targetSec ? Number(targetSec) : undefined;
         // S-4: 区間ごとのレスト。空欄の本はセッション共通の設定を使う（undefinedのまま）
-        const rests =
+        const perRepRests =
           perRep && withRest
-            ? repRests.map((v) => parseRestInput(v))
+            ? Array.from({ length: slotCount }, (_, index) => {
+                const entered = repRests[index]?.trim();
+                return entered
+                  ? parsePerRepRestInput(entered)
+                  : { restDistanceM: slotRestDistances[index], restType: structureRestType };
+              })
             : [];
         // 複合セッション（300+600+300）は本ごとに距離が違う
         const dists = perRep ? slotDistances : [];
@@ -1219,20 +1271,37 @@ function ResultForm({
                 return v.trim() && isFinite(n) && n > 0 ? n : undefined;
               })
             : [];
+        const builtResults = buildRepResults(
+          Number(distM),
+          parsedTimes,
+          structure?.mixed ? undefined : t,
+          hrs,
+          dists,
+          perRepRests.map((rest) => rest.restSec),
+          slotTargets,
+          perRepRests.map((rest) => rest.restDistanceM)
+        );
         payload = {
           sessionId: session.id,
+          sessionCategory,
           date: session.date,
           interval: {
             reps: Number(reps),
             distanceM: Number(distM),
-            targetSec: t,
-            restType,
-            restSec: restMode === "time" ? Number(restValue) : undefined,
-            restDistanceM: restMode === "distance" ? Number(restValue) : undefined,
-            results: buildRepResults(Number(distM), parsedTimes, t, hrs, dists, rests),
+            targetSec: structure?.mixed ? undefined : t,
+            restType: structureRestType ?? restType,
+            restSec:
+              !hasStructuredPerRepRest && restMode === "time"
+                ? Number(restValue)
+                : undefined,
+            restDistanceM:
+              !hasStructuredPerRepRest && restMode === "distance"
+                ? Number(restValue)
+                : undefined,
+            results: builtResults,
           },
-          actualLapsSec: actual,
-          lapDistancesM: actual.map(() => Number(distM)),
+          actualLapsSec: builtResults.map((result) => result.actualSec),
+          lapDistancesM: builtResults.map((result) => result.distanceM),
           achievement: "achieved", // サービス層が実測から上書きする
           rpe: Number(rpe),
           subjective,
@@ -1275,6 +1344,35 @@ function ResultForm({
       {existing ? (
         <p className="text-[11.5px] mb-3" style={{ color: "var(--forge)" }}>
           登録済みです。前回入力した内容をそのまま表示しています。直して保存すれば上書きされ、記録は増えません。
+        </p>
+      ) : null}
+
+      <L label="実際に行ったメニューの種類">
+        <select
+          className="w-full mb-3"
+          value={sessionCategory}
+          onChange={(event) => setSessionCategory(event.target.value as SessionCategory)}
+        >
+          {(
+            [
+              "high_lactate",
+              "race_economy",
+              "modeling",
+              "neural",
+              "cv",
+              "threshold",
+              "aerobic",
+            ] as SessionCategory[]
+          ).map((category) => (
+            <option key={category} value={category}>
+              {CATEGORY_LABELS[category]}
+            </option>
+          ))}
+        </select>
+      </L>
+      {existing && sessionCategory !== session.category ? (
+        <p className="text-[11px] mb-3" style={{ color: "var(--amber)" }}>
+          保存すると分類を変更し、CFE・負荷・4週間バランス・警告・次回メニューを新しい分類で再計算します。
         </p>
       ) : null}
 
@@ -1507,6 +1605,10 @@ function ResultForm({
                       style={{ color: "var(--text-3)" }}
                     >
                       {i + 1}本目 {slotDistances[i] ?? distM}m
+                      {slotTargets[i] !== undefined ? `／設定 ${slotTargets[i]}秒` : ""}
+                      {slotRestDistances[i] !== undefined
+                        ? `／次まで ${slotRestDistances[i]}m walk`
+                        : ""}
                     </span>
                     <div className="flex gap-1">
                       <label className="flex-1 min-w-0">
@@ -1550,7 +1652,11 @@ function ResultForm({
                         <label className="flex-1 min-w-0">
                           <input
                             className="w-full !text-[12px] !py-1"
-                            placeholder="r 6分"
+                            placeholder={
+                              slotRestDistances[i] !== undefined
+                                ? `${slotRestDistances[i]}m walk`
+                                : "r 6分"
+                            }
                             aria-label={`${i + 1}本目のあとのレスト`}
                             value={repRests[i] ?? ""}
                             onChange={(e) => {
@@ -1571,7 +1677,7 @@ function ResultForm({
               </div>
               {withRest ? (
                 <p className="text-[10.5px] mt-1" style={{ color: "var(--text-3)" }}>
-                  「6分」「90秒」のように書けます。空欄の本は、上のレスト設定を使います。
+                  「6分」「90秒」「300m walk」のように書けます。メニューに「次の距離walk」がある場合は自動で入ります。
                 </p>
               ) : null}
             </>
