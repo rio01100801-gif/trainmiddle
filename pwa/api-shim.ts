@@ -573,7 +573,7 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
       if (!body?.sessionId || !body?.category) {
         return { error: "sessionId と category が必要です" };
       }
-      const out = applyCoverageProposal(repo, body.sessionId, body.category, today);
+      const out = applyCoverageProposal(repo, body.sessionId, body.category, today, body.force === true);
       return { ...out, review: coverageReview(repo, today) ?? null };
     },
   },

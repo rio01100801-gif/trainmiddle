@@ -3294,7 +3294,8 @@ export function applyCoverageProposal(
   repo: Store,
   sessionId: string,
   category: SessionCategory,
-  today: string
+  today: string,
+  force = false
 ): PlanEditResult {
   const session = repo.getSession(sessionId);
   if (!session) {
@@ -3307,11 +3308,15 @@ export function applyCoverageProposal(
       alternatives: [],
     };
   }
+  // force を受け取るのは、入れ替えが RULE 違反になる組み合わせが普通に起きるため。
+  // 画面側で「何のルールに反するか」を出したうえで本人に決めさせる。
+  // 黙って適用も、黙って握りつぶしもしない。
   return editSession(
     repo,
     sessionId,
     { category, name: `${CATEGORY_JP_LABELS[category] ?? category}（不足ぶんの補い）` },
-    today
+    today,
+    { force }
   );
 }
 

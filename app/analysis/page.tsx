@@ -842,10 +842,27 @@ function fmtT(sec?: number): string {
  * ホームの原則（今やるべきことだけ）を崩さないよう分析タブの「現在地」に置く。
  * 固定曜日設定そのものは変えない。入れ替えるのはその週の予定1件だけ。
  */
+/**
+ * 押した候補ごとの結果。
+ *
+ * 以前は結果をカード末尾の1行（`msg`）にだけ出していた。
+ * 候補は数件ぶん縦に並ぶので、押したボタンから結果までが画面2つぶん離れ、
+ * しかもルール違反で止まったときは灰色の一文しか出なかった。
+ * 「押しても反応しない」ように見えていたのはこれ。
+ * 結果は必ず押したボタンの直下に、止まった理由（ルール名と内容）ごと出す。
+ */
+type SwapOutcome = {
+  ok: boolean;
+  message: string;
+  violations: { rule: string; message: string }[];
+  /** ルール違反で止まった場合だけ、本人の判断で押し切れるようにする */
+  canForce: boolean;
+};
+
 function CoveragePanel() {
   const [d, setD] = useState<CoverageReview | null>(null);
-  const [msg, setMsg] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [outcomes, setOutcomes] = useState<Record<string, SwapOutcome>>({});
+  const [busy, setBusy] = useState("");
 
   const load = useCallback(() => {
     fetch("/api/coverage")
@@ -857,19 +874,43 @@ function CoveragePanel() {
 
   if (!d) return null;
 
-  const apply = async (sessionId: string, category: SessionCategory) => {
-    setBusy(true);
+  const apply = async (sessionId: string, category: SessionCategory, force = false) => {
+    const key = `${sessionId}:${category}`;
+    setBusy(key);
     try {
       const r = await fetch("/api/coverage", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sessionId, category }),
+        body: JSON.stringify({ sessionId, category, force }),
       });
       const out = await r.json();
-      setMsg(out.error ?? "入れ替えました。固定曜日の設定は変えていません。");
+      const violations = (out.newViolations ?? []) as { rule: string; message: string }[];
+      setOutcomes((prev) => ({
+        ...prev,
+        [key]: {
+          ok: out.applied === true,
+          message: out.applied
+            ? force
+              ? "入れ替えました（警告を承知のうえ）。固定曜日の設定は変えていません。"
+              : "入れ替えました。固定曜日の設定は変えていません。"
+            : (out.error ?? "入れ替えできませんでした"),
+          violations,
+          canForce: out.applied !== true && violations.length > 0,
+        },
+      }));
       if (out.review) setD(out.review);
+    } catch (e) {
+      setOutcomes((prev) => ({
+        ...prev,
+        [key]: {
+          ok: false,
+          message: `通信できませんでした: ${String(e)}`,
+          violations: [],
+          canForce: false,
+        },
+      }));
     } finally {
-      setBusy(false);
+      setBusy("");
     }
   };
 
@@ -1040,35 +1081,70 @@ function CoveragePanel() {
               {p.note}
             </p>
           ) : null}
-          {p.candidates.map((c) => (
-            <div key={c.sessionId} className="mb-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[11.5px] num" style={{ color: "var(--text-2)" }}>
-                  {c.date.slice(5).replace("-", "/")} {c.name}
-                </span>
-                <button
-                  className="btn-ghost !text-[11.5px] !py-1.5"
-                  disabled={busy}
-                  onClick={() => apply(c.sessionId, p.category)}
-                >
-                  {COVERAGE_JP[p.category] ?? p.category}に替える
-                </button>
+          {p.candidates.map((c) => {
+            const key = `${c.sessionId}:${p.category}`;
+            const outcome = outcomes[key];
+            const pending = busy === key;
+            /*
+             * data-candidate は E2E 用の目印。
+             * 「結果が押したボタンの直下に出る」ことを、カード全体ではなく
+             * この候補の内側だけを読んで確かめるために要る。
+             * カード全体を読む検査だと、結果がカード末尾に出る（＝直したかった状態）
+             * でも通ってしまい、何も見ていない検査になる。
+             */
+            return (
+              <div key={c.sessionId} className="mb-2" data-candidate={key}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[11.5px] num" style={{ color: "var(--text-2)" }}>
+                    {c.date.slice(5).replace("-", "/")} {c.name}
+                  </span>
+                  <button
+                    className="btn-ghost !text-[11.5px] !py-1.5"
+                    disabled={busy !== ""}
+                    onClick={() => apply(c.sessionId, p.category)}
+                  >
+                    {pending ? "確認中…" : `${COVERAGE_JP[p.category] ?? p.category}に替える`}
+                  </button>
+                </div>
+                {c.cost ? (
+                  <StatusText kind="warning" className="text-[11px] leading-relaxed mt-1">
+                    {c.cost}
+                  </StatusText>
+                ) : null}
+                {outcome ? (
+                  <div className="mt-1.5">
+                    <StatusText
+                      kind={outcome.ok ? "success" : "error"}
+                      className="text-[11.5px] leading-relaxed"
+                    >
+                      {outcome.message}
+                    </StatusText>
+                    {outcome.violations.map((v, i) => (
+                      <StatusText
+                        key={i}
+                        kind="error"
+                        className="text-[11px] leading-relaxed mt-0.5"
+                      >
+                        {v.rule}: {v.message}
+                      </StatusText>
+                    ))}
+                    {outcome.canForce ? (
+                      <button
+                        className="btn-ghost !text-[11.5px] !py-1.5 mt-1.5"
+                        style={{ color: "var(--amber)" }}
+                        disabled={busy !== ""}
+                        onClick={() => apply(c.sessionId, p.category, true)}
+                      >
+                        承知のうえで替える
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
-              {c.cost ? (
-                <StatusText kind="warning" className="text-[11px] leading-relaxed mt-1">
-                  {c.cost}
-                </StatusText>
-              ) : null}
-            </div>
-          ))}
+            );
+          })}
         </div>
       ))}
-
-      {msg ? (
-        <p className="text-[11.5px] mt-2" style={{ color: "var(--text-3)" }}>
-          {msg}
-        </p>
-      ) : null}
     </Card>
   );
 }

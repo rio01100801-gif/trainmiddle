@@ -18,6 +18,6 @@ export async function POST(req: NextRequest) {
   if (!body.sessionId || !body.category) {
     return NextResponse.json({ error: "sessionId と category が必要です" }, { status: 400 });
   }
-  const out = applyCoverageProposal(repo, body.sessionId, body.category, today);
+  const out = applyCoverageProposal(repo, body.sessionId, body.category, today, body.force === true);
   return NextResponse.json({ ...out, review: coverageReview(repo, today) ?? null });
 }

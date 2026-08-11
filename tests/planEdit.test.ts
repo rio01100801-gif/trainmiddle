@@ -9,6 +9,7 @@ import { describe, it, expect } from "vitest";
 import { memRepo } from "./sqlite-helper";
 import {
   addSession,
+  applyCoverageProposal,
   deletePlannedSession,
   editSession,
   regeneratePlan,
@@ -206,5 +207,51 @@ describe("対象6: 危険なトレーニング提案の防止", () => {
     const out = regeneratePlan(repo, TODAY);
     expect(out.unsafeSkipped).toBe(0);
     expect(out.sessionCount).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Q-2 の「〜に替える」。
+ *
+ * 実機で「押しても反応しない」と報告された。実際には API まで届いており、
+ * 入れ替えが RULE 違反になるので editSession が止めていた。
+ * 画面側は理由を出さず、force も渡していなかったので手詰まりだった。
+ * ここでは「止まったときに理由が返る」「本人の判断で押し切れる」の2点を見る。
+ */
+describe("Q-2 不足カテゴリの入れ替え", () => {
+  it("ルール違反になる入れ替えは止め、理由（違反）を返す", () => {
+    const repo = setup();
+    const hl = hlSessions(repo);
+    // 高乳酸のすぐ隣の枠を高乳酸に替えれば RULE-01（間隔）に触れる
+    const target = repo
+      .listSessions()
+      .find((s) => !s.isFixed && s.date === addDays(hl[0].date, 1));
+    if (!target) return; // 生成の巡り合わせで隣が空なら、この確認は対象外
+    const out = applyCoverageProposal(repo, target.id, "high_lactate", TODAY);
+    if (out.applied) return; // 違反にならない配置なら確認するものが無い
+    expect(out.newViolations.length).toBeGreaterThan(0);
+    expect(out.error).toBeTruthy();
+    // 止めたなら本当に書き換わっていないこと
+    expect(repo.getSession(target.id)!.category).toBe(target.category);
+  });
+
+  it("force を渡せば本人の判断として適用できる", () => {
+    const repo = setup();
+    const jog = repo.listSessions().find((s) => !s.isFixed && s.category === "aerobic");
+    if (!jog) return;
+    const out = applyCoverageProposal(repo, jog.id, "race_economy", TODAY, true);
+    expect(out.applied).toBe(true);
+    expect(repo.getSession(jog.id)!.category).toBe("race_economy");
+  });
+
+  it("固定セッションは force でも替えない（RULE-15）", () => {
+    const repo = setup();
+    // 生成された計画に固定枠は含まれないので、コーチ指定の枠をここで置く
+    const jog = repo.listSessions().find((s) => !s.isFixed && s.category === "aerobic")!;
+    repo.saveSession({ ...jog, isFixed: true });
+    const out = applyCoverageProposal(repo, jog.id, "race_economy", TODAY, true);
+    expect(out.applied).toBe(false);
+    expect(out.error).toContain("RULE-15");
+    expect(repo.getSession(jog.id)!.category).toBe(jog.category);
   });
 });

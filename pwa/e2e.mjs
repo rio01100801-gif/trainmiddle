@@ -1956,6 +1956,99 @@ if (!hash.startsWith("#/results?date=")) {
 }
 step("カレンダー: 日付タップで記録画面へ行くOK");
 
+/*
+ * カレンダーの表示期間と送り操作。
+ *
+ * 実機で「週がいきなり変わる」「既定が4週間になっている」と報告された箇所。
+ * 原因は (1) 横スワイプ判定が指の横移動しか見ておらず、縦スクロール中の
+ * 横流れで週が飛んでいた (2) 既定を1週間に変える前に端末へ保存された
+ * 4週間がそのまま復元されていた (3) 月送りが日数計算で、31日ある月では
+ * 同じ月に戻り前へ進めなかった。3つとも見た目には何も出ないので検査で見張る。
+ */
+{
+  await page.goto("http://localhost:8791/#/calendar");
+  // 旧キーに4週間が残っている端末を再現する
+  await page.evaluate(() => {
+    localStorage.setItem("forge.view.calendar.weeks", "4");
+    localStorage.removeItem("forge.view.calendar.weeks.v2");
+    localStorage.removeItem("forge.view.calendar.mode");
+  });
+  await page.reload();
+  await page.waitForTimeout(1100);
+
+  const controls = page.locator(".calendar-controls").first();
+  const rangeText = async () => ((await controls.locator("span.num").first().textContent()) ?? "").trim();
+  const spanDays = (s) => {
+    const m = s.match(/(\d{4}-\d{2}-\d{2})\s*〜\s*(\d{4}-\d{2}-\d{2})/);
+    return m ? Math.round((Date.parse(m[2]) - Date.parse(m[1])) / 86400000) + 1 : null;
+  };
+  const startOf = (s) => (s.match(/(\d{4}-\d{2}-\d{2})/) ?? [])[1];
+
+  const r0 = await rangeText();
+  if (spanDays(r0) !== 7) {
+    fail(`カレンダーの既定が1週間になっていない（${r0} = ${spanDays(r0)}日）`);
+  }
+  step("カレンダー: 既定は1週間OK（端末に残った4週間の設定に引きずられない）");
+
+  // 月表示: 「→」で必ず翌月へ進むこと（8月・10月など31日ある月で止まっていた）
+  await controls.getByRole("button", { name: "月", exact: true }).click();
+  await page.waitForTimeout(700);
+  const months = [startOf(await rangeText())];
+  for (let i = 0; i < 3; i++) {
+    await controls.getByRole("button", { name: "次の期間" }).click();
+    await page.waitForTimeout(600);
+    months.push(startOf(await rangeText()));
+  }
+  for (let i = 1; i < months.length; i++) {
+    if (months[i] === months[i - 1]) {
+      fail(`月表示の「→」で先へ進まない（${months.join(" → ")}）`);
+    }
+    if (!months[i].endsWith("-01")) fail(`月表示の先頭が1日になっていない（${months[i]}）`);
+  }
+  step(`カレンダー: 月送りOK（${months.join(" → ")}）`);
+
+  // 週表示に戻して、スワイプ判定を見る
+  await controls.getByRole("button", { name: "週", exact: true }).click();
+  await page.waitForTimeout(700);
+  await page.evaluate(() => window.scrollTo({ top: 0 }));
+  const swipe = (x0, y0, x1, y1) =>
+    page.evaluate(
+      ([ax, ay, bx, by]) => {
+        const el = document.querySelector(".calendar-day-list");
+        if (!el) throw new Error("日付リストが無い");
+        const mk = (type, x, y) => {
+          const t = new Touch({ identifier: 1, target: el, clientX: x, clientY: y });
+          return new TouchEvent(type, {
+            touches: type === "touchend" ? [] : [t],
+            changedTouches: [t],
+            bubbles: true,
+            cancelable: true,
+          });
+        };
+        el.dispatchEvent(mk("touchstart", ax, ay));
+        el.dispatchEvent(mk("touchend", bx, by));
+      },
+      [x0, y0, x1, y1]
+    );
+
+  const w0 = await rangeText();
+  // 縦スクロール中に指が横へ80px流れただけ。週は動いてはいけない
+  await swipe(200, 620, 120, 180);
+  await page.waitForTimeout(500);
+  if ((await rangeText()) !== w0) {
+    fail("縦にスクロールしただけで週が変わってしまう（横流れをスワイプと誤判定）");
+  }
+  // 素直な横スワイプなら送れること（誤判定を潰したせいで効かなくなっていないか）
+  await swipe(300, 400, 100, 420);
+  await page.waitForTimeout(600);
+  const w1 = await rangeText();
+  if (w1 === w0) fail("横スワイプで週が送れない");
+  if (Math.round((Date.parse(startOf(w1)) - Date.parse(startOf(w0))) / 86400000) !== 7) {
+    fail(`横スワイプの送り幅が1週間でない（${w0} → ${w1}）`);
+  }
+  step("カレンダー: スワイプ判定OK（縦スクロールでは動かず、横スワイプでは1週間送る）");
+}
+
 // ＋ を押したら追加シートが開き、画面の上に出ること
 await page.goto("http://localhost:8791/#/calendar");
 await page.waitForTimeout(900);
@@ -2632,17 +2725,31 @@ else {
     const before = JSON.stringify(tpl?.template ?? tpl);
     if (api.proposals.length > 0 && api.proposals[0].candidates.length > 0) {
       const p = api.proposals[0];
-      await page.evaluate(
-        async ([sessionId, category]) => {
-          await fetch("/api/coverage", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ sessionId, category }),
-          });
-        },
-        [p.candidates[0].sessionId, p.category]
-      );
-      await page.waitForTimeout(600);
+      /*
+       * ここは fetch を直接呼ぶだけの検査だった。
+       * そのため「ボタンを押しても画面が何も言わない」不具合を素通りさせていた
+       * （入れ替えがルール違反で止まると、灰色の一文がカード末尾＝画面2つぶん下に
+       * 出るだけだった）。実際にボタンを押し、結果が押した候補の内側に出ることを見る。
+       */
+      const candidateKey = `${p.candidates[0].sessionId}:${p.category}`;
+      const cand = covCard.locator(`[data-candidate="${candidateKey}"]`).first();
+      if ((await cand.count()) === 0) fail("Q-2: 入れ替え候補の行が画面に出ていない");
+      const swapBtn = cand.getByRole("button", { name: /に替える$/ }).first();
+      if ((await swapBtn.count()) === 0) fail("Q-2: 「〜に替える」ボタンが無い");
+      await swapBtn.click();
+      await page.waitForTimeout(900);
+      // 候補の内側だけを読む。カード全体を読むと、末尾に出る旧実装でも通ってしまう
+      const candText = (await cand.textContent()) ?? "";
+      if (!/入れ替えました|ルールに反します|入れ替えできませんでした|RULE-/.test(candText)) {
+        fail("Q-2: 「に替える」を押しても、押した場所に結果が出ない（反応が無いように見える）");
+      }
+      // 止まったなら、なぜ止まったかと、押し切る手段が同じ場所にあること
+      if (!/入れ替えました/.test(candText)) {
+        if (!/RULE-/.test(candText)) fail("Q-2: 止まった理由（ルール名）が出ていない");
+        if ((await cand.getByRole("button", { name: "承知のうえで替える" }).count()) === 0) {
+          fail("Q-2: ルールで止まったのに、本人が押し切る手段が出ていない");
+        }
+      }
       const tplAfter = await page.evaluate(async () =>
         fetch("/api/plan-settings").then((r) => r.json())
       );

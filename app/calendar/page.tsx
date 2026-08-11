@@ -45,6 +45,20 @@ function weekStart(dateStr: string): string {
 function monthStart(dateStr: string): string {
   return dateStr.slice(0, 8) + "01";
 }
+/**
+ * 月を足し引きして、その月の1日を返す。
+ *
+ * 以前は `addDays(monthStart(a), dir * 30)` で代用していたが、31日ある月では
+ * 1日 + 30日 = 同じ月の31日 になり、その monthStart がまた同じ月の1日に戻る。
+ * 結果、8月・10月・12月などでは「→」を押しても永久に進まなかった。
+ * 日数ではなく月そのものを動かす。
+ */
+function addMonths(dateStr: string, months: number): string {
+  const year = Number(dateStr.slice(0, 4));
+  const month = Number(dateStr.slice(5, 7)) - 1 + months;
+  const d = new Date(Date.UTC(year, month, 1));
+  return d.toISOString().slice(0, 10);
+}
 const DOW = ["月", "火", "水", "木", "金", "土", "日"];
 function dowOf(s: string) {
   const i = new Date(s + "T00:00:00Z").getUTCDay();
@@ -140,6 +154,11 @@ export default function CalendarPage() {
    * 既定を2週間から1週間に変えたのは、1週間ぶんが1画面に収まって
    * 「今週なにをやるか」が最初に目に入るため。長い範囲は見たいときに選ぶ。
    *
+   * 保存キーに `.v2` を付けているのは、既定を1週間に変える前に端末へ
+   * 保存された値（2週間・4週間）がそのまま残り、既定を変えても端末側は
+   * 4週間で開き続けていたため。キーを変えることで一度だけ既定に戻す。
+   * 変えたあとの選択はこれまで通り覚える。
+   *
    * 読み込みはマウント後の useEffect でやる。useState の初期値で
    * localStorage を読むと、Next.js側（サーバーで一度描く）と食い違って
    * hydration エラーになる。
@@ -166,7 +185,7 @@ export default function CalendarPage() {
   // 覚えてある表示期間を復元する（マウント時の1回だけ）
   useEffect(() => {
     setMode(loadViewPref("calendar.mode", CALENDAR_MODES, "week"));
-    setWeeks(loadViewPref("calendar.weeks", CALENDAR_WEEKS, 1));
+    setWeeks(loadViewPref("calendar.weeks.v2", CALENDAR_WEEKS, 1));
   }, []);
 
   const changeMode = (next: "week" | "month") => {
@@ -175,7 +194,7 @@ export default function CalendarPage() {
   };
   const changeWeeks = (next: number) => {
     setWeeks(next);
-    saveViewPref("calendar.weeks", next);
+    saveViewPref("calendar.weeks.v2", next);
   };
 
   const load = useCallback(async () => {
@@ -280,14 +299,38 @@ export default function CalendarPage() {
     return "planned";
   };
 
-  // C-3: 横スワイプでの週送り
-  const touchX = useRef<number | null>(null);
-  const onTouchStart = (e: any) => (touchX.current = e.touches[0].clientX);
+  /**
+   * C-3: 横スワイプでの週送り。
+   *
+   * 以前は指の横移動だけを見て 60px 超えたら週を送っていた。
+   * この画面は日付が縦に何十行も並ぶので実際の操作はほぼ縦スクロールで、
+   * 指が弧を描いて横に60px流れることが普通に起きる。
+   * 結果「スクロールしただけなのに週が飛ぶ」状態になっていた。
+   *
+   * 横送りと判定するのは、次を全部満たしたときだけにする。
+   *   - 指が1本（ピンチ・二本指スクロールを除く）
+   *   - 横に60px以上（誤差では届かない距離）
+   *   - 横が縦の1.5倍以上（縦スクロールのついでの横流れを弾く）
+   *   - 600ms以内（ゆっくり指を這わせる動きはスワイプではない）
+   */
+  const touchStart = useRef<{ x: number; y: number; t: number } | null>(null);
+  const onTouchStart = (e: any) => {
+    if (e.touches.length !== 1) {
+      touchStart.current = null;
+      return;
+    }
+    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+  };
   const onTouchEnd = (e: any) => {
-    if (touchX.current === null) return;
-    const dx = e.changedTouches[0].clientX - touchX.current;
-    touchX.current = null;
+    const start = touchStart.current;
+    touchStart.current = null;
+    if (!start) return;
+    if (e.changedTouches.length !== 1) return;
+    const dx = e.changedTouches[0].clientX - start.x;
+    const dy = e.changedTouches[0].clientY - start.y;
     if (Math.abs(dx) < 60) return;
+    if (Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    if (Date.now() - start.t > 600) return;
     shift(dx > 0 ? -1 : 1);
   };
   /**
@@ -300,7 +343,7 @@ export default function CalendarPage() {
   };
 
   const shift = (dir: number) =>
-    setAnchor((a) => (mode === "week" ? addDays(a, dir * 7) : addDays(monthStart(a), dir * 30)));
+    setAnchor((a) => (mode === "week" ? addDays(a, dir * 7) : addMonths(a, dir)));
 
   return (
     <div className="calendar-screen flex flex-col gap-3">
