@@ -16,6 +16,7 @@ import {
   processSkip,
   restoreSkippedSession,
   regeneratePlan,
+  refreshNearHorizon,
   importAppleHealth,
   previousEntryFor,
   addPastEntry,
@@ -84,6 +85,7 @@ import { acwr, dailyLoads, highLactate28dAvgPerWeek } from "../src/lib/core/load
 import { restingHrTrend } from "../src/lib/core/signal";
 import { buildTimeline } from "../src/lib/core/timeline";
 import { addDays, localToday, weekStart } from "../src/lib/core/dates";
+import { CONFIRM_HORIZON_DAYS } from "../src/lib/core/horizon";
 import {
   assessHeatBlock,
   HEAT_BLOCK_CONTENT,
@@ -115,6 +117,14 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
 
   "/api/plan": {
     POST: (repo, body) => regeneratePlan(repo, body?.startDate ?? localToday()),
+  },
+
+  // 確定範囲（今日〜14日）だけを今のCFEで作り直す。app/api/plan/refresh と対
+  "/api/plan/refresh": {
+    POST: (repo, body) => ({
+      changes: refreshNearHorizon(repo, body?.today ?? localToday()),
+      horizonDays: CONFIRM_HORIZON_DAYS,
+    }),
   },
 
   "/api/sessions": {

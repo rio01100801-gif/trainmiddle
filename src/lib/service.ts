@@ -19,6 +19,7 @@ import type {
 } from "./core/types";
 import type { Store } from "./db/store";
 import { addDays, diffDays, fmtTime, weekStart } from "./core/dates";
+import { CONFIRM_HORIZON_DAYS } from "./core/horizon";
 import {
   applyStaleness,
   guardedBaseTime,
@@ -620,14 +621,6 @@ function regeneratePlanCore(repo: Store, startDate: string): {
    * カテゴリごとの傾向（M-2と同じ判定）を内容の組み立てに使う。
    */
   const recentTrend = recentTrendByCategory(repo, startDate);
-  const acwrNow = acwr(
-    dailyLoads({
-      sessions: repo.listSessions(),
-      resultsBySessionId: new Map(trustedResults(repo).map((r) => [r.sessionId, r])),
-      strengthSessions: repo.listStrengths(),
-    }),
-    startDate
-  );
 
   const plan = generatePlan({
     athlete,
@@ -643,15 +636,7 @@ function regeneratePlanCore(repo: Store, startDate: string): {
     athleteType:
       athlete.athleteTypeOverride ?? diagnose(athlete, goal.targetTimeSec).athleteType,
     templateHistory,
-    // ACWRは補助指標。増加側で、かつ疲労・未達の実測がある場合だけ漸進を止める。
-    loadHigh:
-      acwrNow.acwr !== undefined &&
-      acwrNow.acwr > 1.3 &&
-      hasRecentLoadConcern(repo, startDate),
-    // ACWRの裏付けが無くても、疲労の実測（signal・翌日の脚の重さ・未達）だけで
-    // 筋損傷リスクの高い形式を避ける（selectTemplate参照）。loadHighはこれを
-    // 必要条件として含むため、loadHighが真ならこちらも必ず真になる。
-    recentFatigueSignal: hasRecentLoadConcern(repo, startDate),
+    ...loadSensitivity(repo, startDate),
   });
 
   // 3-2: 使われた自作メニューの使用実績を更新する
@@ -751,53 +736,132 @@ function regeneratePlanCore(repo: Store, startDate: string): {
   };
 }
 
+/**
+ * 負荷まわりの生成入力。生成と確定範囲の作り直しで必ず同じ値を使う。
+ * 片方だけ条件が違うと、同じ日付なのに作り直すたびに内容が変わる。
+ */
+function loadSensitivity(
+  repo: Store,
+  startDate: string
+): { loadHigh: boolean; recentFatigueSignal: boolean } {
+  const acwrNow = acwr(
+    dailyLoads({
+      sessions: repo.listSessions(),
+      resultsBySessionId: new Map(trustedResults(repo).map((r) => [r.sessionId, r])),
+      strengthSessions: repo.listStrengths(),
+    }),
+    startDate
+  );
+  const concern = hasRecentLoadConcern(repo, startDate);
+  return {
+    // ACWRは補助指標。増加側で、かつ疲労・未達の実測がある場合だけ漸進を止める。
+    loadHigh: acwrNow.acwr !== undefined && acwrNow.acwr > 1.3 && concern,
+    // ACWRの裏付けが無くても、疲労の実測（signal・翌日の脚の重さ・未達）だけで
+    // 筋損傷リスクの高い形式を避ける（selectTemplate参照）。loadHighはこれを
+    // 必要条件として含むため、loadHighが真ならこちらも必ず真になる。
+    recentFatigueSignal: concern,
+  };
+}
+
 // ---------------------------------------------------------------------------
-// ② 全未実施セッションのペース再計算
+// ② 確定範囲の作り直し
 // ---------------------------------------------------------------------------
 
-export function repaceFutureSessions(
-  repo: Store,
-  fromDate: string
-): SessionChange[] {
+/**
+ * 確定範囲（今日〜14日）の予定を、今のCFEで作り直す。
+ *
+ * **以前は `repaceFutureSessions` が `targetPaces` だけを書き換えていた。**
+ * 処方の文面（`400m × 3 @400m 52.5〜53.6秒 r6分`）には設定ペースが埋まっているので、
+ * 数字だけ更新すると文面と設定が食い違う。実際、CFEが2.5秒動いたときに
+ * 34枠すべてで「画面には52.5秒、実際の設定は51.6秒」という状態になっていた。
+ * 1秒近い差を、本人が気づけない形で持っていたことになる。
+ *
+ * 直し方として文面側の数字を置換することも考えたが、採らなかった。
+ * 処方の文面は `progression.ts` / `periodization.ts` が組み立てており、
+ * 表示のためにもう1か所で解釈すると「同じ文字列が場所によって違う意味になる」。
+ * **生成と同じ経路で作り直す**ことにして、文面と設定が構造的にズレないようにした。
+ *
+ * 作り直すのは確定範囲だけ。その先は素案として設定ペースを出さない（`horizon.ts`）ので、
+ * 古い数字を持っていても表示されず、確定範囲に入る前にここで作り直される。
+ *
+ * 触らないもの（`regeneratePlan` と同じ判断。片方を直したらもう片方も確認する）:
+ *   - 実施済み・中止済み
+ *   - 本人が編集したもの（M-2の適応提案を適用したものを含む。userEditedが立つ）
+ *   - 固定枠（コーチ指定）
+ *   - 自動生成でないもの
+ */
+export function refreshNearHorizon(repo: Store, fromDate: string): SessionChange[] {
+  const athlete = repo.getAthlete();
   const goal = repo.getGoal();
   const cfe = repo.getCfe();
-  if (!goal || !cfe) return [];
-  const changes: SessionChange[] = [];
-  const sessions = repo
-    .listSessions()
-    .filter((s) => s.status === "planned" && s.date >= fromDate && !s.isFixed);
+  if (!athlete || !goal || !cfe) return [];
+  const races = repo.listRaces();
+  if (!races.some((r) => r.id === goal.targetRaceId)) return [];
 
-  for (const s of sessions) {
-    if (!(s.category in GRP_RATIOS)) continue; // 有酸素系はCFEから逆算しない（4-5-2）
-    const targetRace = repo.listRaces().find((race) => race.id === goal.targetRaceId);
-    const weeksRemaining = targetRace
-      ? Math.max(diffDays(s.date, targetRace.dateStart) / 7, 0)
-      : 0;
-    const grpBase = guardedBaseTime(
+  const until = addDays(fromDate, CONFIRM_HORIZON_DAYS);
+  const plan = generatePlan({
+    athlete,
+    goal,
+    races,
+    cfeSec: cfe.estimated800mSec,
+    aerobicProfile: buildAerobicProfile(
+      aerobicEvidenceMarkers(repo),
+      fromDate,
       cfe.estimated800mSec,
-      goal.targetTimeSec,
-      s.phase,
-      weeksRemaining
-    ).timeSec;
-    const newPaces = s.targetPaces.map((tp) =>
-      specificPace(grpBase, s.category, tp.distanceM)
-    );
-    if (newPaces.length === 0) continue;
-    const before = s.targetPaces[0];
-    const after = newPaces[0];
-    if (Math.abs(before.targetSecFast - after.targetSecFast) < 0.05) continue;
-    const direction = after.targetSecFast < before.targetSecFast ? "up" : "down";
+      heatFlaggedDates(repo)
+    ),
+    startDate: fromDate,
+    weekTemplate: repo.getWeekTemplate(),
+    customMenus: repo.listCustomMenus(),
+    limiterWeights: categoryWeights(assessLimiter(athlete, goal.targetTimeSec).limiter),
+    recentTrend: recentTrendByCategory(repo, fromDate),
+    athleteType:
+      athlete.athleteTypeOverride ?? diagnose(athlete, goal.targetTimeSec).athleteType,
+    templateHistory: completedTemplateHistory(repo),
+    ...loadSensitivity(repo, fromDate),
+  });
+
+  const changes: SessionChange[] = [];
+  for (const next of plan.sessions) {
+    if (next.date < fromDate || next.date > until) continue;
+    const current = repo.getSession(next.id);
+    if (!current) continue; // 新しく増やすのは再生成の仕事。ここでは差し替えだけ
+    if (current.status === "completed" || current.status === "skipped") continue;
+    if (current.userEdited || current.isFixed) continue;
+    if (current.origin !== undefined && current.origin !== "generated") continue;
+
+    const paceOf = (s: Session) =>
+      s.targetPaces[0]
+        ? `${s.targetPaces[0].targetSecFast.toFixed(1)}〜${s.targetPaces[0].targetSecSlow.toFixed(1)}秒/${s.targetPaces[0].distanceM}m`
+        : "設定ペースなし";
+    const sameText = current.prescription === next.prescription;
+    const samePace = paceOf(current) === paceOf(next);
+    if (sameText && samePace) continue;
+
+    // 対象6: 作り直した結果がありえない設定なら、その枠は元のまま残す
+    if (hasBlockingIssue(checkSessionPlausibility(next))) continue;
+
+    const before = current.targetPaces[0]?.targetSecFast;
+    const after = next.targetPaces[0]?.targetSecFast;
     changes.push({
-      sessionId: s.id,
-      field: "targetPaces",
-      before: `${before.targetSecFast.toFixed(1)}〜${before.targetSecSlow.toFixed(1)}秒/${before.distanceM}m`,
-      after: `${after.targetSecFast.toFixed(1)}〜${after.targetSecSlow.toFixed(1)}秒/${after.distanceM}m`,
-      reason: `CFE更新(${fmtTime(cfe.estimated800mSec)})に伴う基準タイム再計算`,
+      sessionId: current.id,
+      field: "prescription",
+      before: `${current.prescription}（${paceOf(current)}）`,
+      after: `${next.prescription}（${paceOf(next)}）`,
+      reason: `CFE更新(${fmtTime(cfe.estimated800mSec)})に伴い、確定範囲（${CONFIRM_HORIZON_DAYS}日）の予定を作り直し`,
       triggeredBy: "CFE",
-      direction,
+      direction:
+        before === undefined || after === undefined
+          ? "neutral"
+          : after < before
+            ? "up"
+            : after > before
+              ? "down"
+              : "neutral",
       action: "modify",
     });
-    repo.saveSession({ ...s, targetPaces: newPaces });
+    // status / userEdited は current のものを保つ（作り直しは本人の編集ではない）
+    repo.saveSession({ ...next, status: current.status, userEdited: current.userEdited });
   }
   return changes;
 }
@@ -950,7 +1014,7 @@ function processResultCore(
   repo.saveCfe(cfe);
 
   // ② ペース再計算
-  const repaceChanges = repaceFutureSessions(repo, result.date);
+  const repaceChanges = refreshNearHorizon(repo, result.date);
 
   // ③ 波及（下げ方向のみ強く）
   const upcoming = repo.listSessions().filter((s) => s.status === "planned");
@@ -1283,7 +1347,7 @@ export function processRaceResult(
   }
 
   // ペース再計算 + ルール再検証
-  const changes = repaceFutureSessions(repo, date);
+  const changes = refreshNearHorizon(repo, date);
   for (const c of changes) repo.logChange(c);
   const violations = runRuleEngine(buildRuleContext(repo, date));
 
@@ -2292,7 +2356,7 @@ export function applyAssessedCfe(
   });
 
   // CFEが変わればすべての設定ペースが変わる
-  const changes = repaceFutureSessions(repo, today);
+  const changes = refreshNearHorizon(repo, today);
   return { before, after, changes };
 }
 

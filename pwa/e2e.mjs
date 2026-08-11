@@ -3344,6 +3344,99 @@ if ((await fitRebuildCard.count()) === 0) {
   step("取り込み済みFITの作り直しOK（何件直したかを出す）");
 }
 
+/*
+ * 確定範囲（horizon）。
+ *
+ * 見張るのは2つ。
+ *   1. 確定範囲の外に設定ペースを出していないこと
+ *      （2か月先の数字は生成時のCFEで焼いた推測なので、決定事項として出さない）
+ *   2. 処方の文面に書かれた秒数と、実際の設定ペースが食い違わないこと
+ *      （以前は targetPaces だけ更新して文面を放置し、
+ *        画面52.5秒 / 実際51.6秒 という状態を34枠ぶん作っていた）
+ */
+{
+  const horizon = await page.evaluate(async () => {
+    const today = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const todayStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+    const d = await fetch("/api/sessions").then((r) => r.json());
+    const refreshed = await fetch("/api/plan/refresh", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ today: todayStr }),
+    }).then((r) => r.json());
+    return { todayStr, sessions: d.sessions ?? [], refreshed };
+  });
+
+  if (horizon.refreshed?.horizonDays !== 14) {
+    fail(`確定範囲のAPIが対になっていない（/api/plan/refresh の応答: ${JSON.stringify(horizon.refreshed).slice(0, 120)}）`);
+  }
+
+  const dayDiff = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
+  const far = horizon.sessions.filter(
+    (s) => dayDiff(horizon.todayStr, s.date) > 14 && (s.targetPaces ?? []).length > 0
+  );
+  if (far.length === 0) {
+    fail("確定範囲より先のセッションが1件も無い（骨組みが短くなっていないか確認）");
+  } else {
+    /*
+     * 素案が画面に設定ペースを出していないことを、セッション詳細で確かめる。
+     * カレンダーで見るのは当てにならない——既定が1週間表示なので、
+     * 14日より先の枠はそもそも描画されず、何を書いても検査が通ってしまう。
+     * 詳細画面なら日付に関係なくその枠だけを開ける。
+     */
+    const target = far.sort((a, b) => a.date.localeCompare(b.date))[0];
+    const secInText = (target.prescription.match(/(\d+\.\d)〜/) ?? [])[1];
+    if (!secInText) {
+      fail(`素案の確認に使える処方が無い（${target.prescription.slice(0, 60)}）`);
+    } else {
+      await page.goto(`http://localhost:8791/#/session?id=${encodeURIComponent(target.id)}`);
+      await page.waitForTimeout(900);
+      const body = await page.textContent("body");
+      if (!body.includes(target.name)) {
+        fail(`素案の詳細画面が開けていない（${target.id} / ${target.date}）`);
+      }
+      if (body.includes(secInText)) {
+        fail(
+          `確定範囲の外（${target.date}）の設定ペース ${secInText}秒 が画面に出ている（素案として隠すはず）`
+        );
+      }
+      if (!body.includes("素案")) fail("素案であることが画面に出ていない");
+      if (!/CFE/.test(body)) fail("いつ設定が決まるのかが画面に出ていない");
+      // 素案のまま走り出せてしまわないこと
+      if ((await page.getByRole("link", { name: /このメニューで開始/ }).count()) > 0) {
+        fail("設定ペースが決まっていない素案から、そのまま開始できてしまう");
+      }
+    }
+    step(`確定範囲OK（${far.length}件が素案・設定ペースを出していない）`);
+  }
+
+  // 文面と設定ペースの整合（確定範囲の中）
+  const desync = await page.evaluate(async () => {
+    const today = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const todayStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+    const d = await fetch("/api/sessions").then((r) => r.json());
+    const out = [];
+    for (const s of d.sessions ?? []) {
+      const days = Math.round((Date.parse(s.date) - Date.parse(todayStr)) / 86400000);
+      if (days < 0 || days > 14) continue;
+      if (!(s.targetPaces ?? []).length) continue;
+      const m = s.prescription.match(/@(?:\d+m\s)?(\d+\.\d)〜/);
+      if (!m) continue;
+      if (Math.abs(Number(m[1]) - s.targetPaces[0].targetSecFast) > 0.06) {
+        out.push({ date: s.date, text: m[1], real: s.targetPaces[0].targetSecFast });
+      }
+    }
+    return out;
+  });
+  if (desync.length > 0) {
+    fail(`処方の文面と設定ペースが食い違っている ${desync.length}件（例: ${JSON.stringify(desync[0])}）`);
+  } else {
+    step("確定範囲の文面と設定ペースの整合OK");
+  }
+}
+
 if (errors.length) {
   console.log("JS ERRORS:", errors.slice(0, 5));
   process.exitCode = 1;

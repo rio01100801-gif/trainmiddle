@@ -15,6 +15,7 @@ import { localToday } from "@/lib/core/dates";
 import type { CoverageReview } from "@/lib/core/coverage";
 import type { Race, Session, SessionResult } from "@/lib/core/types";
 import { actualDiffersFromPlan, describeActualResult } from "@/lib/core/actualVsPlan";
+import { sessionView } from "@/lib/core/horizon";
 import { intensityMark, type IntensityMark } from "@/lib/core/trainingClassification";
 
 /**
@@ -787,6 +788,8 @@ function DayRow({
                   const result = resultBySessionId.get(s.id);
                   const diverged = actualDiffersFromPlan(s, result);
                   const actualText = diverged ? describeActualResult(result) : undefined;
+                  // 確定範囲の外は設定ペースを出さない（素案。horizon.ts が唯一の判断）
+                  const view = sessionView(s, today);
                   return (
                     <span
                       key={s.id}
@@ -820,6 +823,11 @@ function DayRow({
                           固定
                         </span>
                       ) : null}
+                      {view.badge ? (
+                        <span className="text-[10px] ml-1" style={{ color: "var(--text-3)" }}>
+                          {view.badge}
+                        </span>
+                      ) : null}
                       {diverged && actualText ? (
                         <span
                           className="block text-[10.5px] truncate"
@@ -827,12 +835,12 @@ function DayRow({
                         >
                           実際: {actualText}
                         </span>
-                      ) : s.prescription ? (
+                      ) : view.prescription ? (
                         <span
                           className="block text-[10.5px] truncate"
                           style={{ color: "var(--text-3)" }}
                         >
-                          {s.prescription}
+                          {view.prescription}
                         </span>
                       ) : null}
                     </span>

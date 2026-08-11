@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Card, Gauge, fmtSec } from "../components/ui";
 import { useQueryParam, withQuery } from "../components/route-query";
 import { localToday } from "@/lib/core/dates";
+import { sessionView } from "@/lib/core/horizon";
 
 /**
  * セッション詳細（メニューの根拠）
@@ -46,6 +47,8 @@ export default function SessionPage() {
   }
 
   const r = session.rationale;
+  // 確定範囲の外は素案として出す（判断は horizon.ts に集める）
+  const view = sessionView(session, localToday());
 
   return (
     <div className="session-screen flex flex-col gap-3">
@@ -71,7 +74,14 @@ export default function SessionPage() {
           >
             {session.name}
           </h2>
-          {session.generation?.repeatedForComparison ? null : (
+          {view.badge ? (
+            <span
+              className="text-[10px] font-bold px-2 py-0.5 rounded"
+              style={{ border: "1px solid var(--border)", color: "var(--text-3)" }}
+            >
+              {view.badge}
+            </span>
+          ) : session.generation?.repeatedForComparison ? null : (
             <span
               className="text-[10px] font-bold px-2 py-0.5 rounded"
               style={{ border: "1px solid var(--volt-line)", color: "var(--forge)" }}
@@ -97,8 +107,13 @@ export default function SessionPage() {
           <p className="forge-label" style={{ color: "var(--forge)" }}>
             MAIN SET
           </p>
-          <p className="text-[13px] leading-relaxed mt-1.5">{session.prescription}</p>
-          {session.targetPaces?.length > 0 ? (
+          <p className="text-[13px] leading-relaxed mt-1.5">{view.prescription}</p>
+          {/*
+            確定範囲の外では設定ペースを出さない。
+            この画面は「このメニューで開始」まで繋がっているので、
+            まだ決まっていない数字を出すと、それで走れることになってしまう。
+          */}
+          {view.confirmed && session.targetPaces?.length > 0 ? (
             <div className="mt-1.5">
               {session.targetPaces.map((p: any, i: number) => (
                 <div key={i} className="text-[12.5px] num" style={{ color: "var(--text-2)" }}>
@@ -125,7 +140,7 @@ export default function SessionPage() {
         ) : null}
 
         <div className="flex gap-2 flex-col sm:flex-row">
-          {session.targetPaces?.length > 0 ? (
+          {view.confirmed && session.targetPaces?.length > 0 ? (
             <Link
               href={withQuery("/run", { sessionId: session.id })}
               className="btn-ghost justify-center flex-1"
