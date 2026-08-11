@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { ForgeLogo } from "./brand/forge-logo";
 
 type Item = { href: string; label: string; icon: JSX.Element; mobile?: boolean };
 
@@ -197,22 +198,15 @@ export function Logo({ compact = false }: { compact?: boolean }) {
       <ForgeMark size={compact ? 16 : 20} />
       <div className="flex flex-col">
         {/*
-          アイコンのワードマークが斜体なので、画面側も同じ傾きにする（R-3）。
-          font-style: italic ではなく skew を使うのは、
-          等幅の数字と同じ幾何的な傾きにしたいため（フォント任せだと形が変わる）。
+          ワードマークは画像（マスク）を使う。以前は skewX をかけた太字テキストで、
+          旧アイコンの斜体に寄せていた。新しいロゴは斜めに切れ込みが入った専用の
+          字形なので、傾けたテキストでは似せられない。
+          ForgeLogo は色を currentColor に従わせるので、ヘッダーの文字色のまま出る。
+
+          幅で指定するのは ForgeLogo が縦横比から高さを出すため。
+          46px → 高さ約17px で、置き換え前の19px太字とほぼ同じ大きさに見える。
         */}
-        <b
-          className="font-black leading-none tracking-tight"
-          style={{
-            fontSize: compact ? 15 : 19,
-            letterSpacing: "0.02em",
-            transform: "skewX(-8deg)",
-            transformOrigin: "left center",
-            display: "inline-block",
-          }}
-        >
-          FORGE
-        </b>
+        <ForgeLogo width={compact ? 36 : 46} />
         {compact ? null : (
           <span
             className="font-semibold mt-1"

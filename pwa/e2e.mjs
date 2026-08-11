@@ -2963,6 +2963,53 @@ if (!markBox) fail("R-3: ヘッダーのマークが描画されていない");
 else if (markBox.width < 20 || markBox.height < 10) {
   fail(`R-3: ヘッダーのマークが小さすぎる（${Math.round(markBox.width)}×${Math.round(markBox.height)}）`);
 }
+/*
+ * ヘッダーのワードマーク。
+ *
+ * 以前は skewX をかけた太字テキストだったので、崩れても文字は出ていた。
+ * 画像（CSSマスク）に変えたことで、`brand-wordmark.png` が配信物から漏れると
+ * **何も出ない空の箱になる**。エラーも出ないので画面を見ないと気づけない。
+ * 要素の大きさと、マスク画像が実際に取れることの両方を見る。
+ */
+const wmBox = await page.locator("header .forge-wordmark").first().boundingBox();
+if (!wmBox) fail("R-3: ヘッダーのワードマークが描画されていない");
+else if (wmBox.width < 24 || wmBox.height < 8) {
+  fail(`R-3: ヘッダーのワードマークが潰れている（${Math.round(wmBox.width)}×${Math.round(wmBox.height)}）`);
+}
+if (wmBox) {
+  /*
+   * 実際に字が出ているかを画素で見る。
+   * 要素の大きさだけを見る検査では足りない——マスクのURLが解決できないとき、
+   * 箱は正しい大きさのまま中身だけが空になる。エラーも出ない。
+   * ワードマークの範囲を切り出して、背景より明るい画素の割合を数える。
+   */
+  const clip = await page.screenshot({
+    clip: { x: wmBox.x, y: wmBox.y, width: wmBox.width, height: wmBox.height },
+  });
+  const inkRatio = await page.evaluate(async (b64) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const c = document.createElement("canvas");
+    c.width = img.width;
+    c.height = img.height;
+    const ctx = c.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    const p = ctx.getImageData(0, 0, c.width, c.height).data;
+    let ink = 0;
+    for (let i = 0; i < p.length; i += 4) {
+      if (0.2126 * p[i] + 0.7152 * p[i + 1] + 0.0722 * p[i + 2] > 90) ink++;
+    }
+    return ink / (p.length / 4);
+  }, clip.toString("base64"));
+  // 実測で約0.33。字が出ていなければ0に近い値になる
+  if (inkRatio < 0.1) {
+    fail(`R-3: ヘッダーのワードマークが空欄（明るい画素 ${(inkRatio * 100).toFixed(1)}%・マスクが解決できていない）`);
+  }
+}
+if (!(await page.evaluate(async () => (await fetch("./brand-wordmark.png")).ok))) {
+  fail("R-3: brand-wordmark.png が配信物に無い（ワードマークが空欄になる）");
+}
 // アイコンが配信物に入っていること
 for (const f of ["icon-32.png", "icon-180.png", "icon-192.png", "icon-512.png", "icon-maskable-512.png"]) {
   const ok = await page.evaluate(
@@ -2981,7 +3028,10 @@ if (!manifestIcons.some((src) => src.includes("icon-32.png"))) {
 if (!manifestIcons.some((src) => src.includes("icon-maskable-512.png"))) {
   fail("R-3: manifestにmaskable iconが無い");
 }
-step(`R-3 マークOK（ヘッダー ${Math.round(markBox?.width ?? 0)}×${Math.round(markBox?.height ?? 0)} / アイコン5種）`);
+step(
+  `R-3 マークOK（マーク ${Math.round(markBox?.width ?? 0)}×${Math.round(markBox?.height ?? 0)} / ` +
+    `ワードマーク ${Math.round(wmBox?.width ?? 0)}×${Math.round(wmBox?.height ?? 0)} / アイコン5種）`
+);
 await shot("34_mark_header");
 
 // ---- 16e. S-11: 同期は未設定でも成立すること ----

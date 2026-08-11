@@ -22,8 +22,10 @@ export function ForgeLogo({
   /** 読み上げ用。装飾として置く場合は空文字にする */
   title?: string;
 }) {
-  // 原本の縦横比（切り出し 1120 x 205）
-  const height = Math.round(width * (205 / 1120));
+  // 原本の縦横比（切り出し 1012 x 366）。
+  // 字形を差し替えたときはここも直す——旧ロゴは 1120 x 205 で、
+  // 比が 5.46 から 2.77 に変わっている。放置すると縦に潰れる。
+  const height = Math.round(width * (366 / 1012));
   return (
     <span
       className={`forge-wordmark${className ? ` ${className}` : ""}`}

@@ -86,7 +86,12 @@
     clip-path: inset(50%);
   }
   #splash .wm {
-    display: block; width: min(74vw, 430px); aspect-ratio: 1120 / 205;
+    /*
+     * 幅を 430px から 360px に下げたのは、字形の差し替えで縦横比が
+     * 5.46 (1120x205) から 2.77 (1012x366) に変わったため。
+     * 幅を据え置くと高さが約2倍になり、スプラッシュの中で浮く。
+     */
+    display: block; width: min(62vw, 360px); aspect-ratio: 1012 / 366;
     background: #fff;
     -webkit-mask: url("./brand-wordmark.png") no-repeat center / contain;
     mask: url("./brand-wordmark.png") no-repeat center / contain;
