@@ -11,9 +11,9 @@
 <meta name="apple-mobile-web-app-title" content="FORGE">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' https:; worker-src 'self' blob:; manifest-src 'self'">
 <link rel="manifest" href="./manifest.webmanifest">
-<link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png?v=forge-v60">
-<link rel="icon" type="image/png" sizes="32x32" href="./icon-32.png?v=forge-v60">
-<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png?v=forge-v60">
+<link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png?v=forge-v61">
+<link rel="icon" type="image/png" sizes="32x32" href="./icon-32.png?v=forge-v61">
+<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png?v=forge-v61">
 <link rel="stylesheet" href="./styles.css">
 <style>
   :root { --forge: #b6ff00; --muted: #6b7280; --muted-2: #9ca3af; }
@@ -86,7 +86,12 @@
     clip-path: inset(50%);
   }
   #splash .wm {
-    display: block; width: min(74vw, 430px); aspect-ratio: 1120 / 205;
+    /*
+     * 幅を 430px から 360px に下げたのは、字形の差し替えで縦横比が
+     * 5.46 (1120x205) から 2.77 (1012x366) に変わったため。
+     * 幅を据え置くと高さが約2倍になり、スプラッシュの中で浮く。
+     */
+    display: block; width: min(62vw, 360px); aspect-ratio: 1012 / 366;
     background: #fff;
     -webkit-mask: url("./brand-wordmark.png") no-repeat center / contain;
     mask: url("./brand-wordmark.png") no-repeat center / contain;
