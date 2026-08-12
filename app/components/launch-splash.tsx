@@ -122,7 +122,7 @@ export function LaunchSplash() {
   useEffect(() => {
     if (!visible || !dataReady) return;
     // pwa/index.html の minimumMs と同じ値にする（起動の体感を環境で変えない）
-    const minimum = reduced ? 650 : 1_200;
+    const minimum = reduced ? 900 : 2_000;
     const elapsed = Date.now() - mountedAt.current;
     const timer = window.setTimeout(() => setVisible(false), Math.max(0, minimum - elapsed));
     return () => window.clearTimeout(timer);
