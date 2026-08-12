@@ -27,6 +27,7 @@ import {
   type CustomMenu,
   type Dow,
   type WeekTemplate,
+  amSlotOf,
   isPointSlot,
   modeOf,
   pickCustomMenu,
@@ -869,7 +870,66 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
        * 別々に扱えるようにする。自作メニュー（custom）を使った日は対象外
        * （本人が登録した内容をそのまま尊重する）。
        */
-      if (!custom && tpl.combinedJogMin) {
+      /*
+       * 2部練習の午前枠。
+       *
+       * 午後（主練習）を作ったあとに足す。午前は**指定された曜日だけ**で、
+       * 自動では増やさない（`WeekTemplate.amSlots` のコメント参照）。
+       *
+       * 午後が休養の日には置かない。休養日に半日走らせると回復日が消える。
+       * 主練習が既に午前に置かれている日（tpl.timeOfDay==="am"）も置かない
+       * ——同じ時間帯に2本入って id が衝突する。
+       */
+      const amSlot = amSlotOf(input.weekTemplate, dow);
+      const amPlaced =
+        amSlot !== undefined &&
+        amSlot !== "off" &&
+        tpl.category !== "off" &&
+        timeOfDay !== "am";
+      if (amPlaced) {
+        const amTpl = templateForSlot(
+          amSlot!,
+          jog(40),
+          phase,
+          economyWeek,
+          0,
+          weekIndex % 2,
+          false
+        );
+        const amBuilt: ReturnType<DayTemplate["buildPrescription"]> & {
+          name?: string;
+          generation?: Session["generation"];
+        } = buildFromProgression(amTpl, date) ?? amTpl.buildPrescription(grpBase, aerobicProfile);
+        sessions.push({
+          id: generatedSessionId(date, "am"),
+          date,
+          category: amTpl.category,
+          name: amBuilt.name ?? amTpl.name,
+          prescription: amBuilt.prescription,
+          targetPaces: amBuilt.targetPaces,
+          transfer800m: amTpl.transfer800m,
+          transfer1500m: amTpl.transfer1500m,
+          riskLevel: amTpl.risk,
+          phase,
+          rationale: rationaleFor(amTpl.category),
+          status: "planned",
+          origin: "generated",
+          isFixed: false,
+          timeOfDay: "am",
+          distanceKm: amBuilt.distanceKm,
+          durationMin: amBuilt.durationMin,
+          paceSecPerKm: amBuilt.paceSecPerKm,
+          aerobicPurpose: amTpl.aerobicPurpose,
+          surface: "road",
+          generation: amBuilt.generation,
+        });
+      }
+
+      /*
+       * 午前枠を置いた日は、複合メニューのジョグ分割をしない。
+       * 分割先は同じ「午前」なので、置くと id が衝突して片方が消える。
+       */
+      if (!custom && tpl.combinedJogMin && !amPlaced) {
         const jogTpl = jog(tpl.combinedJogMin);
         const jogBuilt = jogTpl.buildPrescription(grpBase, aerobicProfile);
         const jogTimeOfDay: Session["timeOfDay"] = timeOfDay === "am" ? "pm" : "am";

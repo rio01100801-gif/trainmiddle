@@ -198,6 +198,108 @@ const tplText = await page.textContent("body");
 if (!tplText.includes("連日")) fail("連日ポイントのERROR警告が出ない（3-1検証）");
 step("テンプレート検証OK（連日ポイントでERROR）");
 await page.getByRole("button", { name: "水曜 指定なし", exact: true }).click();
+
+/*
+ * ---- 3b-2. 2部練習 ----
+ *
+ * 午前枠を指定した曜日だけが2本になること。
+ * 危ない組み合わせ（午前・午後とも高負荷）は**生成前**に言うこと。
+ * 生成してからルールエンジンに拾わせると、なぜそう置いたのかが分からなくなる。
+ */
+{
+  const amSelect = (label) => page.getByLabel(`${label}曜の午前（2部練習）`);
+  if ((await amSelect("火").count()) === 0) fail("2部練習: 午前枠の選択が無い");
+  else {
+    // 午前・午後とも高負荷 → その場でERROR
+    await amSelect("火").selectOption("point");
+    await page.waitForTimeout(400);
+    if (!(await page.textContent("body")).includes("午前・午後とも高負荷")) {
+      fail("2部練習: 午前・午後とも高負荷のERRORが生成前に出ない");
+    }
+    // 普通の2部（午前ジョグ）に直すと警告が消える
+    await amSelect("火").selectOption("aerobic");
+    await page.waitForTimeout(400);
+    if ((await page.textContent("body")).includes("午前・午後とも高負荷")) {
+      fail("2部練習: 午前をジョグに変えても警告が残る");
+    }
+    await page.getByRole("button", { name: "設定を保存" }).click();
+    await page.waitForTimeout(200);
+    await page.getByRole("button", { name: "実行する" }).click();
+    await page.waitForTimeout(600);
+    /*
+     * 曜日設定を保存しただけでは予定は変わらない（画面にもそう出ている）。
+     * 再生成まで走らせないと2部の枠は現れないので、ここで明示的に生成する。
+     */
+    await page.evaluate(async () =>
+      fetch("/api/plan", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      }).then((r) => r.json())
+    );
+    await page.waitForTimeout(900);
+
+    /*
+     * 指定した曜日は**すべて**2本になっていること。
+     *
+     * 「増えたか」だけでは足りない。坂ダッシュ＋ジョグの分割がたまたま火曜に
+     * 当たると1日ぶん2本になるので、午前枠の生成を止めても 0→1 で通ってしまう
+     * （実際にそれで2回空振りした）。カテゴリを見るのも同じ理由で効かない
+     * ——分割で入るジョグも aerobic なので区別できない。
+     * 「午後がある火曜には必ず午前がある」なら、取りこぼしを見逃さない。
+     */
+    const tue = await page.evaluate(async () => {
+      const d = await fetch("/api/sessions").then((r) => r.json());
+      const byDate = {};
+      for (const s of d.sessions ?? []) {
+        if (new Date(s.date + "T00:00:00Z").getUTCDay() !== 2) continue;
+        if (s.category === "off") continue;
+        (byDate[s.date] ??= []).push({ t: s.timeOfDay, cat: s.category });
+      }
+      const days = Object.entries(byDate).map(([date, list]) => ({
+        date,
+        hasPm: list.some((x) => x.t === "pm"),
+        am: list.filter((x) => x.t === "am").map((x) => x.cat),
+      }));
+      return {
+        total: days.filter((x) => x.hasPm).length,
+        withAm: days.filter((x) => x.hasPm && x.am.length > 0).length,
+        amCats: [...new Set(days.flatMap((x) => x.am))],
+      };
+    });
+    if (tue.total === 0) fail("2部練習: 検査対象の火曜が1日も無い");
+    else if (tue.withAm !== tue.total) {
+      fail(
+        `2部練習: 午前を指定した火曜のうち ${tue.withAm}/${tue.total} 日しか2本になっていない`
+      );
+    }
+    if (!tue.amCats.every((c) => c === "aerobic")) {
+      fail(`2部練習: 火曜の午前が指定どおりでない（${JSON.stringify(tue.amCats)}）`);
+    }
+    step(
+      `2部練習OK（火曜 ${tue.withAm}/${tue.total} 日が2本・午前はジョグ・生成前にERRORも出る）`
+    );
+
+    // 元に戻す（以降の検査に影響させない）
+    await page.goto("http://localhost:8791/#/plan-settings");
+    await page.waitForTimeout(600);
+    await amSelect("火").selectOption("auto");
+    await page.getByRole("button", { name: "設定を保存" }).click();
+    await page.waitForTimeout(200);
+    await page.getByRole("button", { name: "実行する" }).click();
+    await page.waitForTimeout(600);
+    await page.evaluate(async () =>
+      fetch("/api/plan", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      }).then((r) => r.json())
+    );
+    await page.waitForTimeout(900);
+  }
+}
+await page.goto("http://localhost:8791/#/plan-settings");
+await page.waitForTimeout(600);
 await page.waitForTimeout(200);
 await page.getByRole("button", { name: "設定を保存" }).click();
 await page.waitForTimeout(200);

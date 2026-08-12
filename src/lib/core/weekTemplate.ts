@@ -49,13 +49,27 @@ export const SLOT_LABELS: Record<string, string> = {
 };
 
 export interface WeekTemplate {
-  /** 曜日ごとの枠。未設定の曜日は "auto" 扱い */
+  /**
+   * 曜日ごとの枠（**午後＝主練習**）。未設定の曜日は "auto" 扱い。
+   *
+   * 2部練習に対応したときも、この名前のまま午後の意味にした。
+   * `pmSlots` に改名すると保存済みのデータが全部読めなくなるため。
+   */
   slots: Partial<Record<Dow, WeekdaySlot>>;
   /**
    * 曜日指定の強さ。
    * 旧データには存在しないため、枠があり mode が無い場合は fixed として読む。
    */
   modes?: Partial<Record<Dow, WeekdayPreferenceMode>>;
+  /**
+   * 2部練習の**午前**枠。
+   *
+   * 未設定なら午前は置かない。`slots` と違って "auto"（自動生成に任せる）が
+   * 無いのは、**黙って練習を増やさない**ため。
+   * 午前を自動で埋めると、本人が頼んでいない量が勝手に乗る。
+   * 800mで効くのは量ではないので、増やすなら本人が明示する。
+   */
+  amSlots?: Partial<Record<Dow, WeekdaySlot>>;
   /** ロングランを置く曜日（aerobic のうち長い方）。未設定なら自動 */
   longRunDow?: Dow;
   enabled: boolean;
@@ -77,9 +91,27 @@ export function modeOf(t: WeekTemplate | undefined, dow: Dow): WeekdayPreference
   return t?.modes?.[dow] ?? "fixed";
 }
 
+/**
+ * 2部練習の午前枠。未設定・"auto" はどちらも「午前は置かない」。
+ *
+ * 午後（`slotOf`）と違って "auto" を自動生成の合図にしない理由は
+ * `WeekTemplate.amSlots` のコメントを参照。
+ */
+export function amSlotOf(t: WeekTemplate | undefined, dow: Dow): WeekdaySlot | undefined {
+  if (!t || !t.enabled) return undefined;
+  const slot = t.amSlots?.[dow];
+  return slot && slot !== "auto" ? slot : undefined;
+}
+
+/** 2部練習の日か（午前枠が入っていて、午後が休養でない） */
+export function isDoubleDay(t: WeekTemplate | undefined, dow: Dow): boolean {
+  return amSlotOf(t, dow) !== undefined && slotOf(t, dow) !== "off";
+}
+
 export function normalizeWeekTemplate(t: WeekTemplate): WeekTemplate {
   const slots: WeekTemplate["slots"] = {};
   const modes: NonNullable<WeekTemplate["modes"]> = {};
+  const amSlots: NonNullable<WeekTemplate["amSlots"]> = {};
   for (const dow of [0, 1, 2, 3, 4, 5, 6] as Dow[]) {
     const slot = t.slots?.[dow] ?? "auto";
     const mode = modeOf(t, dow);
@@ -87,10 +119,14 @@ export function normalizeWeekTemplate(t: WeekTemplate): WeekTemplate {
       slots[dow] = slot;
       modes[dow] = mode;
     }
+    const am = t.amSlots?.[dow];
+    // 午前は「指定されたものだけ」を残す。"auto" は指定なしと同じ
+    if (am && am !== "auto") amSlots[dow] = am;
   }
   return {
     slots,
     modes,
+    amSlots,
     longRunDow: t.longRunDow,
     enabled: t.enabled,
   };
@@ -114,6 +150,43 @@ export function isPointSlot(slot: WeekdaySlot): boolean {
 export function validateWeekTemplate(t: WeekTemplate): RuleViolation[] {
   const out: RuleViolation[] = [];
   if (!t.enabled) return out;
+
+  /*
+   * 2部練習の検証。
+   *
+   * 生成してからルールエンジンに拾わせるのでは遅い。設定した時点で言う
+   * （このファイルの方針: 固定曜日は枠であって免罪符ではない）。
+   *
+   * いちばん危ないのは同じ日に高負荷を2本置く形。RULE-03 が生成後に
+   * ERRORにするが、そのときには「なぜそう置いたのか」がもう分からない。
+   */
+  for (const dow of [0, 1, 2, 3, 4, 5, 6] as Dow[]) {
+    const am = amSlotOf(t, dow);
+    if (!am) continue;
+    const pm = slotOf(t, dow);
+    if (isPointSlot(am) && isPointSlot(pm)) {
+      out.push({
+        rule: "RULE-03",
+        level: "ERROR",
+        message: `${DOW_LABELS[dow]}曜は午前・午後とも高負荷（${SLOT_LABELS[am] ?? am}／${SLOT_LABELS[pm] ?? pm}）です。同じ日に高負荷を2本置くと回復が間に合いません。`,
+        dates: [],
+        sessionIds: [],
+        suggestion:
+          "2部にするなら片方はジョグ・補強・神経系にしてください。質は1日1本に集約するほうが転移します。",
+      });
+    }
+    if (pm === "off") {
+      out.push({
+        rule: "RULE-04",
+        level: "WARN",
+        message: `${DOW_LABELS[dow]}曜は午後が休養なのに午前枠（${SLOT_LABELS[am] ?? am}）が入っています。`,
+        dates: [],
+        sessionIds: [],
+        suggestion:
+          "休養日にするなら午前枠も外してください。半日だけ走るなら午後側を「自動」か「ジョグ」にしてください。",
+      });
+    }
+  }
 
   const pointDows = ([0, 1, 2, 3, 4, 5, 6] as Dow[]).filter(
     (d) => modeOf(t, d) === "fixed" && isPointSlot(slotOf(t, d))

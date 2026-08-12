@@ -788,6 +788,35 @@ function Today({ d, today, onChanged }: { d: any; today: string; onChanged: () =
             ) : null}
             <ActionButton action={action} />
           </div>
+
+          {/*
+            2部練習の日のもう1本。
+            判断ゲート（このカードの主役）は今までどおり1本のままにして、
+            残りは名前と時間帯だけ添える。両方を同じ大きさで出すと
+            「今日どっちをやるか」の判断が2つに割れる。
+          */}
+          {(d.todayOtherSessions ?? []).length > 0 ? (
+            <div className="mt-3 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
+              <p className="metric-label mb-1.5">同じ日のもう1本</p>
+              {(d.todayOtherSessions ?? []).map((o: any) => (
+                <Link
+                  key={o.id}
+                  href={withQuery("/session", { id: o.id })}
+                  className="flex items-center gap-2 py-1.5"
+                >
+                  <span
+                    className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                    style={{ background: "var(--surface-2)", color: "var(--text-2)" }}
+                  >
+                    {o.timeOfDay === "am" ? "午前" : "午後"}
+                  </span>
+                  <span className="text-[12.5px] truncate" style={{ color: "var(--text-2)" }}>
+                    {CATEGORY_LABEL[o.category] ?? o.category} / {o.name}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          ) : null}
         </>
       ) : (
         <>

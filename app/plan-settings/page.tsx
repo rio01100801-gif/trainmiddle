@@ -101,6 +101,15 @@ function WeekTemplateCard() {
       },
     }));
 
+  /** 2部練習の午前枠。"auto"（なし）は保存しない＝1部に戻す */
+  const setAmSlot = (dow: Dow, slot: WeekdaySlot) =>
+    setT((prev) => {
+      const amSlots = { ...(prev.amSlots ?? {}) };
+      if (slot === "auto") delete amSlots[dow];
+      else amSlots[dow] = slot;
+      return { ...prev, amSlots };
+    });
+
   return (
     <Card title="曜日の優先設定">
       <label className="flex items-center gap-2 text-[13px] mb-3 min-h-[44px]">
@@ -192,6 +201,34 @@ function WeekTemplateCard() {
                     />
                     長走
                   </label>
+                </div>
+                {/*
+                  2部練習の午前枠。
+                  既定は「なし」。午前を自動で埋めないのは、頼んでいない量が
+                  勝手に乗るのを避けるため（800mで効くのは量ではない）。
+                  上の枠は午後（主練習）を指す。
+                */}
+                <div className="flex items-center gap-2 mt-1">
+                  <span
+                    className="text-[10.5px] flex-shrink-0"
+                    style={{ color: "var(--text-3)" }}
+                  >
+                    午前
+                  </span>
+                  <select
+                    className="flex-1 min-h-[44px] !text-[12px]"
+                    aria-label={`${DOW_LABELS[dow]}曜の午前（2部練習）`}
+                    disabled={!t.enabled}
+                    value={t.amSlots?.[dow] ?? "auto"}
+                    onChange={(e) => setAmSlot(dow, e.target.value as WeekdaySlot)}
+                  >
+                    <option value="auto">なし（1部）</option>
+                    {SLOT_OPTIONS.filter((o) => o !== "auto" && o !== "off").map((o) => (
+                      <option key={o} value={o}>
+                        {SLOT_LABELS[o]}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
             </div>

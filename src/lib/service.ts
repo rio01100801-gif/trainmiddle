@@ -1722,6 +1722,21 @@ export function dashboard(repo: Store, today: string) {
     signalEscalated: signal.escalated,
     overallFatigue: latestCheck?.overallFatigue,
     todaySession: today_.session,
+    /*
+     * 2部練習の日にもう1本が画面から消えないようにする。
+     *
+     * `todaySession` は優先度のいちばん高い1本しか返さない。それだけを出していたので、
+     * 午前ジョグ＋午後ポイントの日は片方がホームに出てこず、カレンダーを開かないと
+     * 気づけなかった。主役（判断ゲート）は今までどおり1本のまま、
+     * 同じ日の残りをここに添える。
+     */
+    todayOtherSessions: repo
+      .listSessions(today, today)
+      .filter(
+        (s) =>
+          s.id !== today_.session?.id && s.category !== "off" && s.status !== "skipped"
+      )
+      .sort((a, b) => (a.timeOfDay ?? "pm").localeCompare(b.timeOfDay ?? "pm")),
     readiness: today_.readiness,
     aerobicProfile,
     ltRefreshHint: aerobicProfile.refreshHint,
