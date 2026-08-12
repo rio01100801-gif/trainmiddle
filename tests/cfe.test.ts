@@ -368,6 +368,37 @@ describe("4-5-2 基準タイム", () => {
   });
 });
 
+describe("処方の土台はPBより速くしない（CFEは触らない）", () => {
+  /*
+   * 現在地の測定は材料が1件だとその1件の換算がそのままCFEになる。
+   * 練習1本の換算がレースのPBを上回ることは普通に起きるが、
+   * PBは定義上「これまでで一番速く走れた記録」なので、
+   * それを超えるペースはまだ一度も出したことがない速さ。
+   * 実機で 1:54.2 → 1:48.3（PBより1.2秒速い）が出て発覚した。
+   */
+  it("推定がPBより速いときはPBで頭打ちにする", () => {
+    const r = guardedBaseTime(108.3, 108.9, "Base", 13, 109.51);
+    expect(r.timeSec).toBe(109.51);
+    expect(r.guarded).toBe(true);
+    expect(r.message).toContain("PB");
+  });
+
+  it("頭打ちにしたことを必ず理由で言う（黙って遅くしない）", () => {
+    const r = guardedBaseTime(108.3, 108.9, "Base", 13, 109.51);
+    expect(r.message).toContain("レースかTT");
+  });
+
+  it("推定がPBより遅いときは何もしない", () => {
+    const withPb = guardedBaseTime(112.0, 111.5, "Base", 20, 109.51);
+    const withoutPb = guardedBaseTime(112.0, 111.5, "Base", 20);
+    expect(withPb.timeSec).toBe(withoutPb.timeSec);
+  });
+
+  it("PBを渡さなければ従来どおり（既存の呼び出しを壊さない）", () => {
+    expect(guardedBaseTime(108.3, 108.9, "Base", 13).timeSec).toBe(108.3);
+  });
+});
+
 describe("goal pace safety guard", () => {
   it("operational thresholdを超える速い目標は処方へ混ぜない", () => {
     const result = guardedBaseTime(111.0, 108.0, "Specific", 8);

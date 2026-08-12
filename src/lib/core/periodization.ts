@@ -609,7 +609,9 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
       cfeSec,
       goal.targetTimeSec,
       phase,
-      Math.max(diffDays(midWeek, raceDate) / 7, 0)
+      Math.max(diffDays(midWeek, raceDate) / 7, 0),
+      // 処方の土台をPBより速くしない。CFE自体は推定として保持したまま
+      athlete.pb800mSec
     );
     const grpBase = paceBasis.timeSec;
     const template = applyWeekPreferences(

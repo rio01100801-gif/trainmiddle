@@ -12,7 +12,7 @@ import type {
   SessionCategory,
   SessionResult,
 } from "./types";
-import { diffDays } from "./dates";
+import { diffDays, fmtTime } from "./dates";
 import { impliedFromInterval } from "./backfill";
 import { GRP_RATIOS } from "./pace";
 
@@ -421,14 +421,43 @@ export function guardedBaseTime(
   cfeSec: number,
   targetSec: number,
   phase: Phase,
-  weeksRemaining: number
+  weeksRemaining: number,
+  /**
+   * 800mのPB。渡すと、処方の土台がPBより速くならないように頭打ちにする。
+   *
+   * **CFEは触らない。** ここで守るのは「今日出す設定」のほう
+   * （CFEは能力の推定、設定ペースは今日出せる値、という分離）。
+   *
+   * なぜ要るか: 現在地の測定は材料が1件だとその1件の換算結果がそのままCFEになる。
+   * 練習1本の換算がレースのPBを上回ることは普通に起きるが、
+   * **PBは定義上「これまでで一番速く走れた記録」**なので、それを超えるペースは
+   * まだ一度も出したことがない速さ。そこを土台に処方を組むと、
+   * 実行できない設定を出し続けることになる。
+   * 実機で 1:54.2 → 1:48.3（PBより1.2秒速い）が出て発覚した。
+   *
+   * 速い側へ寄せるのは目標タイムの寄与が担当する（下の blend）。
+   * そちらには非現実的な目標を弾く判定が別にあるので、二重に効かせない。
+   */
+  pb800Sec?: number
 ): { timeSec: number; guarded: boolean; message?: string } {
-  const feasibility = goalFeasibility(cfeSec, targetSec, weeksRemaining);
-  const guarded = targetSec < cfeSec && feasibility.warn;
+  const cappedCfe =
+    pb800Sec !== undefined && cfeSec < pb800Sec ? pb800Sec : cfeSec;
+  const cappedByPb = cappedCfe !== cfeSec;
+
+  const feasibility = goalFeasibility(cappedCfe, targetSec, weeksRemaining);
+  const guardedByGoal = targetSec < cappedCfe && feasibility.warn;
+  const messages = [
+    cappedByPb
+      ? `推定（${fmtTime(cfeSec)}）が800mPB（${fmtTime(pb800Sec!)}）より速いため、` +
+        `処方の土台はPBで頭打ちにしています。PBを超える設定は、レースかTTでその速さを出してから使います`
+      : undefined,
+    guardedByGoal ? feasibility.message : undefined,
+  ].filter(Boolean);
+
   return {
-    timeSec: guarded ? cfeSec : baseTime(cfeSec, targetSec, phase),
-    guarded,
-    message: guarded ? feasibility.message : undefined,
+    timeSec: guardedByGoal ? cappedCfe : baseTime(cappedCfe, targetSec, phase),
+    guarded: cappedByPb || guardedByGoal,
+    message: messages.length > 0 ? messages.join(" / ") : undefined,
   };
 }
 
