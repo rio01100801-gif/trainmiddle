@@ -14,6 +14,7 @@ import type {
 } from "./types";
 import { diffDays } from "./dates";
 import { impliedFromInterval } from "./backfill";
+import { GRP_RATIOS } from "./pace";
 
 /**
  * RPE 1ポイントあたりの補正（秒/800m）。
@@ -180,14 +181,55 @@ export function updateCfeFromResult(
     (session.targetPaces[0]
       ? result.actualLapsSec.map(() => session.targetPaces[0].distanceM)
       : undefined);
-  const repDistanceM = dists && dists.length > 0 ? dists[0] : undefined;
+
+  /*
+   * 距離の違う本が混ざっていたら、いちばん本数の多い距離だけを使う。
+   *
+   * 1000m×4＋200m×3 のような複合セットで全部を平均すると
+   * 190秒と30秒を混ぜることになり、換算が完全に壊れる。
+   * 一括入力（parseRow）が「代表として1000mぶんだけを能力推定に使います」と
+   * 言っているのと同じ規則を、ここでも適用する。
+   * 片方を直したらもう片方も確認すること。
+   */
+  let repDistanceM: number | undefined;
+  let repTimesSec = result.actualLapsSec;
+  if (dists && dists.length > 0) {
+    const counts = new Map<number, number>();
+    for (const d of dists) counts.set(d, (counts.get(d) ?? 0) + 1);
+    repDistanceM = [...counts.entries()].sort((a, b) => b[1] - a[1] || b[0] - a[0])[0][0];
+    if (counts.size > 1) {
+      repTimesSec = result.actualLapsSec.filter((_, i) => dists[i] === repDistanceM);
+      notes.push(
+        `距離の違う本が混ざっているため、${repDistanceM}m の${repTimesSec.length}本だけを能力推定に使いました`
+      );
+    }
+  }
+
+  if (!GRP_RATIOS[session.category]) {
+    /*
+     * 800m相当への換算比率を持たないカテゴリ（CV・閾値）。
+     *
+     * 旧実装ではRPEと未達幅だけでCFEを動かしていたが、
+     * 1000mのCV走から800m能力を出す根拠がそもそも無い。
+     * 推測で埋めずに「使わない」と言う。負荷やLT推定には従来どおり算入される。
+     */
+    return {
+      cfe,
+      applied: false,
+      deltaSec: 0,
+      guardrailNotes: [
+        `ガードレール: ${session.category} は800m相当への換算比率を持たないためCFEに使わない（負荷とLT推定には算入します）`,
+      ],
+    };
+  }
+
   const measured = impliedFromInterval({
     id: result.id,
     date: result.date,
     kind: "interval",
     category: session.category,
     repDistanceM,
-    repTimesSec: result.actualLapsSec,
+    repTimesSec,
     rpe: result.rpe,
     restType: result.interval?.restType,
     restSec: result.interval?.restSec,
@@ -201,7 +243,7 @@ export function updateCfeFromResult(
       guardrailNotes: [
         result.rpe !== undefined && result.rpe < 6
           ? "ガードレール: RPEが低い（全力に近くない）実測は能力の推定に使わない"
-          : "実測から800m相当を出せませんでした（距離・タイムが足りない）",
+          : "実測から800m相当を出せませんでした（1本の距離か実施タイムが足りない）",
       ],
     };
   }

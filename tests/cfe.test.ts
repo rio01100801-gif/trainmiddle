@@ -263,6 +263,55 @@ describe("4-5-1 CFE", () => {
     expect(cut.guardrailNotes.join()).toContain("SKIP-06");
   });
 
+  it("距離が混ざったら、本数の多い距離だけを能力推定に使う", () => {
+    const cfe = initCfe(109.51, "2026-04-01");
+    const s = makeSession("2026-04-02", "high_lactate", { targetPaces: [tp600] });
+    const t = repTimeFor(CFE0, "high_lactate", 600);
+    // 600mを4本と、200mを3本。全部を平均すると換算が壊れる
+    const laps = [t, t, t, t, 30, 30, 30];
+    const dists = [600, 600, 600, 600, 200, 200, 200];
+    const r = makeResult(s, {
+      rpe: 8,
+      actualLapsSec: laps,
+      lapDistancesM: dists,
+      interval: {
+        reps: 7,
+        distanceM: 600,
+        restType: "jog",
+        restSec: 240,
+        results: laps.map((x, i) => ({ index: i + 1, distanceM: dists[i], actualSec: x })),
+      },
+    } as any);
+    const u = updateCfeFromResult(cfe, s, r);
+    // 600mの4本だけを見るので、アンカー（CFEどおり）になる
+    expect(u.impliedSec).toBeCloseTo(CFE0, 2);
+    expect(u.guardrailNotes.join()).toContain("600m の4本だけ");
+  });
+
+  it("換算比率を持たないカテゴリ（CV・閾値）はCFEに使わず、理由を出す", () => {
+    const cfe = initCfe(109.51, "2026-04-01");
+    const s = makeSession("2026-04-02", "cv", {
+      targetPaces: [{ distanceM: 1000, targetSecFast: 194, targetSecSlow: 196 }],
+    });
+    const laps = [190, 192, 190];
+    const r = makeResult(s, {
+      rpe: 7,
+      actualLapsSec: laps,
+      lapDistancesM: laps.map(() => 1000),
+      interval: {
+        reps: 3,
+        distanceM: 1000,
+        restType: "jog",
+        restSec: 180,
+        results: laps.map((x, i) => ({ index: i + 1, distanceM: 1000, actualSec: x })),
+      },
+    } as any);
+    const u = updateCfeFromResult(cfe, s, r);
+    expect(u.applied).toBe(false);
+    expect(u.deltaSec).toBe(0);
+    expect(u.guardrailNotes.join()).toContain("換算比率を持たない");
+  });
+
   it("鈍化: 14日以上結果が無ければ +0.4秒/週", () => {
     const cfe = initCfe(109.51, "2026-01-01");
     const stale = applyStaleness(cfe, "2026-01-15"); // ちょうど14日
