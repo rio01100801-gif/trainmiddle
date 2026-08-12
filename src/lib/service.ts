@@ -2367,12 +2367,74 @@ export interface AssessFitnessOutput extends FitnessAssessment {
 /**
  * 登録済みの過去データ全件から現在地を1回だけ算出する（適用はしない）。
  */
+/**
+ * 記録タブで入れた結果を、現在地の測定が読める形（PastEntry）に直す。
+ *
+ * これが無かったときは `listPastEntries()` だけを見ていたため、
+ * **同じ高乳酸のセッションでも、過去データ画面から入れたか記録タブから入れたかで
+ * 現在地の測定に入るかどうかが変わっていた。**
+ * 実機では過去データが7/26までしか無く、それ以降は記録タブに入れていたので、
+ * 直近3週間ぶんが測定の材料から丸ごと落ちていた。
+ *
+ * 過去データ由来の結果（`past-s-*`）は除く。`addPastEntry` が
+ * PastEntry と SessionResult の両方を作るので、入れると同じ練習を二重に数える。
+ */
+function resultsAsPastEntries(repo: Store): PastEntry[] {
+  const sessions = new Map(repo.listSessions().map((s) => [s.id, s]));
+  const out: PastEntry[] = [];
+  for (const r of trustedResults(repo)) {
+    if (r.sessionId.startsWith("past-s-")) continue;
+    const session = sessions.get(r.sessionId);
+    if (!session) continue;
+    if (r.actualLapsSec.length === 0) continue;
+
+    /*
+     * 距離が混ざっている本は、いちばん本数の多い距離だけを使う。
+     * `updateCfeFromResult` と同じ規則（190秒と30秒を平均すると換算が壊れる）。
+     * 片方を直したらもう片方も確認すること。
+     */
+    const dists =
+      r.lapDistancesM ??
+      (session.targetPaces[0]
+        ? r.actualLapsSec.map(() => session.targetPaces[0].distanceM)
+        : undefined);
+    let repDistanceM: number | undefined;
+    let repTimesSec = r.actualLapsSec;
+    if (dists && dists.length > 0) {
+      const counts = new Map<number, number>();
+      for (const d of dists) counts.set(d, (counts.get(d) ?? 0) + 1);
+      repDistanceM = [...counts.entries()].sort((a, b) => b[1] - a[1] || b[0] - a[0])[0][0];
+      repTimesSec = r.actualLapsSec.filter((_, i) => dists[i] === repDistanceM);
+    }
+    if (!repDistanceM) continue;
+
+    out.push({
+      id: `res-${r.id}`,
+      date: r.date,
+      kind: "interval",
+      category: session.category,
+      repDistanceM,
+      repTimesSec,
+      reps: repTimesSec.length,
+      rpe: r.rpe,
+      restType: r.interval?.restType,
+      restSec: r.interval?.restSec,
+      // 暑熱下の実測を除外できるように環境も引き継ぐ（SessionResult側は weatherTempC）
+      tempC: r.weatherTempC,
+      humidityPct: r.humidityPct,
+    } as PastEntry);
+  }
+  return out;
+}
+
 export function assessFitness(repo: Store, today: string): AssessFitnessOutput {
   const athlete = repo.getAthlete();
   if (!athlete) throw new Error("選手プロフィールが未登録です");
   const entries = repo.listPastEntries();
+  // 記録タブに入れたものも同じ材料として扱う（入れた画面で結果が変わってはいけない）
+  const all = [...entries, ...resultsAsPastEntries(repo)];
   const cfe = repo.getCfe();
-  const assessment = assessCurrentFitness(entries, athlete, today, {
+  const assessment = assessCurrentFitness(all, athlete, today, {
     currentCfeSec: cfe?.estimated800mSec,
   });
 
@@ -2380,7 +2442,7 @@ export function assessFitness(repo: Store, today: string): AssessFitnessOutput {
     ...assessment,
     currentCfeSec: cfe?.estimated800mSec,
     pastStructureIssues: diagnosePastStructure(repo, today),
-    entryCount: entries.length,
+    entryCount: all.length,
   };
 }
 
