@@ -280,6 +280,83 @@ await page.getByRole("button", { name: "水曜 指定なし", exact: true }).cli
       `2部練習OK（火曜 ${tue.withAm}/${tue.total} 日が2本・午前はジョグ・生成前にERRORも出る）`
     );
 
+    /*
+     * 午前枠についての助言。
+     * 自動では変えないので、出るのは文章だけ。
+     * 「毎回出る」のでは気づきにならないので、噛み合っているときは出ないことも見る。
+     */
+    await page.goto("http://localhost:8791/#/plan-settings");
+    await page.waitForTimeout(700);
+
+    // この選手は400mが速く「維持が制限」と判定されるため、既定では助言は出ない
+    const quiet = await page.evaluate(async () =>
+      fetch("/api/plan-settings").then((r) => r.json())
+    );
+    if (!Array.isArray(quiet.amAdvice)) {
+      fail("午前枠の助言がAPIから返らない（シムに対で足していない可能性）");
+    }
+    if ((quiet.amAdvice ?? []).length > 0) {
+      fail("午前枠の助言が、噛み合っているのに出ている（毎回出ると気づきにならない）");
+    }
+
+    /*
+     * 出る側も見る。400mのPBを遅くして「スピードが制限」に振る。
+     * 出ないことだけ確認して終わると、機能が丸ごと壊れていても通ってしまう。
+     * 確認後に必ず元へ戻す（以降の検査は元のPB前提で書かれている）。
+     */
+    const original = await page.evaluate(async () => {
+      const d = await fetch("/api/athlete").then((r) => r.json());
+      return d.athlete;
+    });
+    await page.evaluate(async (a) => {
+      await fetch("/api/athlete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...a, pb400mSec: 53.5 }),
+      });
+    }, original);
+    /*
+     * 同じハッシュへの goto では画面が作り直されない（ハッシュルーティングなので
+     * 遷移が起きず、最初に読み込んだ助言のまま残る）。リロードして読み直させる。
+     */
+    // 保存がIndexedDBへ落ちる前にリロードすると書き込みごと消える
+    await page.waitForTimeout(800);
+    await page.reload();
+    await page.waitForFunction(() => !document.getElementById("splash"), { timeout: 20000 });
+    await page.waitForTimeout(800);
+    const savedPb = await page.evaluate(async () => {
+      const d = await fetch("/api/athlete").then((r) => r.json());
+      return d.athlete?.pb400mSec;
+    });
+    if (savedPb !== 53.5) {
+      fail(`午前枠の助言の検査: PBの変更が保存されていない（${savedPb}）。助言の有無を判定できない`);
+    }
+    const loud = await page.evaluate(async () =>
+      fetch("/api/plan-settings").then((r) => r.json())
+    );
+    if ((loud.amAdvice ?? []).length === 0) {
+      fail("午前枠の助言: スピードが制限でも何も出ない");
+    } else {
+      const a = loud.amAdvice[0];
+      if (!a.basis) fail("午前枠の助言に根拠が無い");
+      if (!/可能性/.test(a.message)) fail("午前枠の助言が断定になっている");
+      const shown = await page.textContent("body");
+      if (!shown.includes("午前枠についての気づき")) {
+        fail("午前枠の助言がAPIには出ているのに画面に出ていない");
+      }
+      if (!shown.includes("流し")) fail("午前枠の助言の中身が画面に出ていない");
+      step("午前枠の助言OK（噛み合っていれば黙り、外れていれば根拠つきで出る）");
+    }
+    // 元のPBへ戻す
+    await page.evaluate(async (a) => {
+      await fetch("/api/athlete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(a),
+      });
+    }, original);
+    await page.waitForTimeout(400);
+
     // 元に戻す（以降の検査に影響させない）
     await page.goto("http://localhost:8791/#/plan-settings");
     await page.waitForTimeout(600);

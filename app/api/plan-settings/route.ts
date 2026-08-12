@@ -5,6 +5,7 @@ import {
   validateWeekTemplate,
   type CustomMenu,
 } from "@/lib/core/weekTemplate";
+import { amSlotAdvice } from "@/lib/core/amSlotAdvice";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,8 @@ export async function GET() {
     weekTemplate: weekTemplate ?? null,
     customMenus: repo.listCustomMenus(),
     templateViolations: weekTemplate ? validateWeekTemplate(weekTemplate) : [],
+    // 2部の午前枠についての助言。自動では変えない（本人が決める）
+    amAdvice: amSlotAdvice(repo.getAthlete(), weekTemplate, repo.getGoal()?.targetTimeSec),
   });
 }
 

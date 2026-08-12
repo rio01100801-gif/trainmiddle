@@ -87,6 +87,7 @@ import { restingHrTrend } from "../src/lib/core/signal";
 import { buildTimeline } from "../src/lib/core/timeline";
 import { addDays, localToday, weekStart } from "../src/lib/core/dates";
 import { CONFIRM_HORIZON_DAYS } from "../src/lib/core/horizon";
+import { amSlotAdvice } from "../src/lib/core/amSlotAdvice";
 import {
   assessHeatBlock,
   HEAT_BLOCK_CONTENT,
@@ -371,6 +372,12 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
         weekTemplate: weekTemplate ?? null,
         customMenus: repo.listCustomMenus(),
         templateViolations: weekTemplate ? validateWeekTemplate(weekTemplate) : [],
+        // 2部の午前枠についての助言。自動では変えない（本人が決める）
+        amAdvice: amSlotAdvice(
+          repo.getAthlete(),
+          weekTemplate,
+          repo.getGoal()?.targetTimeSec
+        ),
       };
     },
     POST: (repo, body) => {

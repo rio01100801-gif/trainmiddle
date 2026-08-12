@@ -57,10 +57,15 @@ function WeekTemplateCard() {
   const [t, setT] = useState<WeekTemplate>(emptyWeekTemplate());
   const [msg, setMsg] = useState("");
 
+  const [advice, setAdvice] = useState<{ message: string; basis: string }[]>([]);
+
   useEffect(() => {
     fetch("/api/plan-settings")
       .then((r) => r.json())
-      .then((d) => d.weekTemplate && setT(normalizeWeekTemplate(d.weekTemplate)));
+      .then((d) => {
+        if (d.weekTemplate) setT(normalizeWeekTemplate(d.weekTemplate));
+        setAdvice(d.amAdvice ?? []);
+      });
   }, []);
 
   const violations = validateWeekTemplate(t);
@@ -239,6 +244,35 @@ function WeekTemplateCard() {
       {t.enabled && violations.length > 0 ? (
         <div className="mt-3">
           <ViolationList violations={violations} />
+        </div>
+      ) : null}
+
+      {/*
+        2部の午前枠についての助言。
+        **自動では変えない。** 制限因子は既に午後（主練習）で効いているので、
+        午前にも当てると同じ判定を二重に数えることになる。
+        噛み合っていないときだけ出して、決めるのは本人に残す。
+        読み込み時点の保存済み設定に対して出るので、画面で変えた直後には追従しない
+        ——保存して開き直したときの状態を見せるほうが、助言としては正しい。
+      */}
+      {advice.length > 0 ? (
+        <div className="mt-3">
+          {advice.map((a, i) => (
+            <div
+              key={i}
+              className="rounded-lg p-2.5 mb-1.5"
+              style={{ background: "var(--surface-2)" }}
+            >
+              <p className="metric-label mb-1">午前枠についての気づき</p>
+              <p className="text-[12px] leading-relaxed">{a.message}</p>
+              <p
+                className="text-[11px] leading-relaxed mt-1"
+                style={{ color: "var(--text-3)" }}
+              >
+                根拠: {a.basis}
+              </p>
+            </div>
+          ))}
         </div>
       ) : null}
 
