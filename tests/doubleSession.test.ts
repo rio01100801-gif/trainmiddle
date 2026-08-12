@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 import { memRepo } from "./sqlite-helper";
 import { dashboard, regeneratePlan } from "@/lib/service";
+import { applyStaleness } from "@/lib/core/cfe";
 import { makeRace, testAthlete } from "./helpers";
 import {
   amSlotOf,
@@ -184,5 +185,73 @@ describe("ホーム", () => {
   it("1部の日は余計なものを出さない", () => {
     const repo = setup({ slots: { 2: "point" }, modes: { 2: "fixed" } });
     expect(dashboard(repo, "2026-08-19").todayOtherSessions).toHaveLength(0);
+  });
+});
+
+describe("午前の量が状況に合わせて動く", () => {
+  /** 指定日の午前セッション */
+  const amOf = (repo: ReturnType<typeof memRepo>, date: string) =>
+    repo.listSessions(date, date).find((s) => s.timeOfDay === "am");
+
+  it("午後が高負荷の日は午前を短くする（脚を残す）", () => {
+    const repo = setup({
+      slots: { 2: "high_lactate", 3: "aerobic" },
+      modes: { 2: "fixed", 3: "fixed" },
+      amSlots: { 2: "aerobic", 3: "aerobic" },
+    });
+    const hardDay = amOf(repo, "2026-08-18"); // 火＝午後 高乳酸
+    const easyDay = amOf(repo, "2026-08-19"); // 水＝午後 ジョグ
+    expect(hardDay).toBeDefined();
+    expect(easyDay).toBeDefined();
+    expect(hardDay!.durationMin!).toBeLessThan(easyDay!.durationMin!);
+  });
+
+  it("量で伸ばす種目ではないので、上には振れない", () => {
+    const repo = setup({
+      slots: { 3: "aerobic" },
+      modes: { 3: "fixed" },
+      amSlots: { 3: "aerobic" },
+    });
+    expect(amOf(repo, "2026-08-19")!.durationMin!).toBeLessThanOrEqual(40);
+  });
+});
+
+describe("CFEの鈍化は「練習の記録が無い」ときだけ", () => {
+  it("CFEを更新できないカテゴリでも、記録があれば鈍化しない", () => {
+    const cfe = {
+      estimated800mSec: 111.0,
+      confidence: 0.6,
+      lastUpdated: "2026-06-01",
+      history: [],
+    };
+    // CFEは2か月動いていないが、3日前に練習の記録がある
+    const kept = applyStaleness(cfe, "2026-08-03", "2026-07-31");
+    expect(kept.estimated800mSec).toBe(111.0);
+  });
+
+  it("本当に記録が無ければ従来どおり鈍化する", () => {
+    const cfe = {
+      estimated800mSec: 111.0,
+      confidence: 0.6,
+      lastUpdated: "2026-06-01",
+      history: [],
+    };
+    const stale = applyStaleness(cfe, "2026-08-03");
+    expect(stale.estimated800mSec).toBeGreaterThan(111.0);
+    expect(stale.history.at(-1)!.source).toContain("練習の記録が無い");
+  });
+
+  it("記録が古ければ、その記録の日から数える", () => {
+    const cfe = {
+      estimated800mSec: 111.0,
+      confidence: 0.6,
+      lastUpdated: "2026-06-01",
+      history: [],
+    };
+    const fromResult = applyStaleness(cfe, "2026-08-03", "2026-07-01");
+    const fromCfe = applyStaleness(cfe, "2026-08-03");
+    // 記録のほうが新しいぶん、鈍化は小さくなる
+    expect(fromResult.estimated800mSec).toBeLessThan(fromCfe.estimated800mSec);
+    expect(fromResult.estimated800mSec).toBeGreaterThan(111.0);
   });
 });

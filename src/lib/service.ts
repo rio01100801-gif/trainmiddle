@@ -564,7 +564,7 @@ function regeneratePlanCore(repo: Store, startDate: string): {
   const goal = repo.getGoal();
   if (!athlete || !goal) throw new Error("プロフィールと目標を先に登録してください");
   setupCfeIfNeeded(repo, startDate);
-  const cfe = applyStaleness(repo.getCfe()!, startDate);
+  const cfe = applyStaleness(repo.getCfe()!, startDate, lastRecordedDate(repo));
   repo.saveCfe(cfe);
 
   const races = repo.listRaces().map((r) => assignExpectedPaces(r, goal.targetTimeSec));
@@ -999,7 +999,7 @@ function processResultCore(
       : 0;
 
   // ① CFE更新
-  let cfe = applyStaleness(repo.getCfe()!, result.date);
+  let cfe = applyStaleness(repo.getCfe()!, result.date, lastRecordedDate(repo));
   // 修正の保存なら、前回この練習で動かしたぶんを取り消してから入れ直す
   if (existing) cfe = revertCfeForSession(cfe, result.sessionId);
   const before = cfe.estimated800mSec;
@@ -1360,7 +1360,7 @@ export function processRaceResult(
   }
 
   // ① CFEを大きく更新（最速ラウンド・信頼度1.0・±3秒ガード）
-  let cfe = applyStaleness(repo.getCfe()!, date);
+  let cfe = applyStaleness(repo.getCfe()!, date, lastRecordedDate(repo));
   const before = cfe.estimated800mSec;
   let delta = roundsDiag.fastestTimeSec - cfe.estimated800mSec;
   if (Math.abs(delta) > 3.0) delta = Math.sign(delta) * 3.0;
@@ -1987,6 +1987,24 @@ function linkedSessionIdOf(record: FitImportRecord): string | null {
  * 元FITと一緒に保持する。過去にCFEへ入ってしまった寄与だけはsessionIdを使って
  * 取り消し、本人確認時のprocessResultで正しい値を入れ直す。
  */
+/**
+ * カテゴリを問わない最後の記録日。CFEの鈍化（`applyStaleness`）の基準に使う。
+ *
+ * CVや閾値はCFEを更新できない（800m相当への換算比率が無い）ので、
+ * 「CFEが動いた日」を基準にすると、記録を入れているのに鈍化だけが進む。
+ * 練習しているかどうかは、CFEが動いたかではなく記録があるかで見る。
+ */
+function lastRecordedDate(repo: Store): string | undefined {
+  let latest: string | undefined;
+  for (const r of trustedResults(repo)) {
+    if (!latest || r.date > latest) latest = r.date;
+  }
+  for (const s of repo.listStrengths()) {
+    if (!latest || s.date > latest) latest = s.date;
+  }
+  return latest;
+}
+
 export function trustedResults(repo: Store): SessionResult[] {
   const pending = repo.listFitImports().filter((record) => !isFitResultConfirmed(record));
   if (pending.length === 0) return repo.listResults();

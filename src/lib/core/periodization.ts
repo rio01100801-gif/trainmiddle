@@ -887,15 +887,33 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
         tpl.category !== "off" &&
         timeOfDay !== "am";
       if (amPlaced) {
-        const amTpl = templateForSlot(
-          amSlot!,
-          jog(40),
-          phase,
-          economyWeek,
-          0,
-          weekIndex % 2,
-          false
-        );
+        /*
+         * 午前の量を、その日の午後と本人の状態に合わせる。
+         *
+         * 固定の「40分ジョグ」を毎回出していたが、午後が高乳酸の日も
+         * 回復ジョグの日も同じ40分では、2部にする意味が薄いうえ危ない。
+         * 午前は**午後を殺さないための補助**なので、
+         *   ・午後が高負荷の日は短く（脚を残す）
+         *   ・疲労の実測があるときはさらに短く
+         *   ・テーパー期は短く（総量を落とす局面で午前を積まない）
+         * 上げる方向には動かさない。量で伸ばす種目ではないため。
+         */
+        const amBaseMin =
+          phase === "Taper" || phase === "Modeling"
+            ? 25
+            : isHighLoadCategory(tpl.category)
+              ? 30
+              : 40;
+        const amMin = input.recentFatigueSignal ? Math.round(amBaseMin * 0.7) : amBaseMin;
+        /*
+         * ジョグは templateForSlot を通さない。
+         * あちらは "aerobic" に対して jog(40) を固定で返すので、
+         * ここで決めた長さが捨てられてしまう。
+         */
+        const amTpl =
+          amSlot === "aerobic"
+            ? jog(amMin, "ジョグ（午前）")
+            : templateForSlot(amSlot!, jog(amMin), phase, economyWeek, 0, weekIndex % 2, false);
         const amBuilt: ReturnType<DayTemplate["buildPrescription"]> & {
           name?: string;
           generation?: Session["generation"];

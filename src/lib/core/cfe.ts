@@ -331,13 +331,27 @@ export function updateCfeFromResult(
 }
 
 /**
- * ガードレール: 14日以上セッション結果が無い場合、+0.4秒/週で自動的に鈍らせる
+ * ガードレール: 14日以上セッション結果が無い場合、+0.4秒/週で自動的に鈍らせる。
+ *
+ * `lastResultDate` は**カテゴリを問わない**最後の記録の日付。
+ *
+ * これが無かったときは `cfe.lastUpdated`（＝CFEが動いた日）だけを見ていた。
+ * ところがCVと閾値は800m相当への換算比率を持たないためCFEを更新しない。
+ * つまり **CV走を2か月続けると、記録は入っているのに「結果が無い」扱いになり、
+ * 鈍化だけが進む**。実際にそれで CFE が PB より4.7秒遅い 1:54.2 まで落ちていた
+ * （初期値 1:51.0 に63日ぶんの鈍化が乗った値と一致する）。
+ *
+ * 鈍化の目的は「練習していない期間の楽観的なCFEを放置しない」ことであって、
+ * 練習しているのに罰することではない。記録があるなら鈍らせない。
  */
 export function applyStaleness(
   cfe: CurrentFitnessEstimate,
-  today: string
+  today: string,
+  lastResultDate?: string
 ): CurrentFitnessEstimate {
-  const days = diffDays(cfe.lastUpdated, today);
+  const reference =
+    lastResultDate && lastResultDate > cfe.lastUpdated ? lastResultDate : cfe.lastUpdated;
+  const days = diffDays(reference, today);
   if (days < 14) return cfe;
   const weeks = (days - 14) / 7 + 1;
   const penalty = 0.4 * weeks;
@@ -346,7 +360,7 @@ export function applyStaleness(
     cfe,
     after,
     today,
-    `${days}日間結果が無いため +0.4秒/週 で鈍化（+${penalty.toFixed(1)}秒）`,
+    `${days}日間、練習の記録が無いため +0.4秒/週 で鈍化（+${penalty.toFixed(1)}秒）`,
     Math.max(0.2, cfe.confidence - 0.2)
   );
 }
