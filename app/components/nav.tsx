@@ -171,12 +171,14 @@ export const SCREEN_TITLES: Record<string, string> = {
  * 緑はタブと数値の側に集約する（黒白グレー90%・アクセント10%の配分）。
  *
  * 幅で指定するのは ForgeLogo が縦横比から高さを出すため。
- * 46px → 高さ約17px。
+ * ロゴがほぼ正方形（比1.22）になったので、前の46pxのままだと高さが38pxになり
+ * ヘッダーが伸びる。34px → 高さ約28px に収めた。
+ * **ロゴを差し替えたらここも必ず見直す。** 幅だけ据え置くと高さが勝手に変わる。
  */
 export function Logo({ compact = false }: { compact?: boolean }) {
   return (
     <div className="flex flex-col">
-      <ForgeLogo width={compact ? 36 : 46} />
+      <ForgeLogo width={compact ? 30 : 34} />
       {compact ? null : (
         <span
           className="font-semibold mt-1"

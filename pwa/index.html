@@ -115,14 +115,15 @@
   }
   #splash .wm {
     /*
-     * 幅を 430px から 360px に下げたのは、字形の差し替えで縦横比が
-     * 5.46 (1120x205) から 2.77 (1012x366) に変わったため。
-     * 幅を据え置くと高さが約2倍になり、スプラッシュの中で浮く。
+     * ロゴを差し替えるたびに縦横比が変わるので、幅もそのつど見直す。
+     *   1120x205（比5.46）→ 1012x366（比2.77）→ 1124x918（比1.22）
+     * 今回はほぼ正方形になったので、幅を360pxのままにすると高さが約3倍になる。
+     * 260pxで高さ約212px。
+     *
+     * 画像はマスクではなくそのまま出す（緑の縦線がロゴの一部のため）。
      */
-    display: block; width: min(62vw, 360px); aspect-ratio: 1012 / 366;
-    background: #fff;
-    -webkit-mask: url("./brand-wordmark.png") no-repeat center / contain;
-    mask: url("./brand-wordmark.png") no-repeat center / contain;
+    display: block; width: min(52vw, 260px); aspect-ratio: 1124 / 918;
+    background: url("./brand-wordmark.png") no-repeat center / contain;
   }
   #splash .tag {
     margin-top: 12px; color: var(--muted-2); font-size: clamp(8px,2.5vw,11px);

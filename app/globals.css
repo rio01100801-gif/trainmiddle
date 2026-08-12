@@ -225,8 +225,9 @@ textarea:focus-visible {
 }
 /* ワードマークは画像（マスク）。スプラッシュ側と同じ大きさに揃える */
 .launch-wordmark {
-  width: min(62vw, 360px);
-  aspect-ratio: 1012 / 366;
+  /* pwa/index.html の #splash .wm と同じ（起動の見た目を実行環境で変えない） */
+  width: min(52vw, 260px);
+  aspect-ratio: 1124 / 918;
 }
 .launch-brand span {
   margin-top: 12px;
@@ -315,7 +316,7 @@ textarea:focus-visible {
 /*
  * ---- ブランド要素（reference-ui のビジュアル刷新） ----
  *
- * ワードマークは画像をCSSの mask として使う。url() をCSSに置いているのは、
+ * ワードマークは画像。url() をCSSに置いているのは、
  * Next.js と PWA でURLの基準が違うため——CSSの url() は「そのCSSファイルの位置」を
  * 基準に解決されるので、Next.js（app/globals.css 基準）でも
  * PWA（pwa-dist/styles.css 基準）でも同じ記述で正しく解決される。
@@ -323,12 +324,18 @@ textarea:focus-visible {
  * 実体は app/brand-wordmark.png と pwa/brand-wordmark.png の2箇所に置く
  * （build-static.mjs が pwa/ 側を pwa-dist/ にコピーする）。
  */
+/*
+ * ワードマークは**色を持った透過PNG**をそのまま出す。
+ *
+ * 以前はCSSの mask にして currentColor で塗っていた。
+ * 新しいロゴは緑の縦線がロゴの一部なので、マスクにすると緑が白に潰れる。
+ * 実際の使用箇所（ヘッダー・スプラッシュ）は全部白なので、
+ * 色を変えられなくなる不利益は無い。**色を変えたくなったら画像を分ける。**
+ */
 .forge-wordmark {
   display: inline-block;
   flex-shrink: 0;
-  background: currentColor;
-  -webkit-mask: url("./brand-wordmark.png") no-repeat center / contain;
-  mask: url("./brand-wordmark.png") no-repeat center / contain;
+  background: url("./brand-wordmark.png") no-repeat center / contain;
 }
 
 /* 英大文字の技術ラベル。リファレンスの細い見出し */
