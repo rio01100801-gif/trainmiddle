@@ -163,59 +163,28 @@ export const SCREEN_TITLES: Record<string, string> = {
 };
 
 /**
- * FORGE マーク（R-3）。400mトラック。
+ * ヘッダー・サイドバーのロゴ。
  *
- * アプリアイコン（pwa/icon.svg）と同じ形。ヘッダー・サイドバー・
- * 起動画面で同じものが出るようにしておく。
+ * 以前は緑の400mトラックのマークをワードマークの左に置いていたが、外した。
+ * アプリアイコンを差し替えたとき、新しいロゴが**文字だけの構成**になり、
+ * 対応するシンボルが存在しなくなったため。無いものに形を寄せられない。
+ * 緑はタブと数値の側に集約する（黒白グレー90%・アクセント10%の配分）。
  *
- * 中央の切れ目（スタート／フィニッシュ）は、黒い矩形を重ねるのではなく
- * 左右2本のパスに分けて描く。重ねる方式だと、背景色が違う場所
- * （サイドバーは #070707）で切れ目だけ色が合わなくなる。
- *
- * `size` は高さ。トラックは横長なので幅はその約1.85倍になる。
+ * 幅で指定するのは ForgeLogo が縦横比から高さを出すため。
+ * 46px → 高さ約17px。
  */
-export function ForgeMark({ size = 18 }: { size?: number }) {
-  return (
-    <svg
-      viewBox="0 0 148 80"
-      style={{ height: size, width: size * 1.85 }}
-      fill="none"
-      stroke="var(--forge)"
-      strokeWidth={12}
-      aria-hidden
-    >
-      <path d="M68 6 H40 A34 34 0 0 0 40 74 H68" />
-      <path d="M80 6 H108 A34 34 0 0 1 108 74 H80" />
-      <path d="M68 22 H52 A18 18 0 0 0 52 58 H68" />
-      <path d="M80 22 H96 A18 18 0 0 1 96 58 H80" />
-    </svg>
-  );
-}
-
 export function Logo({ compact = false }: { compact?: boolean }) {
   return (
-    <div className="flex items-center gap-2">
-      <ForgeMark size={compact ? 16 : 20} />
-      <div className="flex flex-col">
-        {/*
-          ワードマークは画像（マスク）を使う。以前は skewX をかけた太字テキストで、
-          旧アイコンの斜体に寄せていた。新しいロゴは斜めに切れ込みが入った専用の
-          字形なので、傾けたテキストでは似せられない。
-          ForgeLogo は色を currentColor に従わせるので、ヘッダーの文字色のまま出る。
-
-          幅で指定するのは ForgeLogo が縦横比から高さを出すため。
-          46px → 高さ約17px で、置き換え前の19px太字とほぼ同じ大きさに見える。
-        */}
-        <ForgeLogo width={compact ? 36 : 46} />
-        {compact ? null : (
-          <span
-            className="font-semibold mt-1"
-            style={{ fontSize: 8, letterSpacing: "0.24em", color: "var(--text-3)" }}
-          >
-            800M PERFORMANCE
-          </span>
-        )}
-      </div>
+    <div className="flex flex-col">
+      <ForgeLogo width={compact ? 36 : 46} />
+      {compact ? null : (
+        <span
+          className="font-semibold mt-1"
+          style={{ fontSize: 8, letterSpacing: "0.24em", color: "var(--text-3)" }}
+        >
+          800M PERFORMANCE
+        </span>
+      )}
     </div>
   );
 }

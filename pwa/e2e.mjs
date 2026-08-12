@@ -2960,15 +2960,19 @@ await page.goto("http://localhost:8791/");
 await page.waitForFunction(() => !document.getElementById("splash"), { timeout: 15000 });
 step("R-2 ロード画面OK（レースまでの日数と目標との差／初回は素／読み込み後に消える）");
 
-// ---- 16d. R-3: マークが崩れていないこと ----
+/*
+ * ---- 16d. R-3: ブランド表示が崩れていないこと ----
+ *
+ * 以前はここで緑の400mトラック（`header svg path` を4本）を数えていた。
+ * アプリアイコンが文字だけの構成になり、対応するシンボルが無くなったので
+ * マーク自体を外した。**この検査もここで消す。**
+ * 残しておくと `header svg` は設定の歯車を掴むので、
+ * マークが消えていても通ってしまい、何も見ていない検査になる。
+ */
 await page.goto("http://localhost:8791/#/");
 await page.waitForTimeout(800);
-const markPaths = await page.locator("header svg path").count();
-if (markPaths < 4) fail(`R-3: ヘッダーのマークが崩れている（path ${markPaths}本）`);
-const markBox = await page.locator("header svg").first().boundingBox();
-if (!markBox) fail("R-3: ヘッダーのマークが描画されていない");
-else if (markBox.width < 20 || markBox.height < 10) {
-  fail(`R-3: ヘッダーのマークが小さすぎる（${Math.round(markBox.width)}×${Math.round(markBox.height)}）`);
+if ((await page.locator("header .forge-wordmark").count()) === 0) {
+  fail("R-3: ヘッダーにワードマークが無い");
 }
 /*
  * ヘッダーのワードマーク。
@@ -3055,8 +3059,7 @@ for (const href of startupImages) {
   }
 }
 step(
-  `R-3 マークOK（マーク ${Math.round(markBox?.width ?? 0)}×${Math.round(markBox?.height ?? 0)} / ` +
-    `ワードマーク ${Math.round(wmBox?.width ?? 0)}×${Math.round(wmBox?.height ?? 0)} / ` +
+  `R-3 ブランド表示OK（ワードマーク ${Math.round(wmBox?.width ?? 0)}×${Math.round(wmBox?.height ?? 0)} / ` +
     `アイコン5種 / 起動画像${startupImages.length}種）`
 );
 await shot("34_mark_header");
