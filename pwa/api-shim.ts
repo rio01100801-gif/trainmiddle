@@ -7,6 +7,7 @@ import type { Store } from "../src/lib/db/store";
 import {
   buildRuleContext,
   aerobicEvidenceMarkers,
+  assistantContext,
   dashboard,
   deleteResult,
   resultAudit,
@@ -619,6 +620,16 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
         review: weeklyReview(repo, today, params.get("weekStart") ?? undefined),
       };
     },
+  },
+
+  /*
+   * 相談（AI）に渡す文脈。読むだけ。
+   * ⚠️ 対になるNext.js側が app/api/assistant-context/route.ts にある。
+   */
+  "/api/assistant-context": {
+    GET: (repo, _b, params) => ({
+      context: assistantContext(repo, params.get("date") ?? localToday()),
+    }),
   },
 
   // ---- M-12 書き出しと復元 ----

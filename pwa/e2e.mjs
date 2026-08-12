@@ -2582,7 +2582,7 @@ if (gearBox && (gearBox.width < 44 || gearBox.height < 44)) {
 // ---- 12. 横はみ出しチェック ----
 // 390px（iPhone 12〜14相当）に加えて、iPhone SE相当の320px幅も見る
 // （バックログ「320px幅での横スクロール」。ここまで細い幅は普段のE2Eでは通らない）
-const OVERFLOW_ROUTES = ["/", "/setup", "/goal", "/calendar", "/results", "/analysis", "/race", "/meet", "/heat", "/past", "/plan-settings", "/data", "/settings", "/warnings", "/session"];
+const OVERFLOW_ROUTES = ["/", "/setup", "/goal", "/calendar", "/results", "/analysis", "/race", "/meet", "/heat", "/past", "/plan-settings", "/data", "/settings", "/warnings", "/session", "/ask"];
 for (const width of [390, 320]) {
   await page.setViewportSize({ width, height: 844 });
   for (const p of OVERFLOW_ROUTES) {
@@ -2604,7 +2604,7 @@ step("横はみ出しゼロ（390px・320px幅）");
  * 見た目には「スクロールしきった」ように見えるので気づけない。
  * 余白は app-main の1か所で確保しているが、確保できているかは実測で見る。
  */
-for (const p of ["/", "/setup", "/goal", "/calendar", "/results", "/analysis", "/race", "/meet", "/heat", "/past", "/plan-settings", "/data", "/settings", "/warnings", "/session"]) {
+for (const p of ["/", "/setup", "/goal", "/calendar", "/results", "/analysis", "/race", "/meet", "/heat", "/past", "/plan-settings", "/data", "/settings", "/warnings", "/session", "/ask"]) {
   await page.goto(`http://localhost:8791/#${p}`);
   await page.waitForTimeout(500);
   const m = await page.evaluate(() => {
@@ -3764,6 +3764,133 @@ if ((await fitRebuildCard.count()) === 0) {
   } else {
     step("確定範囲の文面と設定ペースの整合OK");
   }
+}
+
+// ---- 相談（AI）----
+/*
+ * ここで見張るのは「動くこと」より「勝手に送らないこと」。
+ *   ・鍵が無い / 同意が無い間は **1回も通信しない**
+ *   ・送る本文には、画面に出した文脈がそのまま入っている
+ *   ・ブラウザ直叩きに必要なヘッダが付いている（無いと本番で全滅する）
+ * 通信そのものは横取りして、本物のAPIも料金も使わない。
+ */
+{
+  const sent = [];
+  await page.route("https://api.anthropic.com/**", async (route) => {
+    const req = route.request();
+    sent.push({ headers: req.headers(), body: req.postData() ?? "" });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        content: [{ type: "text", text: "テスト用の答え。CFEは鈍化で下がっています。" }],
+        stop_reason: "end_turn",
+      }),
+    });
+  });
+
+  await page.evaluate(() => {
+    localStorage.removeItem("forge:assistant:key");
+    localStorage.removeItem("forge:assistant:consent");
+  });
+  await page.goto("http://localhost:8791/#/ask");
+  await page.reload();
+  await page.waitForFunction(() => !document.getElementById("splash"), { timeout: 15000 });
+  await page.waitForSelector('[data-page="ask"]', { timeout: 10000 });
+
+  // 画面に出す「送る内容」が、実データから作られていること
+  await page.click('[data-testid="ask-toggle-context"]');
+  const shownContext = (await page.textContent('[data-testid="ask-context-text"]')) ?? "";
+  if (!shownContext.includes("推定800mタイム(CFE)") || !shownContext.includes("目標と現在地")) {
+    fail(`相談: 送る内容が実データになっていない（${shownContext.slice(0, 80)}）`);
+  }
+
+  // 鍵が無い状態では送れない・通信しない
+  await page.fill('[data-testid="ask-question"]', "なんでCFEが今の値なの？");
+  if (!(await page.isDisabled('[data-testid="ask-send"]'))) {
+    fail("相談: 鍵が無いのに送信ボタンが押せる");
+  }
+  await page.click('[data-testid="ask-send"]', { force: true }).catch(() => {});
+  await page.waitForTimeout(300);
+  if (sent.length !== 0) fail(`相談: 鍵が無いのに送信した（${sent.length}回）`);
+
+  // 鍵だけ入れても、同意が無ければ送らない
+  await page.fill('[data-testid="ask-key-input"]', "sk-ant-api03-e2e-dummy-key-0123456789");
+  await page.click('[data-testid="ask-save-key"]');
+  await page.waitForSelector('[data-testid="ask-consent"]', { timeout: 5000 });
+  await page.fill('[data-testid="ask-question"]', "なんでCFEが今の値なの？");
+  if (!(await page.isDisabled('[data-testid="ask-send"]'))) {
+    fail("相談: 同意していないのに送信ボタンが押せる");
+  }
+  await page.click('[data-testid="ask-send"]', { force: true }).catch(() => {});
+  await page.waitForTimeout(300);
+  if (sent.length !== 0) fail(`相談: 同意前に送信した（${sent.length}回）`);
+
+  // 同意して初めて送れる。
+  // 文脈はページを読み直していないので、上で読んだ shownContext と同じものが送られるはず。
+  // （ここでもう一度トグルを押すと**閉じて**しまうので押さない）
+  await page.check('[data-testid="ask-consent"]');
+  const shownAgain = shownContext;
+  await page.click('[data-testid="ask-send"]');
+  await page.waitForSelector('[data-testid="ask-answer"]', { timeout: 15000 }).catch(() => {});
+
+  if (sent.length !== 1) {
+    fail(`相談: 同意後の送信が1回になっていない（${sent.length}回）`);
+  } else {
+    const { headers, body } = sent[0];
+    if (headers["anthropic-dangerous-direct-browser-access"] !== "true") {
+      fail("相談: ブラウザ直叩きのヘッダが付いていない（本番で全滅する）");
+    }
+    if (!headers["x-api-key"]) fail("相談: APIキーのヘッダが無い");
+    if (!headers["anthropic-version"]) fail("相談: anthropic-version が無い");
+    let payload;
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      fail("相談: 送信本文がJSONではない");
+    }
+    if (payload) {
+      const userText = payload.messages?.[0]?.content ?? "";
+      // 画面に出した文脈がそのまま入っているか（見せたものと送ったものが同じ）
+      const head = shownAgain.split("\n").slice(0, 3).join("\n");
+      if (head && !userText.includes(head)) {
+        fail("相談: 画面に出した文脈と送った本文が食い違っている");
+      }
+      if (!userText.includes("なんでCFEが今の値なの？")) fail("相談: 質問が送られていない");
+      if (!String(payload.system ?? "").includes("推測で作らない")) {
+        fail("相談: 数値を作らせない指示が送られていない");
+      }
+      if (!userText.includes("推定800mタイム(CFE)")) {
+        fail("相談: 文脈が本文に入っていない");
+      }
+    }
+  }
+
+  const answer = (await page.textContent('[data-testid="ask-answer"]')) ?? "";
+  if (!answer.includes("テスト用の答え")) fail(`相談: 答えが表示されない（${answer.slice(0, 60)}）`);
+
+  // 答えは文章だけ。CFEが書き換わっていないこと
+  const cfeAfter = await page.evaluate(() =>
+    fetch("/api/dashboard")
+      .then((r) => r.json())
+      .then((d) => d.cfe?.estimated800mSec ?? null)
+  );
+  const cfeInContext = shownAgain.match(/推定800mタイム\(CFE\): ([\d:.]+)/)?.[1];
+  if (cfeInContext) {
+    const [m, s] = cfeInContext.includes(":") ? cfeInContext.split(":") : ["0", cfeInContext];
+    const expected = Number(m) * 60 + Number(s);
+    if (cfeAfter === null || Math.abs(cfeAfter - expected) > 0.06) {
+      fail(`相談: 答えのあとでCFEが動いている（${expected} → ${cfeAfter}）`);
+    }
+  }
+
+  await shot("60_ask");
+  await page.unroute("https://api.anthropic.com/**");
+  await page.evaluate(() => {
+    localStorage.removeItem("forge:assistant:key");
+    localStorage.removeItem("forge:assistant:consent");
+  });
+  step("相談（AI）OK（同意前は送らない・見せた文脈をそのまま送る・答えでCFEは動かない）");
 }
 
 if (errors.length) {

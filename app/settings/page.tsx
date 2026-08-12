@@ -43,6 +43,15 @@ const SETTINGS_GROUPS: { title: string; items: { href: string; what: string }[] 
       { href: "/diagnostics", what: "動かないときに見る画面。バージョン・同期状態を表示します" },
     ],
   },
+  {
+    title: "分からないとき",
+    items: [
+      {
+        href: "/ask",
+        what: "「なんでこの数字なのか」を今のデータをもとに説明します。設定するまで何も送りません",
+      },
+    ],
+  },
 ];
 
 const ELSEWHERE: { label: string; where: string; href: string }[] = [

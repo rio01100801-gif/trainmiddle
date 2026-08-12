@@ -30,6 +30,16 @@ const PATTERNS = [
     name: "GitHub Personal Access Token",
     re: /gh[ps]_[A-Za-z0-9]{20,}/,
   },
+  /*
+   * Anthropic APIキー（相談機能で forge-v77 から扱う）。
+   * 本物は sk-ant- のあとが90文字を超える。40文字以上で見るのは、
+   * E2Eやテストが使う短いダミー（sk-ant-api03-e2e-dummy-key-...）を
+   * 誤検知しないため。ダミーを長くするときはここに引っかかることを思い出すこと。
+   */
+  {
+    name: "Anthropic APIキー",
+    re: /sk-ant-[A-Za-z0-9_-]{40,}/,
+  },
 ];
 
 function walk(dir) {

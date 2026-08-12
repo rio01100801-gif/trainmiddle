@@ -97,6 +97,12 @@ const I = {
       <path d="M12 11v6M12 7.5v.3" />
     </>
   ),
+  ask: (
+    <>
+      <path d="M20.5 12.2c0 4-3.8 7.2-8.5 7.2a10 10 0 01-2.6-.33L4 21l1.4-3.6A6.8 6.8 0 013.5 12.2C3.5 8.2 7.3 5 12 5s8.5 3.2 8.5 7.2z" />
+      <path d="M9.9 10.2a2.2 2.2 0 114.1 1c0 1.1-1.6 1.4-1.9 2.4M12 15.9v.3" />
+    </>
+  ),
 };
 
 const ico = (p: JSX.Element) => (
@@ -125,6 +131,7 @@ export const SETTINGS_ITEMS: Item[] = [
   { href: "/past", label: "過去データの一括入力", icon: ico(I.history) },
   { href: "/data", label: "データ管理", icon: ico(I.db) },
   { href: "/sync", label: "同期（他の端末と）", icon: ico(I.db) },
+  { href: "/ask", label: "相談（AI）", icon: ico(I.ask) },
   { href: "/diagnostics", label: "診断情報", icon: ico(I.info) },
 ];
 
@@ -154,6 +161,7 @@ export const SCREEN_TITLES: Record<string, string> = {
   "/data": "データ管理",
   "/sync": "同期",
   "/diagnostics": "診断情報",
+  "/ask": "相談",
   "/warnings": "警告一覧",
   "/race": "レース分析",
   "/meet": "大会モード",

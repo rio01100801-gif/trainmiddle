@@ -26,6 +26,7 @@ import RunPage from "../app/run/page";
 import SummaryPage from "../app/summary/page";
 import SyncPage from "../app/sync/page";
 import DiagnosticsPage from "../app/diagnostics/page";
+import AskPage from "../app/ask/page";
 
 import type { FitParseResult } from "../src/lib/core/fitParse";
 import type {
@@ -970,6 +971,7 @@ const PAGES: Record<string, React.ComponentType> = {
   "/summary": SummaryPage,
   "/sync": SyncPage,
   "/diagnostics": DiagnosticsPage,
+  "/ask": AskPage,
 };
 
 function usePath(): string {

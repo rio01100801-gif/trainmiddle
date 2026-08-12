@@ -22,6 +22,13 @@ import { addDays, diffDays, fmtTime, weekStart } from "./core/dates";
 import { CONFIRM_HORIZON_DAYS } from "./core/horizon";
 import { buildResultAudit, type ResultAudit } from "./core/resultAudit";
 import {
+  buildAssistantContext,
+  UPCOMING_DAYS,
+  type AssistantContext,
+  type AssistantResultInput,
+  type AssistantSessionInput,
+} from "./core/assistantContext";
+import {
   applyStaleness,
   guardedBaseTime,
   goalFeasibility,
@@ -4105,5 +4112,109 @@ export function interpretPrescription(repo: Store, text: string): PrescriptionSt
   return parsePrescription(text, {
     grpSecPerM: cfe ? cfe.estimated800mSec / 800 : undefined,
     phrases: repo.listPhrases(),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 相談（AI）に渡す文脈
+// ---------------------------------------------------------------------------
+
+/**
+ * 端末外へ送る文脈を組み立てる。**読むだけ**で、何も保存しない。
+ *
+ * 組み立て自体はコアの純関数（`buildAssistantContext`）に任せる。
+ * ここの役目は保存層から材料を集めることだけ。
+ * 集める先を増やすと端末外へ出る情報が増えるので、増やすときは
+ * 画面の「送る内容」表示で本人が確認できることを必ず確かめること。
+ */
+export function assistantContext(repo: Store, today: string): AssistantContext {
+  const athlete = repo.getAthlete();
+  const goal = repo.getGoal();
+  const cfe = repo.getCfe();
+  const race = goal ? racesForGoal(repo).find((r) => r.id === goal.targetRaceId) : undefined;
+
+  const toSession = (s: Session): AssistantSessionInput => ({
+    date: s.date,
+    timeOfDay: s.timeOfDay,
+    category: s.category,
+    name: s.name,
+    prescription: s.prescription,
+    status: s.status,
+    phase: s.phase,
+    riskLevel: s.riskLevel,
+    targetPaces: s.targetPaces.map((p) => ({
+      distanceM: p.distanceM,
+      targetSecFast: p.targetSecFast,
+      targetSecSlow: p.targetSecSlow,
+      isEstimated: p.isEstimated,
+    })),
+    selectionReasons: s.generation?.selectionReasons,
+    confidence: s.generation?.confidence,
+  });
+
+  const sessionsById = new Map(repo.listSessions().map((s) => [s.id, s]));
+  const recentResults: AssistantResultInput[] = trustedResults(repo)
+    .slice()
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+    .map((r) => {
+      const s = sessionsById.get(r.sessionId);
+      return {
+        date: r.date,
+        sessionName: s?.name ?? "（予定が見つかりません）",
+        category: s?.category ?? "unknown",
+        lapsSec: r.actualLapsSec,
+        lapDistancesM: r.lapDistancesM,
+        rpe: r.rpe,
+        achievement: r.achievement,
+        completedReps: r.completedReps,
+        prescribedReps: r.prescribedReps,
+        aborted: r.aborted,
+      };
+    });
+
+  const limiter = athlete ? limiterAssessment(repo) : undefined;
+  const coverage = coverageReview(repo, today);
+
+  return buildAssistantContext({
+    today,
+    pb800Sec: athlete?.pb800mSec,
+    goal: goal
+      ? {
+          targetTimeSec: goal.targetTimeSec,
+          raceDate: race?.dateStart,
+          raceName: race?.name,
+        }
+      : undefined,
+    cfe: cfe
+      ? {
+          estimated800mSec: cfe.estimated800mSec,
+          confidence: cfe.confidence,
+          lastUpdated: cfe.lastUpdated,
+          history: cfe.history.map((h) => ({
+            date: h.date,
+            before: h.before,
+            after: h.after,
+            source: h.source,
+          })),
+        }
+      : undefined,
+    phase: race ? phaseForDate(today, race.dateStart) : undefined,
+    todaySessions: repo.listSessions(today, today).map(toSession),
+    upcomingSessions: repo.listSessions(addDays(today, 1), addDays(today, UPCOMING_DAYS)).map(toSession),
+    recentResults,
+    violations: runRuleEngine(buildRuleContext(repo, today)).map((v) => ({
+      rule: v.rule,
+      level: v.level,
+      message: v.message,
+    })),
+    limiter: limiter?.assessment
+      ? {
+          limiter: limiter.assessment.limiter,
+          narrative: limiter.assessment.narrative,
+          appliedNote: limiter.appliedNote,
+        }
+      : undefined,
+    coverage: coverage ? { narrative: coverage.narrative, weeks: coverage.weeks } : undefined,
+    lastCfeSourceDate: lastRecordedDate(repo),
   });
 }
