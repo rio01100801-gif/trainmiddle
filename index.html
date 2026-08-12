@@ -11,9 +11,9 @@
 <meta name="apple-mobile-web-app-title" content="FORGE">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' https:; worker-src 'self' blob:; manifest-src 'self'">
 <link rel="manifest" href="./manifest.webmanifest">
-<link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png?v=forge-v62">
-<link rel="icon" type="image/png" sizes="32x32" href="./icon-32.png?v=forge-v62">
-<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png?v=forge-v62">
+<link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png?v=forge-v63">
+<link rel="icon" type="image/png" sizes="32x32" href="./icon-32.png?v=forge-v63">
+<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png?v=forge-v63">
 <link rel="stylesheet" href="./styles.css">
 <style>
   :root { --forge: #b6ff00; --muted: #6b7280; --muted-2: #9ca3af; }
@@ -171,13 +171,18 @@
     var reduced = window.matchMedia &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     /*
-     * 最低表示時間。2800msだったのは、400mトラックを描く演出
-     * （1.45秒の描画＋1.68秒のフレア）を途中で切らないため。
-     * その演出を線と点に置き換えたので、待つ理由が無くなった。
-     * 1200msまで詰める——0にしないのは、読み込みが速いときに
-     * 一瞬だけ光って消えるチラつきになるため。
+     * 最低表示時間。
+     *
+     * 元は2800msで、400mトラックを描く演出（1.45秒の描画＋1.68秒のフレア）を
+     * 途中で切らないための値だった。演出を線と点に変えたとき1200msまで詰めたが、
+     * 今度は速すぎて何が出ていたのか分からなかった。
+     *
+     * 2000msにする。内訳は、ワードマークと情報が出そろうのが約0.85秒
+     * （0.42秒の遅延＋0.42秒のフェード）で、そこから約1.15秒は動かない画面が残る。
+     * 点の点滅は1周1.35秒なので、1周半ぶん見えることになる。
+     * 2800msに戻さないのは、演出を軽くした意味が消えるため。
      */
-    var minimumMs = reduced ? 650 : 1200;
+    var minimumMs = reduced ? 900 : 2000;
     var splash = document.getElementById("splash");
     var label = document.getElementById("splash-label");
     var value = document.getElementById("splash-value");
