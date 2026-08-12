@@ -153,9 +153,8 @@ textarea:focus-visible {
   place-items: center;
   overflow: hidden;
   padding: calc(var(--sat) + 22px) 22px calc(var(--sab) + 22px);
-  background:
-    radial-gradient(circle at 78% 38%, rgba(182, 255, 0, 0.055), transparent 24%),
-    #030303;
+  /* 緑のにじみはトラック演出の一部だったので、演出と一緒に外して黒一色にした */
+  background: #030303;
   color: #fff;
 }
 .launch-splash-inner {
@@ -165,52 +164,53 @@ textarea:focus-visible {
   align-items: center;
   text-align: center;
 }
-.launch-track {
-  width: min(94vw, 620px);
-  height: auto;
-  overflow: visible;
+/*
+ * 読み込み表示。細い線と3つの点。
+ * pwa/index.html の #splash .loader と同じ見た目にしてある。
+ * 片方だけ変えると、同じアプリなのに実行環境で起動画面が変わる。
+ */
+.launch-loader {
+  margin-top: 26px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 13px;
 }
-.launch-lane {
-  fill: none;
-  stroke-linecap: round;
+.launch-loader-bar {
+  width: min(38vw, 172px);
+  height: 2px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.2);
 }
-.launch-lane-muted {
-  stroke: rgba(182, 255, 0, 0.14);
-  stroke-width: 3;
+.launch-loader-dots {
+  display: flex;
+  gap: 15px;
 }
-.launch-lane-live {
-  stroke: var(--forge);
-  stroke-width: 5;
-  stroke-dasharray: 1520;
-  stroke-dashoffset: 1520;
-  filter: url("#launch-glow");
-  animation: launch-draw 1.45s cubic-bezier(0.5, 0.05, 0.2, 1) 0.18s forwards;
+.launch-loader-dots i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  animation: launch-dot 1.35s ease-in-out infinite;
 }
-.launch-lane-delay {
-  animation-delay: 0.52s;
+.launch-loader-dots i:nth-child(2) {
+  animation-delay: 0.18s;
 }
-.launch-finish {
-  fill: #fff;
-  opacity: 0;
-  filter: url("#launch-glow");
-  animation: launch-finish 420ms ease-out 1.68s forwards;
+.launch-loader-dots i:nth-child(3) {
+  animation-delay: 0.36s;
 }
 .launch-brand {
-  margin-top: -30px;
   display: flex;
   flex-direction: column;
   align-items: center;
   opacity: 0;
   transform: translateY(12px);
-  animation: launch-rise 460ms ease-out 1.78s forwards;
+  animation: launch-rise 420ms ease-out 0.12s forwards;
 }
-.launch-brand strong {
-  display: inline-block;
-  font-size: clamp(34px, 10vw, 58px);
-  line-height: 0.9;
-  letter-spacing: -0.035em;
-  font-weight: 950;
-  transform: skewX(-9deg);
+/* ワードマークは画像（マスク）。スプラッシュ側と同じ大きさに揃える */
+.launch-wordmark {
+  width: min(62vw, 360px);
+  aspect-ratio: 1012 / 366;
 }
 .launch-brand span {
   margin-top: 12px;
@@ -221,12 +221,12 @@ textarea:focus-visible {
 }
 .launch-data {
   min-height: 96px;
-  margin-top: 32px;
+  margin-top: 26px;
   display: flex;
   flex-direction: column;
   align-items: center;
   opacity: 0;
-  animation: launch-rise 420ms ease-out 2.18s forwards;
+  animation: launch-rise 420ms ease-out 0.42s forwards;
 }
 .launch-data-label {
   color: var(--text-3);
@@ -259,14 +259,6 @@ textarea:focus-visible {
   animation: launch-pulse 1.4s ease-in-out infinite;
 }
 
-@keyframes launch-draw {
-  to { stroke-dashoffset: 0; }
-}
-@keyframes launch-finish {
-  0% { opacity: 0; transform: scale(0.35); transform-origin: 648px 172px; }
-  45% { opacity: 1; transform: scale(2.8); transform-origin: 648px 172px; }
-  100% { opacity: 0.92; transform: scale(1); transform-origin: 648px 172px; }
-}
 @keyframes launch-rise {
   to { opacity: 1; transform: translateY(0); }
 }
@@ -274,23 +266,27 @@ textarea:focus-visible {
   0%, 100% { opacity: 0.45; }
   50% { opacity: 1; }
 }
+/* 3つの点を順に光らせる。1周ぶんの点灯は短く、大半は消えている */
+@keyframes launch-dot {
+  0%, 60%, 100% { background: rgba(255, 255, 255, 0.16); }
+  25% { background: var(--forge); }
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .launch-lane-live,
-  .launch-finish,
   .launch-brand,
   .launch-data,
-  .launch-wait {
+  .launch-wait,
+  .launch-loader-dots i {
     animation: none !important;
   }
-  .launch-lane-live {
-    stroke-dashoffset: 0;
-  }
-  .launch-finish,
   .launch-brand,
   .launch-data {
     opacity: 1;
     transform: none;
+  }
+  /* 動かさない代わりに、生きていることは先頭の点の色で示す */
+  .launch-loader-dots i:first-child {
+    background: var(--forge);
   }
 }
 

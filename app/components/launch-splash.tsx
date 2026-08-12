@@ -50,24 +50,24 @@ function toView(
   return { label: "NEXT RACE", value: "レース未設定", sub: "目標を設定" };
 }
 
-function TrackArtwork() {
+/**
+ * 読み込み表示。細い線と3つの点だけ。
+ *
+ * 以前は400mトラックを描いていく演出だったが、毎日開く道具に
+ * 毎回2.5秒の見せ場を入れるのは重い。PWA側（pwa/index.html）と
+ * 同じ見た目にしてある——**片方だけ変えると、同じアプリなのに
+ * 起動画面が実行環境で違う**ので、両方まとめて直すこと。
+ */
+function LoadingIndicator() {
   return (
-    <svg className="launch-track mark" viewBox="0 0 720 300" aria-hidden="true">
-      <defs>
-        <filter id="launch-glow" x="-30%" y="-50%" width="160%" height="200%">
-          <feGaussianBlur stdDeviation="8" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-      </defs>
-      <path className="launch-lane launch-lane-muted" d="M72 172C72 72 648 72 648 172S72 272 72 172Z" />
-      <path className="launch-lane launch-lane-muted" d="M110 172C110 102 610 102 610 172S110 242 110 172Z" />
-      <path className="launch-lane launch-lane-live" d="M72 172C72 72 648 72 648 172S72 272 72 172Z" />
-      <path className="launch-lane launch-lane-live launch-lane-delay" d="M110 172C110 102 610 102 610 172S110 242 110 172Z" />
-      <circle className="launch-finish" cx="648" cy="172" r="8" />
-    </svg>
+    <div className="launch-loader" aria-hidden="true">
+      <span className="launch-loader-bar" />
+      <span className="launch-loader-dots">
+        <i />
+        <i />
+        <i />
+      </span>
+    </div>
   );
 }
 
@@ -121,7 +121,8 @@ export function LaunchSplash() {
 
   useEffect(() => {
     if (!visible || !dataReady) return;
-    const minimum = reduced ? 650 : 2_800;
+    // pwa/index.html の minimumMs と同じ値にする（起動の体感を環境で変えない）
+    const minimum = reduced ? 650 : 1_200;
     const elapsed = Date.now() - mountedAt.current;
     const timer = window.setTimeout(() => setVisible(false), Math.max(0, minimum - elapsed));
     return () => window.clearTimeout(timer);
@@ -148,11 +149,15 @@ export function LaunchSplash() {
       aria-label={dataReady ? `${view.label} ${view.value} ${view.sub}` : "FORGEを起動しています"}
     >
       <div className="launch-splash-inner">
-        <TrackArtwork />
         <div className="launch-brand">
-          <strong>FORGE</strong>
+          {/*
+            ワードマークは画像（マスク）。以前は skewX をかけた太字テキストで、
+            旧アイコンの斜体に寄せていた。新しいロゴは専用の字形なので似せられない。
+          */}
+          <span className="forge-wordmark launch-wordmark" role="img" aria-label="FORGE" />
           <span>800M PERFORMANCE</span>
         </div>
+        <LoadingIndicator />
         <div className="launch-data">
           <span className="launch-data-label">{view.label}</span>
           <b className="launch-data-value">{view.value}</b>

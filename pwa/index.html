@@ -23,7 +23,8 @@
     overflow: hidden; box-sizing: border-box;
     padding: calc(env(safe-area-inset-top, 0px) + 22px) 22px
       calc(env(safe-area-inset-bottom, 0px) + 22px);
-    background: radial-gradient(circle at 78% 38%, rgba(182,255,0,.055), transparent 24%), #030303;
+    /* 緑のにじみはトラック演出の一部だったので、演出と一緒に外して黒一色にした */
+    background: #030303;
     font-family: "Helvetica Neue", -apple-system, BlinkMacSystemFont, "Hiragino Sans",
       "Noto Sans JP", "Yu Gothic UI", sans-serif;
     transition: opacity 280ms ease;
@@ -33,45 +34,39 @@
     width: min(100%, 620px); display: flex; flex-direction: column;
     align-items: center; text-align: center;
   }
-  #splash .mark { width: min(94vw, 620px); height: auto; overflow: visible; }
-  #splash .lane { fill: none; stroke-linecap: round; }
-  #splash .lane-muted { stroke: rgba(182,255,0,.14); stroke-width: 3; }
-  #splash .lane-live {
-    stroke: var(--forge); stroke-width: 5; stroke-dasharray: 1520; stroke-dashoffset: 1520;
-    filter: url("#splash-glow");
-    animation: splash-draw 1.45s cubic-bezier(.5,.05,.2,1) .18s forwards;
-  }
-  #splash .lane-delay { animation-delay: .52s; }
-  /* 発光層。芯より太く・薄く・強くぼかす */
-  #splash .lane-halo {
-    stroke-width: 14; opacity: .28; filter: url("#splash-soft");
-  }
   /*
-   * ゴールのフレア。白黄のコア・緑の中間・広く薄い外周の3層で作る。
-   * 単色の円1つだと「点が光った」だけで、勝負の瞬間には見えない。
+   * ロード表示は細い線と3つの点だけ。
+   *
+   * 以前は400mトラックを1.45秒かけて描き、ゴールにフレアを出す演出だった。
+   * 毎日開く道具に2.5秒の見せ場を毎回入れるのは重い。
+   * 線は「ここまでが読み込みの枠」、点は「まだ生きている」ことだけを示す。
+   * 主役は下に出るレースまでの日数と目標との差（R-2）に戻す。
    */
-  #splash .finish {
-    opacity: 0;
-    animation: splash-finish 420ms ease-out 1.68s forwards;
-    transform-origin: 648px 172px;
+  #splash .loader {
+    margin-top: 26px; display: flex; flex-direction: column; align-items: center; gap: 13px;
   }
-  #splash .flare-outer { fill: rgba(182,255,0,.20); filter: url("#splash-soft"); }
-  #splash .flare-mid   { fill: rgba(210,255,90,.72); filter: url("#splash-glow"); }
-  #splash .flare-core  { fill: #fdffe8; }
-  /* 4方向へ伸びる光条。フレアらしさはこれで出る */
-  #splash .flare-ray {
-    stroke: rgba(232,255,160,.85); stroke-linecap: round; filter: url("#splash-glow");
+  #splash .loader .bar {
+    width: min(38vw, 172px); height: 2px; border-radius: 1px;
+    background: rgba(255,255,255,.20);
   }
+  #splash .loader .dots { display: flex; gap: 15px; }
+  #splash .loader .dots i {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: rgba(255,255,255,.16);
+    animation: splash-dot 1.35s ease-in-out infinite;
+  }
+  #splash .loader .dots i:nth-child(2) { animation-delay: .18s; }
+  #splash .loader .dots i:nth-child(3) { animation-delay: .36s; }
   /*
-   * リファレンスでは軌跡がワードマークの後ろを通る。
-   * 上下に並べただけだと「輪っかの下に文字を置いた」図版に見えるので、
-   * 負マージンで重ねる。文字は前面（z-index）に置いて読めるようにする。
+   * 以前は軌跡とワードマークを負マージンで重ねていた。その軌跡を無くしたので
+   * 通常配置に戻す。出だしの遅延も、トラックが描き終わるのを待つための
+   * 1.78秒から詰めた。
    */
   #splash .brand {
-    margin-top: -44px; position: relative; z-index: 1;
+    position: relative; z-index: 1;
     display: flex; flex-direction: column; align-items: center;
     opacity: 0; transform: translateY(12px);
-    animation: splash-rise 460ms ease-out 1.78s forwards;
+    animation: splash-rise 420ms ease-out .12s forwards;
   }
   /*
    * ワードマークは画像をマスクとして使う。
@@ -101,8 +96,8 @@
     font-weight: 700; letter-spacing: .34em;
   }
   #splash .info {
-    min-height: 96px; margin-top: 32px; display: flex; flex-direction: column;
-    align-items: center; opacity: 0; animation: splash-rise 420ms ease-out 2.18s forwards;
+    min-height: 96px; margin-top: 26px; display: flex; flex-direction: column;
+    align-items: center; opacity: 0; animation: splash-rise 420ms ease-out .42s forwards;
   }
   #splash .label {
     color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .18em;
@@ -126,57 +121,27 @@
     background: transparent; color: var(--forge); font: inherit; font-size: 12px; font-weight: 800;
   }
   #splash[data-stalled="1"] .retry, #splash[data-error="1"] .retry { display: block; }
-  @keyframes splash-draw { to { stroke-dashoffset: 0; } }
-  @keyframes splash-finish {
-    0% { opacity: 0; transform: scale(.35); transform-origin: 648px 172px; }
-    45% { opacity: 1; transform: scale(2.8); transform-origin: 648px 172px; }
-    100% { opacity: .92; transform: scale(1); transform-origin: 648px 172px; }
-  }
   @keyframes splash-rise { to { opacity: 1; transform: translateY(0); } }
   @keyframes splash-pulse { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
+  /* 3つの点を順に光らせる。1周ぶんの点灯は短く、大半は消えている */
+  @keyframes splash-dot {
+    0%, 60%, 100% { background: rgba(255,255,255,.16); }
+    25% { background: var(--forge); }
+  }
   @media (prefers-reduced-motion: reduce) {
     #splash { transition-duration: 120ms; }
-    #splash .lane-live, #splash .finish, #splash .brand, #splash .info, #splash .wait {
+    #splash .brand, #splash .info, #splash .wait, #splash .loader .dots i {
       animation: none !important;
     }
-    #splash .lane-live { stroke-dashoffset: 0; }
-    #splash .finish, #splash .brand, #splash .info { opacity: 1; transform: none; }
+    #splash .brand, #splash .info { opacity: 1; transform: none; }
+    /* 動かさない代わりに、生きていることは先頭の点の色で示す */
+    #splash .loader .dots i:first-child { background: var(--forge); }
   }
 </style>
 </head>
 <body>
 <div id="splash" role="status" aria-live="polite" aria-busy="true" aria-label="FORGEを起動しています">
   <div class="inner">
-    <svg class="mark" viewBox="0 0 720 300" aria-hidden="true">
-      <defs>
-        <filter id="splash-glow" x="-30%" y="-50%" width="160%" height="200%">
-          <feGaussianBlur stdDeviation="8" result="blur"/>
-          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-        </filter>
-        <!-- 外周のにじみ用。合成せずぼかしたものだけを出す -->
-        <filter id="splash-soft" x="-80%" y="-80%" width="260%" height="260%">
-          <feGaussianBlur stdDeviation="22"/>
-        </filter>
-      </defs>
-      <path class="lane lane-muted" d="M72 172C72 72 648 72 648 172S72 272 72 172Z"/>
-      <path class="lane lane-muted" d="M110 172C110 102 610 102 610 172S110 242 110 172Z"/>
-      <!-- 発光層: 同じ軌跡を太くぼかして下に敷く -->
-      <path class="lane lane-live lane-halo" d="M72 172C72 72 648 72 648 172S72 272 72 172Z"/>
-      <path class="lane lane-live lane-halo lane-delay" d="M110 172C110 102 610 102 610 172S110 242 110 172Z"/>
-      <path class="lane lane-live" d="M72 172C72 72 648 72 648 172S72 272 72 172Z"/>
-      <path class="lane lane-live lane-delay" d="M110 172C110 102 610 102 610 172S110 242 110 172Z"/>
-      <g class="finish">
-        <circle class="flare-outer" cx="648" cy="172" r="54"/>
-        <g class="flare-ray">
-          <path d="M648 138 V206" stroke-width="2"/>
-          <path d="M614 172 H682" stroke-width="2"/>
-          <path d="M628 152 L668 192" stroke-width="1.2"/>
-          <path d="M668 152 L628 192" stroke-width="1.2"/>
-        </g>
-        <circle class="flare-mid" cx="648" cy="172" r="13"/>
-        <circle class="flare-core" cx="648" cy="172" r="4.5"/>
-      </g>
-    </svg>
     <div class="brand">
       <span class="wm" aria-hidden="true"></span>
       <!--
@@ -185,6 +150,11 @@
       -->
       <span class="sr-only">FORGE</span>
       <span class="tag">800M PERFORMANCE</span>
+    </div>
+    <!-- 読み込み表示。状態は下の info が文字で出すので、ここは装飾扱いにする -->
+    <div class="loader" aria-hidden="true">
+      <span class="bar"></span>
+      <span class="dots"><i></i><i></i><i></i></span>
     </div>
     <div class="info" id="splash-info">
       <span class="label" id="splash-label">INITIALIZING</span>
@@ -200,7 +170,14 @@
     var bornAt = Date.now();
     var reduced = window.matchMedia &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    var minimumMs = reduced ? 650 : 2800;
+    /*
+     * 最低表示時間。2800msだったのは、400mトラックを描く演出
+     * （1.45秒の描画＋1.68秒のフレア）を途中で切らないため。
+     * その演出を線と点に置き換えたので、待つ理由が無くなった。
+     * 1200msまで詰める——0にしないのは、読み込みが速いときに
+     * 一瞬だけ光って消えるチラつきになるため。
+     */
+    var minimumMs = reduced ? 650 : 1200;
     var splash = document.getElementById("splash");
     var label = document.getElementById("splash-label");
     var value = document.getElementById("splash-value");
