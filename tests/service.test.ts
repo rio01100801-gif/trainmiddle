@@ -277,14 +277,37 @@ describe("サービス層: 結果入力 → CFE → ペース再計算の連動"
     expect(hl).toBeDefined();
 
     const before = repo.getCfe()!.estimated800mSec;
+    /*
+     * CFEは実測タイムから推定するので、遅かったことを実測で示す必要がある。
+     * RPEだけ高くても（＝きつかったと入れただけでも）CFEは動かない。
+     * 設定より8%遅いタイムを3本入れる。
+     */
+    const tp = hl.targetPaces[0];
+    const slow = ((tp.targetSecFast + tp.targetSecSlow) / 2) * 1.08;
+    const laps = [slow, slow, slow];
     const out = processResult(
       repo,
       makeResult(hl, {
-        rpe: 10, // 期待8 → +2
+        rpe: 10,
         achievement: "partial",
         completedReps: 3,
         prescribedReps: 5,
-      })
+        actualLapsSec: laps,
+        lapDistancesM: laps.map(() => tp.distanceM),
+        interval: {
+          reps: 3,
+          distanceM: tp.distanceM,
+          targetSec: slow,
+          restType: "jog",
+          restSec: 240,
+          results: laps.map((t, i) => ({
+            index: i + 1,
+            distanceM: tp.distanceM,
+            targetSec: slow,
+            actualSec: t,
+          })),
+        },
+      } as any)
     );
     expect(out.cfeAfter).toBeGreaterThan(before);
     // ペース再計算の変更差分が「理由付き」で出る（4-5-9）
@@ -473,7 +496,32 @@ describe("サービス層: 今日のメニューと準備度", () => {
       .listSessions()
       .filter((s) => s.category === "high_lactate" && s.targetPaces.length > 0)
       .sort((a, b) => a.date.localeCompare(b.date))[0];
-    processResult(repo, makeResult(hl, { rpe: 10, achievement: "failed" }));
+    // CFEは実測から動くので、遅かった実測を入れる（RPEだけでは動かない）
+    const tp = hl.targetPaces[0];
+    const slow = ((tp.targetSecFast + tp.targetSecSlow) / 2) * 1.1;
+    const laps = [slow, slow, slow];
+    processResult(
+      repo,
+      makeResult(hl, {
+        rpe: 10,
+        achievement: "failed",
+        actualLapsSec: laps,
+        lapDistancesM: laps.map(() => tp.distanceM),
+        interval: {
+          reps: 3,
+          distanceM: tp.distanceM,
+          targetSec: slow,
+          restType: "jog",
+          restSec: 240,
+          results: laps.map((t, i) => ({
+            index: i + 1,
+            distanceM: tp.distanceM,
+            targetSec: slow,
+            actualSec: t,
+          })),
+        },
+      } as any)
+    );
     const d = dashboard(repo, "2026-08-01");
     // 悪化したので正の値（＝遅くなった）
     expect(d.cfeDelta).toBeGreaterThan(0);

@@ -9,9 +9,45 @@ import {
   PHASE_GOAL_WEIGHT,
 } from "@/lib/core/cfe";
 import { makeSession, makeResult } from "./helpers";
+import { GRP_RATIOS } from "@/lib/core/pace";
 import type { TargetPace } from "@/lib/core/types";
 
 const tp600: TargetPace = { distanceM: 600, targetSecFast: 85.0, targetSecSlow: 85.0 };
+
+/*
+ * 実測タイム基準に変えたので、期待値は「カテゴリ比率どおりに走ったら何秒か」から作る。
+ * 数字を直書きすると、比率表を動かしたときにテストだけ辻褄が合わなくなる。
+ *
+ *   implied800m = 実測平均 ÷ 距離 ÷ 比率 × 800
+ * なので、implied が狙った値になる1本のタイムは
+ *   タイム = 目標800m × 比率 × 距離 ÷ 800
+ */
+const CFE0 = 111.01; // initCfe(109.51) の値
+function repTimeFor(implied800Sec: number, cat: "high_lactate" | "race_economy", distanceM: number) {
+  const r = GRP_RATIOS[cat]!;
+  return (implied800Sec * ((r.fast + r.slow) / 2) * distanceM) / 800;
+}
+/** レスト補正が乗らない条件（標準レスト・完全休息でない）で結果を作る */
+function measured(
+  session: Parameters<typeof makeResult>[0],
+  laps: number[],
+  distanceM: number,
+  overrides: Partial<Parameters<typeof makeResult>[1]> = {}
+) {
+  return makeResult(session, {
+    actualLapsSec: laps,
+    lapDistancesM: laps.map(() => distanceM),
+    interval: {
+      reps: laps.length,
+      distanceM,
+      targetSec: laps[0],
+      restType: "jog",
+      restSec: 240,
+      results: laps.map((t, i) => ({ index: i + 1, distanceM, targetSec: laps[0], actualSec: t })),
+    },
+    ...overrides,
+  } as any);
+}
 
 describe("4-5-1 CFE", () => {
   it("初期値: 直近12週以内のレース実績があればそれを使う", () => {
@@ -30,30 +66,71 @@ describe("4-5-1 CFE", () => {
     expect(cfe.estimated800mSec).toBeCloseTo(111.01, 2);
   });
 
-  it("更新式: ΔRPE=+2, 達成 → 新CFE = CFE + 2×0.4×0.3×0.7 (high_lactate)", () => {
+  /*
+   * ここから下は「実測タイク基準」に変えたあとの性質。
+   * 以前は 現CFE + ΔRPE×0.4 + 未達幅 で、未達幅は遅い側だけを見ていた。
+   * 速く走ってもCFEが動かず、続けるほど遅い側へ寄るのが本人の感覚とのズレの原因だった。
+   */
+  it("アンカー: カテゴリ比率どおりのタイムならCFEは動かない", () => {
     const cfe = initCfe(109.51, "2026-04-01"); // 111.01
     const s = makeSession("2026-04-02", "high_lactate", { targetPaces: [tp600] });
-    const r = makeResult(s, { rpe: 10, achievement: "achieved" }); // 期待RPE 8 → Δ+2
-    const u = updateCfeFromResult(cfe, s, r);
-    // implied = 111.01 + 0.8, delta = 0.8×0.3×0.7 = 0.168
-    expect(u.applied).toBe(true);
-    expect(u.deltaSec).toBeCloseTo(0.168, 3);
-    expect(u.cfe.estimated800mSec).toBeCloseTo(111.178, 2);
+    const t = repTimeFor(CFE0, "high_lactate", 600);
+    const u = updateCfeFromResult(cfe, s, measured(s, [t, t, t], 600, { rpe: 8 }));
+    expect(u.impliedSec).toBeCloseTo(CFE0, 2);
+    expect(u.deltaSec).toBeCloseTo(0, 3);
   });
 
-  it("未達幅: 実測ペースが設定より遅い分を800m換算で加算する", () => {
+  it("速く走ればCFEは改善する（旧実装では速い側が捨てられていた）", () => {
     const cfe = initCfe(109.51, "2026-04-01");
-    const s = makeSession("2026-04-02", "race_economy", { targetPaces: [tp600] });
-    // 設定85.0/600mに対し実測88.0 → (88-85)/600×800 = 4.0秒の未達
-    const r = makeResult(s, {
-      rpe: 6, // 期待通り
-      achievement: "partial",
-      actualLapsSec: [88, 88, 88],
-      lapDistancesM: [600, 600, 600],
+    const s = makeSession("2026-04-02", "high_lactate", { targetPaces: [tp600] });
+    const t = repTimeFor(CFE0 - 3.0, "high_lactate", 600); // 800m換算で3秒速い
+    const u = updateCfeFromResult(cfe, s, measured(s, [t, t, t], 600, { rpe: 8 }));
+    expect(u.impliedSec).toBeCloseTo(CFE0 - 3.0, 2);
+    expect(u.deltaSec).toBeLessThan(0);
+  });
+
+  it("同じ幅なら速い側と遅い側が対称に効く", () => {
+    const cfe = initCfe(109.51, "2026-04-01");
+    const s = makeSession("2026-04-02", "high_lactate", { targetPaces: [tp600] });
+    const fast = repTimeFor(CFE0 - 2.0, "high_lactate", 600);
+    const slow = repTimeFor(CFE0 + 2.0, "high_lactate", 600);
+    const up = updateCfeFromResult(cfe, s, measured(s, [fast, fast, fast], 600, { rpe: 8 }));
+    const down = updateCfeFromResult(cfe, s, measured(s, [slow, slow, slow], 600, { rpe: 8 }));
+    expect(up.deltaSec).toBeCloseTo(-down.deltaSec, 3);
+  });
+
+  it("RPEは補助: 同じタイムならRPEが違っても符号は反転しない", () => {
+    const cfe = initCfe(109.51, "2026-04-01");
+    const s = makeSession("2026-04-02", "high_lactate", { targetPaces: [tp600] });
+    const t = repTimeFor(CFE0 - 3.0, "high_lactate", 600);
+    const easy = updateCfeFromResult(cfe, s, measured(s, [t, t, t], 600, { rpe: 6 }));
+    const hard = updateCfeFromResult(cfe, s, measured(s, [t, t, t], 600, { rpe: 10 }));
+    expect(easy.deltaSec).toBeLessThan(0);
+    expect(hard.deltaSec).toBeLessThan(0); // 旧実装ではここが悪化に転んでいた
+    expect(easy.deltaSec).toBeLessThan(hard.deltaSec); // 楽なほうが改善は大きい
+  });
+
+  it("RPEが低い（全力でない）実測は能力の推定に使わない", () => {
+    const cfe = initCfe(109.51, "2026-04-01");
+    const s = makeSession("2026-04-02", "high_lactate", { targetPaces: [tp600] });
+    const t = repTimeFor(CFE0 - 5.0, "high_lactate", 600);
+    const u = updateCfeFromResult(cfe, s, measured(s, [t, t, t], 600, { rpe: 4 }));
+    expect(u.applied).toBe(false);
+    expect(u.guardrailNotes.join()).toContain("全力に近くない");
+  });
+
+  it("設定ペースを見ない（同じ実測なら設定が何であってもCFEの動きは同じ）", () => {
+    const cfe = initCfe(109.51, "2026-04-01");
+    const t = repTimeFor(CFE0 - 2.0, "high_lactate", 600);
+    const easyTarget = makeSession("2026-04-02", "high_lactate", {
+      targetPaces: [{ distanceM: 600, targetSecFast: 95, targetSecSlow: 95 }],
     });
-    const u = updateCfeFromResult(cfe, s, r);
-    // implied = CFE + 0 + 4.0, delta = 4.0×0.3×0.6 = 0.72
-    expect(u.deltaSec).toBeCloseTo(0.72, 2);
+    const hardTarget = makeSession("2026-04-02", "high_lactate", {
+      targetPaces: [{ distanceM: 600, targetSecFast: 75, targetSecSlow: 75 }],
+    });
+    const a = updateCfeFromResult(cfe, easyTarget, measured(easyTarget, [t, t, t], 600, { rpe: 8 }));
+    const b = updateCfeFromResult(cfe, hardTarget, measured(hardTarget, [t, t, t], 600, { rpe: 8 }));
+    expect(a.deltaSec).toBeCloseTo(b.deltaSec, 6);
   });
 
   it("ガードレール: 1回の更新は±1.5秒まで", () => {
@@ -170,19 +247,20 @@ describe("4-5-1 CFE", () => {
     expect(u.cfe.estimated800mSec).toBeCloseTo(109.8, 2);
   });
 
-  it("SKIP-06: 中断（本数減）は未達としてCFEに反映する", () => {
+  it("SKIP-06: 中断（本数減）は値を盛らず、その結果の信頼度を下げる", () => {
     const cfe = initCfe(109.51, "2026-04-01");
     const s = makeSession("2026-04-02", "high_lactate", { targetPaces: [tp600] });
-    const r = makeResult(s, {
-      rpe: 8,
-      achievement: "partial",
-      completedReps: 3,
-      prescribedReps: 5,
-    });
-    const u = updateCfeFromResult(cfe, s, r);
-    expect(u.applied).toBe(true);
-    expect(u.deltaSec).toBeGreaterThan(0);
-    expect(u.guardrailNotes.join()).toContain("SKIP-06");
+    const t = repTimeFor(CFE0 + 2.0, "high_lactate", 600);
+    const full = updateCfeFromResult(cfe, s, measured(s, [t, t, t], 600, { rpe: 8 }));
+    const cut = updateCfeFromResult(
+      cfe,
+      s,
+      measured(s, [t, t, t], 600, { rpe: 8, completedReps: 3, prescribedReps: 5 })
+    );
+    // 実測が同じなら推定値も同じ。違うのは反映の強さだけ
+    expect(cut.impliedSec).toBeCloseTo(full.impliedSec!, 6);
+    expect(cut.deltaSec).toBeCloseTo(full.deltaSec / 2, 3);
+    expect(cut.guardrailNotes.join()).toContain("SKIP-06");
   });
 
   it("鈍化: 14日以上結果が無ければ +0.4秒/週", () => {
@@ -196,10 +274,13 @@ describe("4-5-1 CFE", () => {
   it("更新履歴が必ず保存される（監査用）", () => {
     const cfe = initCfe(109.51, "2026-04-01");
     const s = makeSession("2026-04-02", "high_lactate", { targetPaces: [tp600] });
-    const r = makeResult(s, { rpe: 10 });
-    const u = updateCfeFromResult(cfe, s, r);
+    const t = repTimeFor(CFE0 - 2.0, "high_lactate", 600);
+    const u = updateCfeFromResult(cfe, s, measured(s, [t, t, t], 600, { rpe: 8 }));
     expect(u.cfe.history.length).toBe(cfe.history.length + 1);
-    expect(u.cfe.history.at(-1)!.source).toContain("high_lactate");
+    const source = u.cfe.history.at(-1)!.source;
+    expect(source).toContain("high_lactate");
+    // 何から出した推定なのかが履歴だけで追えること（あとで数値を疑うときに要る）
+    expect(source).toContain("本平均");
   });
 });
 

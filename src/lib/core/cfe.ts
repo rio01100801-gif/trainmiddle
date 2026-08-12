@@ -13,6 +13,15 @@ import type {
   SessionResult,
 } from "./types";
 import { diffDays } from "./dates";
+import { impliedFromInterval } from "./backfill";
+
+/**
+ * RPE 1ポイントあたりの補正（秒/800m）。
+ *
+ * 実測タイム基準に変えたときに 0.4 から下げた。主役は実測で、RPEは補助。
+ * 0にしないのは、レストを削った・向かい風だった等がRPEにしか出ないため。
+ */
+export const RPE_ADJUST_SEC_PER_POINT = 0.15;
 
 // ---------------------------------------------------------------------------
 // 期待RPEと信頼度（仕様書 4-5-1 の表）
@@ -147,51 +156,87 @@ export function updateCfeFromResult(
     };
   }
 
-  // ΔRPE
-  const dRpe = result.rpe - params.expectedRpe;
-
-  // 未達幅（800m換算秒）: (実測ペース/m − 設定ペース/m) × 800。達成なら0
-  let shortfall = 0;
-  if (result.achievement !== "achieved" && session.targetPaces.length > 0) {
-    const dists = result.lapDistancesM ?? result.actualLapsSec.map(
-      () => session.targetPaces[0].distanceM
-    );
-    const totalM = dists.reduce((a, b) => a + b, 0);
-    const totalSec = result.actualLapsSec.reduce((a, b) => a + b, 0);
-    if (totalM > 0) {
-      const actualPerM = totalSec / totalM;
-      const tp = session.targetPaces[0];
-      let targetPerM = ((tp.targetSecFast + tp.targetSecSlow) / 2) / tp.distanceM;
-      // 目標タイムの混入を取り除く（上のCfeUpdateContext.goalTargetTimeSecの説明を参照）
-      if (ctx.goalTargetTimeSec !== undefined) {
-        const blended = baseTime(cur, ctx.goalTargetTimeSec, session.phase);
-        if (blended > 0) targetPerM *= cur / blended;
-      }
-      shortfall = Math.max(0, (actualPerM - targetPerM) * 800);
-    }
-  }
   /*
-   * 中断（SKIP-06）: 本数を減らして終了 → 完遂扱いにせず未達としてCFEに反映。
+   * 実測タイムから800m相当を出す（この方式に変えた経緯）。
    *
-   * ただし M-3 の中止基準にしたがって打ち切った場合は除く。
-   * 「2本連続で許容を超えたら止めろ」と指示しておいて、
-   * 止めたことを未達としてCFEに響かせるのは筋が通らない。
-   * 打ち切りは設定側（M-2）が受け取る。
+   * 以前は「現CFE + ΔRPE×0.4 + 未達幅」で暗黙のタイムを作っていた。
+   * 未達幅は `Math.max(0, 実測 − 設定)` で、**速く走った分は捨てていた**。
+   * つまりタイムが速いことはCFEに一切入らず、改善が入る経路はRPE（主観）だけ。
+   * 実測すると、設定より3.5秒/本 速く走っても −0.17秒しか動かないのに、
+   * 遅いと +1.34秒 動いた。同じタイムでもRPEを高く入れると符号が反転した。
+   * 続けるほど遅い側へ寄る作りで、本人の感覚と合わなくなっていた。
+   *
+   * 今は `impliedFromInterval`（過去データからの現在地測定と同じ実装）を使う。
+   * 実測平均 ÷ カテゴリのGRP比率 × 800 で、速い側も遅い側も対称に効く。
+   * レストの長さ・本数・カテゴリによる信頼度もそちらが持っている。
+   * **換算をここに書き直さない**——同じ実測から画面ごとに違う推定が出てはいけない。
+   *
+   * 設定ペース（targetPaces）を見なくなった副次効果として、
+   * 「目標タイクが設定に混ざってCFEに逆流する」問題（goalTargetTimeSec で
+   * 打ち消していたもの）が構造的に消えた。絶対時間しか見ていないため。
    */
+  const dists =
+    result.lapDistancesM ??
+    (session.targetPaces[0]
+      ? result.actualLapsSec.map(() => session.targetPaces[0].distanceM)
+      : undefined);
+  const repDistanceM = dists && dists.length > 0 ? dists[0] : undefined;
+  const measured = impliedFromInterval({
+    id: result.id,
+    date: result.date,
+    kind: "interval",
+    category: session.category,
+    repDistanceM,
+    repTimesSec: result.actualLapsSec,
+    rpe: result.rpe,
+    restType: result.interval?.restType,
+    restSec: result.interval?.restSec,
+  });
+
+  if (!measured) {
+    return {
+      cfe,
+      applied: false,
+      deltaSec: 0,
+      guardrailNotes: [
+        result.rpe !== undefined && result.rpe < 6
+          ? "ガードレール: RPEが低い（全力に近くない）実測は能力の推定に使わない"
+          : "実測から800m相当を出せませんでした（距離・タイムが足りない）",
+      ],
+    };
+  }
+
+  /*
+   * RPEは補助に降格した。
+   *
+   * 同じタイムでも楽に出せたなら能力は上、というのは実在する情報なので残すが、
+   * 主役は実測タイム。係数を 0.4 から 0.15 に下げてある。
+   * 0にしないのは、レストを削った・向かい風だった等がRPEにだけ出るため。
+   */
+  const dRpe = result.rpe - params.expectedRpe;
+  const implied = measured.implied800mSec + dRpe * RPE_ADJUST_SEC_PER_POINT;
+
+  /*
+   * 中断（SKIP-06）: 本数を減らして終了したセッションは代表性が落ちる。
+   *
+   * 以前は「中断＝未達」として悪化方向に固定で足していたが、実測基準では
+   * 完走した本のタイムがそのまま入るので二重に罰することになる。
+   * 値ではなく**信頼度**を下げる形に変えた。
+   * M-3 の中止基準にしたがって打ち切った場合を除くのは従来どおり
+   * （止めろと指示しておいて、止めたことを能力低下に響かせない）。
+   */
+  let reliability = measured.reliability;
   if (
     !result.aborted &&
     result.completedReps !== undefined &&
     result.prescribedReps !== undefined &&
-    result.completedReps < result.prescribedReps &&
-    shortfall === 0
+    result.completedReps < result.prescribedReps
   ) {
-    const missRatio = 1 - result.completedReps / result.prescribedReps;
-    shortfall = Math.min(2.0, missRatio * 3.0); // 中断幅に応じた未達換算（上限2秒）
-    notes.push("SKIP-06: セッション中断を未達としてCFEに反映");
+    reliability *= 0.5;
+    notes.push("SKIP-06: セッション中断のため、この結果の信頼度を半分にする");
   }
 
-  const implied = cur + dRpe * 0.4 + shortfall;
-  let delta = (implied - cur) * 0.3 * params.confidence;
+  let delta = (implied - cur) * 0.3 * reliability;
 
   // ガードレール: 1回の更新で±1.5秒を超えて動かさない
   if (Math.abs(delta) > 1.5) {
@@ -232,8 +277,8 @@ export function updateCfeFromResult(
       cfe,
       after,
       result.date,
-      `${session.category} 結果（RPE ${result.rpe} / ${result.achievement}）`,
-      params.confidence,
+      `${session.category} 実測から800m相当 ${implied.toFixed(2)}秒（${measured.note} / RPE ${result.rpe}）`,
+      reliability,
       result.sessionId
     ),
     applied: true,

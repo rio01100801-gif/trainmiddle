@@ -2551,6 +2551,46 @@ for (const label of ["プロフィール", "メニュー設定", "目標・レ�
 }
 step("P-5 設定画面の説明とグループ分けOK（到達先は減っていない）");
 
+/*
+ * ---- 15b. 機能検索 ----
+ *
+ * 「どこに何があるか分からない」を解くための入口。
+ * 画面名ではなく本人の言葉（症状・やりたいこと）で引けることを見る。
+ * 出るだけでなく、押して実際にその画面へ行けるところまで確認する
+ * ——リンク先が間違っていても、一覧に出た時点では気づけない。
+ */
+{
+  const box = page.getByLabel("機能を探す");
+  if ((await box.count()) === 0) fail("機能検索の入力欄が無い");
+  else {
+    // 症状の言葉で引く（画面名「過去データの一括入力」を知らなくても届くこと）
+    await box.fill("ずれてる");
+    await page.waitForTimeout(400);
+    const hitText = await page.locator("section.card", { hasText: "機能を探す" }).textContent();
+    if (!/現在地の測定/.test(hitText ?? "")) {
+      fail(`機能検索: 「ずれてる」で現在地の測定が出ない（${(hitText ?? "").slice(0, 120)}）`);
+    }
+    // 画面の中にある機能は、行った先のどこにあるかまで出ていること
+    if (!/場所:/.test(hitText ?? "")) fail("機能検索: 画面の中の機能の場所が出ていない");
+
+    await page.getByRole("link", { name: /現在地の測定/ }).first().click();
+    await page.waitForTimeout(700);
+    const hash = await page.evaluate(() => window.location.hash);
+    if (!hash.startsWith("#/past")) fail(`機能検索: 結果を押しても移動しない（${hash}）`);
+
+    // 該当が無いときに無理やり何かを出さない
+    await page.goto("http://localhost:8791/#/settings");
+    await page.waitForTimeout(500);
+    await page.getByLabel("機能を探す").fill("ぬるぽ");
+    await page.waitForTimeout(400);
+    const none = await page.locator("section.card", { hasText: "機能を探す" }).textContent();
+    if (!/見つかりませんでした/.test(none ?? "")) {
+      fail("機能検索: 該当が無いときの表示が出ない");
+    }
+    step("機能検索OK（症状の言葉で引ける・押すと移動する・無いときは無いと言う）");
+  }
+}
+
 // ---- 15a-2. S-3: 自作メニューの登録も他と同じ入力方法になっていること ----
 await page.goto("http://localhost:8791/#/plan-settings");
 await page.waitForTimeout(900);

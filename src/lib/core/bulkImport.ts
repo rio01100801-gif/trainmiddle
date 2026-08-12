@@ -290,6 +290,31 @@ export function representativeDistance(segments: Segment[]): number | undefined 
   return best;
 }
 
+/**
+ * 「1000×4」「300(41-42)×2×2」のような "距離×本数" のかたまりを全部拾う。
+ *
+ * `parseRepSpec` は先頭の1つしか返さない。そのため
+ * `1000×4＋200×3` を渡すと **200×3 が黙って消えていた**
+ * （エラーも出ずに 1000m×4 だけのメニューになる）。
+ * 落とさずに全部返すのがここの役割。
+ */
+export function parseRepBlocks(
+  content: string
+): { distanceM: number; reps: number; targetSec?: number }[] {
+  const re =
+    /(\d{2,4})\s*[mMｍ]?\s*(?:[（(]\s*([\d:.\-〜~]+?)\s*[）)])?\s*[×xX＊*]\s*(\d{1,2})(?:\s*[×xX＊*]\s*(\d{1,2}))?/g;
+  const out: { distanceM: number; reps: number; targetSec?: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content))) {
+    out.push({
+      distanceM: Number(m[1]),
+      reps: m[4] ? Number(m[3]) * Number(m[4]) : Number(m[3]),
+      targetSec: m[2] ? timeTokenToSec(m[2].split(/[-〜~]/)[0]) : undefined,
+    });
+  }
+  return out;
+}
+
 export function parseSegments(content: string): Segment[] {
   const out: Segment[] = [];
   const re = /(\d{3,4})\s*[mMｍ]?\s*[（(]\s*([\d:.\-〜~]+?)\s*[）)]/g;
@@ -299,6 +324,27 @@ export function parseSegments(content: string): Segment[] {
     // "3:15-25" や "41-42" のような幅表記は先頭を採る
     const first = m[2].split(/[-〜~]/)[0];
     out.push({ distanceM: dist, targetSec: timeTokenToSec(first) });
+  }
+  if (out.length > 0) return out;
+
+  /*
+   * 括弧つきの区間表記が無くても、"距離×本数" が2かたまり以上あれば複合セット。
+   * 例: 1000×4＋200×3 → 1000を4本ぶん、200を3本ぶんの区間に展開する。
+   *
+   * 展開して既存の複合セット処理（代表距離の決定・混在の警告・本数の対応づけ）に
+   * そのまま乗せるのが狙い。ここで別の分岐を作ると、同じ本文が
+   * 「一括入力」と「編集シート」で違う意味になる。
+   *
+   * 1かたまりのときは展開しない。`300m×6` は従来どおり `parseRepSpec` が扱う
+   * （ここで6区間に展開すると、単発のメニューまで複合セット扱いになって
+   *   「距離の違う区間が混ざっています」の判定経路に入ってしまう）。
+   */
+  const blocks = parseRepBlocks(content);
+  if (blocks.length < 2) return out;
+  for (const b of blocks) {
+    for (let i = 0; i < b.reps; i++) {
+      out.push({ distanceM: b.distanceM, targetSec: b.targetSec });
+    }
   }
   return out;
 }
@@ -789,14 +835,36 @@ export function parseRow(
     }
 
     const followsNextDistance = /[rR]\s*次の距離\s*(?:walk|ウォーク)/i.test(content);
-    const rest = /[rR]\s*(\d+\s*(?:min|分|秒|m)?\s*(?:jog|walk|ジョグ|ウォーク)?)/.exec(content);
+    /*
+     * レストは連鎖で書かれることがある（例: r3min-5min-200jog）。
+     * 複合セットでは「1本間」「セット間」「2つ目のセットの本数間」のように
+     * 場所ごとに違うレストを指すのが普通。
+     *
+     * 以前は先頭の `3min` だけを拾って残りを捨てていた。捨てた事実も出ないので、
+     * 本人には「5分と200mジョグは無かったこと」になっていた。
+     * 表記は全部 restNote に残し、構造化する値（負荷計算やCFEのレスト補正に使う）は
+     * 先頭のものを代表として採る——1本間のレストが実施強度をいちばん左右するため。
+     * 代表を採ったことは本文で伝える（黙って1つに丸めない）。
+     */
+    const REST_UNIT = String.raw`\d+\s*(?:min|分|秒|m)?\s*(?:jog|walk|ジョグ|ウォーク)?`;
+    const rest = new RegExp(
+      String.raw`[rR]\s*(${REST_UNIT}(?:\s*[-−ー〜~]\s*${REST_UNIT})*)`
+    ).exec(content);
     if (followsNextDistance) {
       row.restNote = "r次の距離walk";
       row.restType = "walk";
       row.restFollowsNextDistance = true;
     } else if (rest) {
-      row.restNote = `r${rest[1].trim()}`;
-      Object.assign(row, parseRest(rest[1]));
+      const whole = rest[1].trim();
+      row.restNote = `r${whole}`;
+      const parts = whole.split(/\s*[-−ー〜~]\s*/).filter(Boolean);
+      Object.assign(row, parseRest(parts[0]));
+      if (parts.length > 1) {
+        row.issues.push(
+          `レストが${parts.length}種類あります（${parts.join(" / ")}）。` +
+            `負荷とレスト補正には先頭の「${parts[0]}」を使います`
+        );
+      }
     }
 
     if (!row.repDistanceM && row.category !== "neural") {

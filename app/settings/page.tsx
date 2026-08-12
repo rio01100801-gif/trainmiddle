@@ -1,7 +1,9 @@
 "use client";
+import { useState } from "react";
 import Link from "next/link";
 import { Card } from "../components/ui";
 import { SETTINGS_ITEMS } from "../components/nav";
+import { searchFeatures } from "@/lib/core/featureSearch";
 
 /**
  * 設定画面（B-1 / B-2）
@@ -50,9 +52,74 @@ const ELSEWHERE: { label: string; where: string; href: string }[] = [
   { label: "警告の一覧", where: "ホームとカレンダーの警告バッジから", href: "/warnings" },
 ];
 
+/**
+ * 機能検索。
+ *
+ * 設定画面に置いたのは、ここが「日々使わないものの置き場所」だから。
+ * 探しているのはたいていこの中にある。ヘッダーの歯車から全画面で1タップ。
+ * 下部タブは4つから増やさない（FORGEの規則）ので、入口はここに集約する。
+ *
+ * 判定は `featureSearch.ts`。LLMは使わないので、同じ入力からは同じ結果が出る。
+ */
+function FeatureSearch() {
+  const [q, setQ] = useState("");
+  const hits = searchFeatures(q);
+  const typed = q.trim().length > 0;
+
+  return (
+    <Card title="機能を探す">
+      <p className="text-[11.5px] leading-relaxed mb-2" style={{ color: "var(--text-3)" }}>
+        画面の名前が分からなくても引けます。「タイムがずれてる」「バックアップ」
+        「コーチに見せる」のように、やりたいことで入れてください。
+      </p>
+      <input
+        type="search"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="例: cfe / バックアップ / 暑い"
+        aria-label="機能を探す"
+        className="w-full"
+        style={{ minHeight: 44 }}
+      />
+      {typed && hits.length === 0 ? (
+        <p className="text-[12px] mt-2.5" style={{ color: "var(--text-3)" }}>
+          見つかりませんでした。別の言い方で試してください。
+        </p>
+      ) : null}
+      {hits.length > 0 ? (
+        <div className="flex flex-col mt-1.5">
+          {hits.map((h) => (
+            <Link
+              key={h.feature.id}
+              href={h.feature.href}
+              className="py-2.5 border-b"
+              style={{ borderColor: "var(--border)" }}
+            >
+              <span className="text-[13px] font-semibold">{h.feature.label}</span>
+              <span
+                className="block text-[11.5px] leading-relaxed mt-0.5"
+                style={{ color: "var(--text-2)" }}
+              >
+                {h.feature.description}
+              </span>
+              {/* 画面の中にある機能は、行った先のどこかまで書かないと辿り着けない */}
+              {h.feature.where ? (
+                <span className="block text-[11px] mt-0.5" style={{ color: "var(--text-3)" }}>
+                  場所: {h.feature.where}
+                </span>
+              ) : null}
+            </Link>
+          ))}
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   return (
     <div className="settings-screen flex flex-col gap-3">
+      <FeatureSearch />
       {SETTINGS_GROUPS.map((g) => (
         <Card key={g.title} title={g.title}>
           <div className="flex flex-col">
