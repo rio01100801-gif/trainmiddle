@@ -40,8 +40,17 @@ const FILES = [
   "brand-wordmark.png",
 ];
 
+/*
+ * iOSの起動画像。機種ごとに1枚あるので名前を並べず拾う。
+ * 無ければ静かに飛ばす（起動画像を作っていない状態でもビルドは通す）。
+ * 実体の生成は scripts/build-splash-screens.mjs。
+ */
+const splashScreens = fs
+  .readdirSync(from)
+  .filter((f) => /^splash-\d+x\d+\.png$/.test(f));
+
 fs.mkdirSync(to, { recursive: true });
-for (const f of FILES) {
+for (const f of [...FILES, ...splashScreens]) {
   const src = path.join(from, f);
   if (!fs.existsSync(src)) continue;
   fs.copyFileSync(src, path.join(to, f));

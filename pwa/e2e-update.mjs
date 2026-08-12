@@ -7,8 +7,12 @@
  *
  * 1. 旧版を配信 → 起動 → SWが制御を取る
  * 2. 配信ディレクトリの中身を差し替える（新版）
- * 3. リロード → 新版が表示されること
- * 4. オフラインにしても起動できること（キャッシュが機能していること）
+ * 3. 1回目のリロード → キャッシュ（旧版）が即返ること。裏で新版を取る
+ * 4. 2回目のリロード → 新版が表示されること
+ * 5. オフラインにしても起動できること（キャッシュが機能していること）
+ *
+ * 3で「旧版が出ること」まで見ているのは速さの回帰を防ぐため。
+ * ここで新版が出るなら、キャッシュを即返さず通信を待っているということ。
  */
 import { DIST, launchOptions, loadChromium } from "./e2e-env.mjs";
 import http from "http";
@@ -76,10 +80,30 @@ step("旧版の起動＋Service Worker登録OK");
 fs.writeFileSync(indexPath, baseHtml.replace("</body>", '<div id="ver">NEW</div></body>'));
 step("配信ファイルを新版に差し替え（sw.js は据え置き）");
 
-// ---- 3. リロードで新版が届くか ----
+/*
+ * ---- 3. 新版が届くか（stale-while-revalidate なので1回遅れ）----
+ *
+ * 以前はネットワーク優先で、1回のリロードで新版になった。
+ * 起動のたびに通信を待つのをやめた（キャッシュを即返す）ので、契約が変わった。
+ *   1回目のリロード … 手元のキャッシュ＝旧版が出る。裏で新版を取ってキャッシュへ
+ *   2回目のリロード … 新版が出る
+ * 「いつか届く」ではなく**ちょうど次の起動で届く**ことまで見る。
+ * 1回目で既に新版になるなら、それは裏取りではなく通信待ちをしている証拠なので、
+ * それも失敗として扱う（速さの回帰を見逃さないため）。
+ */
 await page.reload();
 await page.waitForFunction(() => !document.getElementById("splash"), { timeout: 15000 });
-// controllerchange による自動リロードを待つ余地を持たせる
+const afterFirst = await page.locator("#ver").textContent();
+if (afterFirst?.includes("NEW")) {
+  fail("1回目のリロードで新版が出た（キャッシュを即返さず通信を待っている）");
+} else {
+  step("1回目はキャッシュ即返しOK（通信を待たない）");
+}
+
+// 裏の取得がキャッシュに入るのを待つ
+await page.waitForTimeout(1200);
+await page.reload();
+await page.waitForFunction(() => !document.getElementById("splash"), { timeout: 15000 });
 let updated = true;
 await page
   .waitForFunction(() => document.getElementById("ver")?.textContent === "NEW", {
@@ -87,9 +111,9 @@ await page
   })
   .catch(() => {
     updated = false;
-    fail("差し替えたのに旧版のまま表示される（更新が届かない）");
+    fail("2回目のリロードでも旧版のまま（裏での更新が効いていない）");
   });
-if (updated) step("リロードで新版が反映OK");
+if (updated) step("次の起動で新版が反映OK（VERSION据え置きでも届く）");
 
 // ---- 4. オフラインでも起動できるか ----
 await ctx.setOffline(true);

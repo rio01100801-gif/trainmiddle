@@ -3035,9 +3035,29 @@ if (!manifestIcons.some((src) => src.includes("icon-32.png"))) {
 if (!manifestIcons.some((src) => src.includes("icon-maskable-512.png"))) {
   fail("R-3: manifestにmaskable iconが無い");
 }
+/*
+ * iOSの起動画像。
+ * 無いとコールド起動のあいだ白い画面が出る（iOSはmanifestのbackground_colorを見ない）。
+ * ここで見張るのは、**link は書いてあるのに実体が配信物に無い**状態。
+ * その場合iOSは黙って白に戻すので、画面を見ても原因が分からない。
+ */
+const startupImages = await page.evaluate(() =>
+  Array.from(document.querySelectorAll('link[rel="apple-touch-startup-image"]')).map(
+    (l) => l.getAttribute("href")
+  )
+);
+if (startupImages.length < 8) {
+  fail(`R-3: iOSの起動画像のlinkが足りない（${startupImages.length}件）`);
+}
+for (const href of startupImages) {
+  if (!(await page.evaluate(async (u) => (await fetch(u)).ok, href))) {
+    fail(`R-3: 起動画像 ${href} が配信物に無い（iOSが白い画面に戻る）`);
+  }
+}
 step(
   `R-3 マークOK（マーク ${Math.round(markBox?.width ?? 0)}×${Math.round(markBox?.height ?? 0)} / ` +
-    `ワードマーク ${Math.round(wmBox?.width ?? 0)}×${Math.round(wmBox?.height ?? 0)} / アイコン5種）`
+    `ワードマーク ${Math.round(wmBox?.width ?? 0)}×${Math.round(wmBox?.height ?? 0)} / ` +
+    `アイコン5種 / 起動画像${startupImages.length}種）`
 );
 await shot("34_mark_header");
 

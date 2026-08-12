@@ -11,7 +11,7 @@
  *
  * リリースのたびに VERSION を必ず上げること（上げないと install が走らない）。
  */
-const VERSION = "forge-v63";
+const VERSION = "forge-v64";
 const ASSETS = [
   "./",
   "./index.html",
@@ -82,21 +82,36 @@ self.addEventListener("fetch", (e) => {
   if (!sameOrigin) return;
 
   if (isAppShell(e.request.url)) {
-    // ネットワーク優先 + 成功したらキャッシュ更新 / 失敗したらキャッシュ
+    /*
+     * stale-while-revalidate: キャッシュがあれば即返し、更新は裏で取る。
+     *
+     * 以前はネットワーク優先だった。理由は「VERSIONを上げ忘れて再配信しても
+     * 端末に新版が届く」という保険で、それ自体は要る（`e2e-update.mjs` が見張っている）。
+     * ただし代償として、**手元に完動品があるのに毎回まず通信を待っていた**。
+     * bundle.js は1MB近くあるので、電波が悪いと起動のたびに白い画面が数秒続く。
+     * iOSでアプリがメモリから落とされたあとの起動で、これがそのまま体感になる。
+     *
+     * キャッシュを即返し、取得した新版はキャッシュに入れて**次回の起動で反映**する。
+     * 保険は1回遅れで残る。VERSIONを上げた場合は install が新しいキャッシュを
+     * 作り直すので、これまで通り次の起動で即座に切り替わる（遅れない）。
+     */
     e.respondWith(
-      fetch(e.request)
-        .then((res) => {
-          if (res.ok) {
-            const copy = res.clone();
-            caches.open(VERSION).then((c) => c.put(e.request, copy));
+      caches.open(VERSION).then((cache) =>
+        cache.match(e.request, { ignoreSearch: true }).then((hit) => {
+          const fresh = fetch(e.request)
+            .then((res) => {
+              if (res.ok) cache.put(e.request, res.clone());
+              return res;
+            })
+            .catch(() => hit || caches.match("./index.html"));
+          if (hit) {
+            // 裏の更新は応答と切り離す。ここで待たないので起動は速いまま
+            e.waitUntil(fresh.catch(() => {}));
+            return hit;
           }
-          return res;
+          return fresh;
         })
-        .catch(() =>
-          caches
-            .match(e.request, { ignoreSearch: true })
-            .then((hit) => hit || caches.match("./index.html"))
-        )
+      )
     );
     return;
   }

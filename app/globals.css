@@ -186,17 +186,33 @@ textarea:focus-visible {
   display: flex;
   gap: 15px;
 }
+/*
+ * 点は2層。下に消灯色、上に緑を重ねて上の層のopacityだけ動かす。
+ * 色のアニメーションはコンポジタに乗らず、毎フレーム、メインスレッドでの
+ * 描き直しが要る。この画面が出ている最中のメインスレッドは起動処理で
+ * 埋まっているので、色を動かすとそこだけカクつく。
+ */
 .launch-loader-dots i {
+  position: relative;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.16);
+}
+.launch-loader-dots i::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--forge);
+  opacity: 0;
+  will-change: opacity;
   animation: launch-dot 1.35s ease-in-out infinite;
 }
-.launch-loader-dots i:nth-child(2) {
+.launch-loader-dots i:nth-child(2)::after {
   animation-delay: 0.18s;
 }
-.launch-loader-dots i:nth-child(3) {
+.launch-loader-dots i:nth-child(3)::after {
   animation-delay: 0.36s;
 }
 .launch-brand {
@@ -268,15 +284,15 @@ textarea:focus-visible {
 }
 /* 3つの点を順に光らせる。1周ぶんの点灯は短く、大半は消えている */
 @keyframes launch-dot {
-  0%, 60%, 100% { background: rgba(255, 255, 255, 0.16); }
-  25% { background: var(--forge); }
+  0%, 60%, 100% { opacity: 0; }
+  25% { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .launch-brand,
   .launch-data,
   .launch-wait,
-  .launch-loader-dots i {
+  .launch-loader-dots i::after {
     animation: none !important;
   }
   .launch-brand,
@@ -285,8 +301,8 @@ textarea:focus-visible {
     transform: none;
   }
   /* 動かさない代わりに、生きていることは先頭の点の色で示す */
-  .launch-loader-dots i:first-child {
-    background: var(--forge);
+  .launch-loader-dots i:first-child::after {
+    opacity: 1;
   }
 }
 

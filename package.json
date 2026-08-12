@@ -32,7 +32,8 @@
     "smoke": "node scripts/smoke-test.mjs",
     "visual": "node pwa/visual.mjs --all-widths --check",
     "visual:shots": "node pwa/visual.mjs",
-    "visual:update": "node pwa/visual.mjs --all-widths --update"
+    "visual:update": "node pwa/visual.mjs --all-widths --update",
+    "build:splash": "node scripts/build-splash-screens.mjs"
   },
   "dependencies": {
     "fit-file-parser": "^4.1.0",
