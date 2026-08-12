@@ -35,6 +35,8 @@ const SLOT_OPTIONS: WeekdaySlot[] = [
   "race_economy",
   "cv",
   "threshold",
+  // 神経系は中身で分ける。「神経系」とだけ出しても何をやるのか分からない
+  "hill",
   "neural",
   "aerobic",
   "off",
@@ -132,6 +134,17 @@ function WeekTemplateCard() {
         連続高負荷、回復週、レース・テーパーでは自動配置を優先します。
         「固定」はユーザーが動かしたくない曜日だけに使い、安全上の問題は警告します。
       </p>
+      {/*
+        一覧に無い内容をやりたいときの逃げ道。
+        自作メニューは同じカテゴリの日に自動で使われる仕組みが既にあるが、
+        曜日設定の画面からはそれが見えず、「その他が無い」と受け取られていた。
+      */}
+      <p className="text-[11px] mb-3 leading-relaxed" style={{ color: "var(--text-3)" }}>
+        一覧に無いメニューは、下の「自作メニュー」に登録してください。
+        同じカテゴリの枠に当たった日で自動的に使われます。
+        「ジョグ＋坂ダッシュ」「ジョグ＋流し（WS）」は一覧から直接選べます
+        （どちらもジョグ30分が別枠で付きます）。
+      </p>
 
       <div className="flex flex-col gap-1.5">
         {DOWS.map((dow) => {
@@ -174,10 +187,21 @@ function WeekTemplateCard() {
                     </button>
                   ))}
                 </div>
+                {/*
+                  午前／午後を対で見せる。
+                  以前は主枠にラベルが無く、下の行だけ「午前」と書いてあったので
+                  「じゃあ上は何なのか」が分からなかった（本人から指摘）。
+                  両方に時間帯を書く。
+                */}
+                {/*
+                  時間帯は行の「上」に置く。横に並べると 320px幅（iPhone SE）で
+                  セレクトが押し出されて画面からはみ出す（E2Eで18px検出）。
+                */}
+                <div className="metric-label mb-0.5">午後（主）</div>
                 <div className="flex items-center gap-2">
                   <span
                     aria-hidden="true"
-                    className="w-1.5 h-6 rounded-sm flex-shrink-0"
+                    className="w-1 h-6 rounded-sm flex-shrink-0"
                     style={{
                       background: cat ? CATEGORY_COLORS[cat] : slot === "point" ? "var(--volt)" : "transparent",
                     }}
@@ -213,13 +237,10 @@ function WeekTemplateCard() {
                   勝手に乗るのを避けるため（800mで効くのは量ではない）。
                   上の枠は午後（主練習）を指す。
                 */}
-                <div className="flex items-center gap-2 mt-1">
-                  <span
-                    className="text-[10.5px] flex-shrink-0"
-                    style={{ color: "var(--text-3)" }}
-                  >
-                    午前
-                  </span>
+                <div className="metric-label mb-0.5 mt-1.5">午前（2部）</div>
+                <div className="flex items-center gap-2">
+                  {/* 午後側の色帯と幅を揃えて、2つが対だと分かるようにする */}
+                  <span aria-hidden="true" className="w-1 h-6 flex-shrink-0" />
                   <select
                     className="flex-1 min-h-[44px] !text-[12px]"
                     aria-label={`${DOW_LABELS[dow]}曜の午前（2部練習）`}

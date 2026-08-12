@@ -15,6 +15,7 @@ import { makeRace, testAthlete } from "./helpers";
 import {
   amSlotOf,
   isDoubleDay,
+  isPointSlot,
   normalizeWeekTemplate,
   validateWeekTemplate,
   type WeekTemplate,
@@ -253,5 +254,58 @@ describe("CFEの鈍化は「練習の記録が無い」ときだけ", () => {
     // 記録のほうが新しいぶん、鈍化は小さくなる
     expect(fromResult.estimated800mSec).toBeLessThan(fromCfe.estimated800mSec);
     expect(fromResult.estimated800mSec).toBeGreaterThan(111.0);
+  });
+});
+
+/**
+ * 神経系の中身を選び分ける。
+ *
+ * 坂ダッシュ（`hillSprints`）は実装があるのに曜日設定から選べず、
+ * neural を選ぶと必ず流しになっていた。
+ * ラベルも「神経系（ジョグ込み）」で、何をやるのか伝わらなかった。
+ */
+describe("ジョグ＋坂ダッシュ / ジョグ＋流し を選び分ける", () => {
+  const nameOn = (repo: ReturnType<typeof memRepo>, date: string) =>
+    repo.listSessions(date, date).map((s) => s.name);
+
+  it("坂ダッシュを指定すると坂ダッシュが出る", () => {
+    const repo = setup({ slots: { 3: "hill" }, modes: { 3: "fixed" } });
+    expect(nameOn(repo, "2026-08-19").join()).toContain("坂ダッシュ");
+  });
+
+  it("流しを指定すると流しが出る", () => {
+    const repo = setup({ slots: { 3: "neural" }, modes: { 3: "fixed" } });
+    expect(nameOn(repo, "2026-08-19").join()).toContain("流し");
+  });
+
+  it("どちらもジョグが別枠で付く（ジョグ＋◯◯になっている）", () => {
+    for (const slot of ["hill", "neural"] as const) {
+      const repo = setup({ slots: { 3: slot }, modes: { 3: "fixed" } });
+      const list = repo.listSessions("2026-08-19", "2026-08-19");
+      expect(list.some((s) => s.category === "aerobic")).toBe(true);
+      expect(list.some((s) => s.category === "neural")).toBe(true);
+    }
+  });
+
+  it("坂ダッシュはポイント練習に数えない（低負荷）", () => {
+    expect(isPointSlot("hill")).toBe(false);
+    // 高負荷2本の判定にも引っかからない
+    const v = validateWeekTemplate({
+      enabled: true,
+      slots: { 2: "hill" },
+      modes: { 2: "fixed" },
+      amSlots: { 2: "hill" },
+    });
+    expect(v.some((x) => x.message.includes("午前・午後とも高負荷"))).toBe(false);
+  });
+
+  it("午前枠にも坂ダッシュを置ける", () => {
+    const repo = setup({
+      slots: { 2: "point" },
+      modes: { 2: "fixed" },
+      amSlots: { 2: "hill" },
+    });
+    const am = repo.listSessions("2026-08-18", "2026-08-18").find((s) => s.timeOfDay === "am");
+    expect(am?.name).toContain("坂ダッシュ");
   });
 });

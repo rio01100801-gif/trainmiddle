@@ -366,7 +366,9 @@ function templateForSlot(
   if (slot === "off") return off();
   if (slot === "point") return pointTemplateFor(phase, economyWeek, pointIndex, weekParity);
   if (slot === "aerobic") return longRun ? longRunTemplate(60) : jog(40);
+  // 神経系は中身が2種類ある。どちらもジョグ30分が別枠で付く（combinedJogMin）
   if (slot === "neural") return strides(6);
+  if (slot === "hill") return hillSprints(8);
   return categoryTemplate(slot, economyWeek) ?? current;
 }
 

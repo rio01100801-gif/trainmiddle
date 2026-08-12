@@ -32,7 +32,15 @@ export const DOW_LABELS: Record<Dow, string> = {
  * - "point": 高負荷を含むポイント練習。具体的なカテゴリはフェーズに応じて自動で決まる
  * - 個別カテゴリ: そのカテゴリに固定する
  */
-export type WeekdaySlot = "auto" | "point" | SessionCategory;
+/**
+ * 曜日に割り当てる枠。
+ *
+ * `"hill"` はカテゴリではなく**内容の指定**。中身は神経系だが、
+ * 坂ダッシュと流しは同じ neural でも別物なので選び分けられるようにした。
+ * 以前は neural を選ぶと必ず流しになり、**坂ダッシュは実装があるのに
+ * 曜日設定から選べなかった**（自動生成の週テンプレートにしか出てこない）。
+ */
+export type WeekdaySlot = "auto" | "point" | "hill" | SessionCategory;
 export type WeekdayPreferenceMode = "none" | "preferred" | "fixed";
 
 export const SLOT_LABELS: Record<string, string> = {
@@ -43,7 +51,12 @@ export const SLOT_LABELS: Record<string, string> = {
   modeling: "モデリング",
   cv: "CV",
   threshold: "閾値",
-  neural: "神経系（ジョグ込み）",
+  /*
+   * 「神経系（ジョグ込み）」では何をやるのか伝わらなかった。
+   * 実物は「150m流し×6 ＋ ジョグ30分」なので、そのまま名前にする。
+   */
+  neural: "ジョグ＋流し（WS）",
+  hill: "ジョグ＋坂ダッシュ",
   aerobic: "ジョグ",
   off: "休養",
 };
@@ -136,6 +149,8 @@ export function normalizeWeekTemplate(t: WeekTemplate): WeekTemplate {
 export function isPointSlot(slot: WeekdaySlot): boolean {
   if (slot === "point") return true;
   if (slot === "auto") return false;
+  // 坂ダッシュは神経系。低負荷なのでポイント練習には数えない
+  if (slot === "hill") return false;
   return isHighLoadCategory(slot);
 }
 
@@ -194,7 +209,10 @@ export function validateWeekTemplate(t: WeekTemplate): RuleViolation[] {
 
   const demandingDows = pointDows.filter((d) => {
     const slot = slotOf(t, d);
-    return slot !== "point" && slot !== "auto" && isSpecificCategory(slot);
+    // "hill" はカテゴリではない（＝中身の指定）。ここはカテゴリだけを見る
+    return (
+      slot !== "point" && slot !== "auto" && slot !== "hill" && isSpecificCategory(slot)
+    );
   });
   const tooManyDemanding = demandingDows.length > 2;
   const tooManyOverall = pointDows.length > 3;
