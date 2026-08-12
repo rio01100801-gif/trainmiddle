@@ -11,10 +11,29 @@
 <meta name="apple-mobile-web-app-title" content="FORGE">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' https:; worker-src 'self' blob:; manifest-src 'self'">
 <link rel="manifest" href="./manifest.webmanifest">
-<link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png?v=forge-v63">
-<link rel="icon" type="image/png" sizes="32x32" href="./icon-32.png?v=forge-v63">
-<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png?v=forge-v63">
+<link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png?v=forge-v64">
+<link rel="icon" type="image/png" sizes="32x32" href="./icon-32.png?v=forge-v64">
+<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png?v=forge-v64">
 <link rel="stylesheet" href="./styles.css">
+<!--
+  iOSの起動画像。
+  iOSはmanifestのbackground_colorを見ない（あれはAndroid/Chrome用）ので、
+  これが無いとコールド起動のあいだ**白い画面**が出る。
+  サイズが完全一致したときだけ使われるため、機種ごとに1枚ずつ要る。
+  生成は scripts/build-splash-screens.mjs（実物のスプラッシュを撮っている）。
+-->
+<link rel="apple-touch-startup-image" media="screen and (device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="./splash-1320x2868.png">
+<link rel="apple-touch-startup-image" media="screen and (device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="./splash-1290x2796.png">
+<link rel="apple-touch-startup-image" media="screen and (device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="./splash-1206x2622.png">
+<link rel="apple-touch-startup-image" media="screen and (device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="./splash-1179x2556.png">
+<link rel="apple-touch-startup-image" media="screen and (device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="./splash-1284x2778.png">
+<link rel="apple-touch-startup-image" media="screen and (device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="./splash-1170x2532.png">
+<link rel="apple-touch-startup-image" media="screen and (device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="./splash-1125x2436.png">
+<link rel="apple-touch-startup-image" media="screen and (device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="./splash-1242x2688.png">
+<link rel="apple-touch-startup-image" media="screen and (device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="./splash-828x1792.png">
+<link rel="apple-touch-startup-image" media="screen and (device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="./splash-1242x2208.png">
+<link rel="apple-touch-startup-image" media="screen and (device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="./splash-750x1334.png">
+<link rel="apple-touch-startup-image" media="screen and (device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="./splash-640x1136.png">
 <style>
   :root { --forge: #b6ff00; --muted: #6b7280; --muted-2: #9ca3af; }
   html, body { margin: 0; min-height: 100%; background: #030303; color: #fff; }
@@ -50,13 +69,27 @@
     background: rgba(255,255,255,.20);
   }
   #splash .loader .dots { display: flex; gap: 15px; }
+  /*
+   * 点は2層。下に消灯色、上に緑を重ねて**上の層のopacityだけ**動かす。
+   *
+   * 最初は1層で background の色を動かしていたが、色のアニメーションは
+   * コンポジタに乗らず、毎フレーム、メインスレッドでの描き直しが要る。
+   * ところがこの画面が出ている最中のメインスレッドは、1MB近い bundle.js の
+   * 解析と最初の描画で埋まっている。結果、点だけがカクついた。
+   * opacity なら合成側で回るので、メインスレッドが詰まっていても滑らかに動く。
+   */
   #splash .loader .dots i {
-    width: 7px; height: 7px; border-radius: 50%;
+    position: relative; width: 7px; height: 7px; border-radius: 50%;
     background: rgba(255,255,255,.16);
+  }
+  #splash .loader .dots i::after {
+    content: ""; position: absolute; inset: 0; border-radius: 50%;
+    background: var(--forge); opacity: 0;
+    will-change: opacity;
     animation: splash-dot 1.35s ease-in-out infinite;
   }
-  #splash .loader .dots i:nth-child(2) { animation-delay: .18s; }
-  #splash .loader .dots i:nth-child(3) { animation-delay: .36s; }
+  #splash .loader .dots i:nth-child(2)::after { animation-delay: .18s; }
+  #splash .loader .dots i:nth-child(3)::after { animation-delay: .36s; }
   /*
    * 以前は軌跡とワードマークを負マージンで重ねていた。その軌跡を無くしたので
    * 通常配置に戻す。出だしの遅延も、トラックが描き終わるのを待つための
@@ -125,17 +158,17 @@
   @keyframes splash-pulse { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
   /* 3つの点を順に光らせる。1周ぶんの点灯は短く、大半は消えている */
   @keyframes splash-dot {
-    0%, 60%, 100% { background: rgba(255,255,255,.16); }
-    25% { background: var(--forge); }
+    0%, 60%, 100% { opacity: 0; }
+    25% { opacity: 1; }
   }
   @media (prefers-reduced-motion: reduce) {
     #splash { transition-duration: 120ms; }
-    #splash .brand, #splash .info, #splash .wait, #splash .loader .dots i {
+    #splash .brand, #splash .info, #splash .wait, #splash .loader .dots i::after {
       animation: none !important;
     }
     #splash .brand, #splash .info { opacity: 1; transform: none; }
     /* 動かさない代わりに、生きていることは先頭の点の色で示す */
-    #splash .loader .dots i:first-child { background: var(--forge); }
+    #splash .loader .dots i:first-child::after { opacity: 1; }
   }
 </style>
 </head>
