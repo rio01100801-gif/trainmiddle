@@ -9,6 +9,7 @@ import {
   aerobicEvidenceMarkers,
   dashboard,
   deleteResult,
+  resultAudit,
   heatFlaggedDates,
   processDailyCheck,
   processRaceResult,
@@ -190,6 +191,16 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
       if (!id) return { error: "id が必要です" };
       deleteResult(repo, id);
       return { ok: true };
+    },
+  },
+
+  // 保存された結果の読み返し。app/api/result-audit と対
+  "/api/result-audit": {
+    GET: (repo, _b, params) => {
+      const id = params.get("id");
+      if (!id) return { error: "id が必要です" };
+      const audit = resultAudit(repo, id);
+      return audit ? { audit } : { error: "その記録が見つかりません" };
     },
   },
 

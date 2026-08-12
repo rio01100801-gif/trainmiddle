@@ -3001,6 +3001,36 @@ await page.waitForFunction(() => !document.getElementById("splash"), { timeout: 
 step("R-2 ロード画面OK（レースまでの日数と目標との差／初回は素／読み込み後に消える）");
 
 /*
+ * ---- 16c-2. 保存内容の確認 ----
+ *
+ * 入れたタイムとレストがそのまま入っているかを本人が見られること。
+ * APIだけでなく画面で開くところまで見る——シムに対で足し忘れると
+ * PWA側だけ静かに空になる。
+ */
+{
+  await page.goto("http://localhost:8791/#/results");
+  await page.waitForTimeout(900);
+  const auditCard = page.locator("section.card", { hasText: "保存内容の確認" }).first();
+  if ((await auditCard.count()) === 0) fail("保存内容の確認カードが無い");
+  else {
+    const btn = auditCard.getByRole("button", { name: /確認する/ }).first();
+    if ((await btn.count()) === 0) fail("保存内容の確認: 開くボタンが無い");
+    else {
+      await btn.click();
+      await page.waitForTimeout(900);
+      const t = (await auditCard.textContent()) ?? "";
+      for (const head of ["距離", "タイム", "レスト"]) {
+        if (!t.includes(head)) fail(`保存内容の確認: 「${head}」の列が無い`);
+      }
+      if (!/この記録の使われ方/.test(t)) fail("保存内容の確認: 使われ方が出ていない");
+      if (!/CFE/.test(t)) fail("保存内容の確認: CFEの扱いが出ていない");
+      if (!/負荷/.test(t)) fail("保存内容の確認: 負荷への算入が出ていない");
+      step("保存内容の確認OK（本ごとのタイム・レストと、何に使われたかが出る）");
+    }
+  }
+}
+
+/*
  * ---- 16d. R-3: ブランド表示が崩れていないこと ----
  *
  * 以前はここで緑の400mトラック（`header svg path` を4本）を数えていた。

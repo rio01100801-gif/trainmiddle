@@ -20,6 +20,7 @@ import type {
 import type { Store } from "./db/store";
 import { addDays, diffDays, fmtTime, weekStart } from "./core/dates";
 import { CONFIRM_HORIZON_DAYS } from "./core/horizon";
+import { buildResultAudit, type ResultAudit } from "./core/resultAudit";
 import {
   applyStaleness,
   guardedBaseTime,
@@ -1102,6 +1103,56 @@ function processResultCore(
  * 通常の予定セッションなら"planned"に戻す（予定そのものは消さない——
  * 「本人が決めたものを黙って変えない」原則）。
  */
+/**
+ * 保存された結果の読み返し。「入れたものがそのまま入っているか」を確かめるための機能。
+ *
+ * 並べ直すのはコア（`buildResultAudit`）。ここでやるのは
+ * **何に使われたかを本物の判定関数から取ること**。
+ * 「CFEに使われたか」を画面用に書き直すと、実際の処理と説明が食い違ったときに
+ * 説明のほうが正しく見えてしまう。`updateCfeFromResult` は純粋関数で
+ * 保存もしないので、そのまま呼んで判定と理由だけを受け取る。
+ */
+export function resultAudit(repo: Store, resultId: string): ResultAudit | undefined {
+  const result = repo.listResults().find((r) => r.id === resultId);
+  if (!result) return undefined;
+  const session = repo.getSession(result.sessionId);
+  if (!session) return undefined;
+
+  const audit = buildResultAudit(session, result);
+
+  const cfe = repo.getCfe();
+  if (cfe) {
+    // 保存はしない。判定と理由を見るためだけに通す
+    const decision = updateCfeFromResult(cfe, session, result, {
+      goalTargetTimeSec: repo.getGoal()?.targetTimeSec,
+    });
+    audit.usage.push({
+      label: "CFE（推定800mタイム）",
+      used: decision.applied,
+      note: decision.applied
+        ? `実測から800m相当 ${decision.impliedSec?.toFixed(2)}秒として反映`
+        : (decision.guardrailNotes[0] ?? "この結果はCFEに使われません"),
+    });
+  }
+
+  /*
+   * 負荷とLT推定は、CFEに使われなかった結果でも算入される。
+   * ここを出さないと「CFEに使われない＝入力が無駄だった」と読めてしまう。
+   */
+  audit.usage.push({
+    label: "負荷（ACWR・週の量）",
+    used: true,
+    note: "実施した本数と距離をそのまま算入します",
+  });
+  audit.usage.push({
+    label: "同じメニューどうしの比較",
+    used: true,
+    note: "同じ処方の回どうしでタイム・RPE・翌日の脚を並べます",
+  });
+
+  return audit;
+}
+
 export function deleteResult(repo: Store, resultId: string): void {
   const result = repo.listResults().find((r) => r.id === resultId);
   if (!result) throw new Error("記録が見つかりません");

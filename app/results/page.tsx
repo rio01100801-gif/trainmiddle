@@ -186,6 +186,14 @@ export default function ResultsPage() {
         </Card>
       ) : null}
 
+      {/*
+        入れたものがそのまま入っているかを本人が確かめる場所。
+        保存直後の「補正結果」はCFEの前後しか出さないので、
+        本ごとのタイムとレストが正しく残ったかは確認できなかった。
+        複合セット（1000m×4＋200m×3、レストが本ごとに違う）で実際に困った箇所。
+      */}
+      {results.length > 0 ? <ResultAuditCard results={results} /> : null}
+
       {out ? (
         <Card title="補正結果（変更差分の提示）">
           <p className="text-[13px]">
@@ -209,6 +217,120 @@ export default function ResultsPage() {
         </Card>
       ) : null}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 保存内容の確認（入れたものがそのまま入っているか）
+// ---------------------------------------------------------------------------
+
+/**
+ * 保存された結果を本ごとに並べ直して見せる。
+ *
+ * 判定（CFEに使われたか等）はサービス層が本物の関数から取って返す。
+ * ここで書き直すと、実際の処理と説明が食い違ったときに説明のほうが正しく見える。
+ */
+function ResultAuditCard({ results }: { results: any[] }) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [audit, setAudit] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  const open = async (id: string) => {
+    if (openId === id) {
+      setOpenId(null);
+      setAudit(null);
+      return;
+    }
+    setOpenId(id);
+    setAudit(null);
+    setLoading(true);
+    try {
+      const d = await fetch(`/api/result-audit?id=${encodeURIComponent(id)}`).then((r) => r.json());
+      setAudit(d.audit ?? { error: d.error });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const recent = [...results].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
+
+  return (
+    <Card title="保存内容の確認">
+      <p className="text-[11.5px] leading-relaxed mb-2" style={{ color: "var(--text-3)" }}>
+        入力したタイムとレストが、そのまま保存されているかを確認できます。
+      </p>
+      {recent.map((r) => (
+        <div key={r.id} className="border-t pt-2" style={{ borderColor: "var(--border)" }}>
+          <button
+            className="btn-ghost !text-[11.5px] !py-1.5 w-full !justify-start"
+            onClick={() => open(r.id)}
+            aria-expanded={openId === r.id}
+          >
+            {r.date} の記録を{openId === r.id ? "閉じる" : "確認する"}
+          </button>
+          {openId === r.id ? (
+            <div className="mt-1.5">
+              {loading ? <p className="text-[11.5px]">読み込み中…</p> : null}
+              {audit?.error ? (
+                <StatusText kind="error" className="text-[11.5px]">
+                  {audit.error}
+                </StatusText>
+              ) : null}
+              {audit?.reps ? (
+                <>
+                  <p className="text-[11.5px] mb-1" style={{ color: "var(--text-2)" }}>
+                    {audit.sessionName}／{audit.reps.length}本
+                    {audit.rpe !== undefined ? `／RPE ${audit.rpe}` : ""}
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[11.5px]">
+                      <thead>
+                        <tr style={{ color: "var(--text-3)" }}>
+                          <th className="text-left font-normal">本</th>
+                          <th className="text-left font-normal">距離</th>
+                          <th className="text-left font-normal">タイム</th>
+                          <th className="text-left font-normal">レスト</th>
+                        </tr>
+                      </thead>
+                      <tbody className="num">
+                        {audit.reps.map((rep: any) => (
+                          <tr key={rep.index}>
+                            <td>{rep.index}</td>
+                            <td>
+                              {rep.distanceM ?? "—"}m
+                              {rep.plannedDistanceM ? `（予定${rep.plannedDistanceM}m）` : ""}
+                            </td>
+                            <td>{rep.timeSec ?? "—"}</td>
+                            <td>{rep.restLabel ?? "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {audit.mixedDistances ? (
+                    <p className="text-[11px] mt-1" style={{ color: "var(--text-3)" }}>
+                      距離の違う本が混ざっています。能力の推定には本数の多い距離だけを使います。
+                    </p>
+                  ) : null}
+                  <p className="metric-label mt-2.5 mb-1">この記録の使われ方</p>
+                  {(audit.usage ?? []).map((u: any, i: number) => (
+                    <p key={i} className="text-[11.5px] leading-relaxed mb-0.5">
+                      <b style={{ color: u.used ? "var(--forge)" : "var(--text-3)" }}>
+                        {u.used ? "使う" : "使わない"}
+                      </b>{" "}
+                      <span style={{ color: "var(--text-2)" }}>
+                        {u.label}
+                        {u.note ? `／${u.note}` : ""}
+                      </span>
+                    </p>
+                  ))}
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </Card>
   );
 }
 

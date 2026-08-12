@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { memRepo } from "./sqlite-helper";
-import { processResult, regeneratePlan } from "@/lib/service";
+import { processResult, regeneratePlan, resultAudit } from "@/lib/service";
 import { makeRace, testAthlete } from "./helpers";
 import type { SessionResult } from "@/lib/core/types";
 
@@ -37,8 +37,11 @@ function buildPayload(sessionId: string) {
         index: i + 1,
         distanceM: dists[i],
         actualSec: t,
-        restSec: restSec[i],
-        restDistanceM: restDistanceM[i],
+        // 本ごとのレストは restAfterSec / restAfterDistanceM（その本の「あと」のレスト）。
+        // interval 側の restSec と名前が似ているので取り違えると、
+        // 保存されていないのにテストだけ通る（JSONはそのまま往復するため）。
+        restAfterSec: restSec[i],
+        restAfterDistanceM: restDistanceM[i],
       })),
     },
   } as unknown as SessionResult;
@@ -82,7 +85,7 @@ describe("複合セットの結果が欠けずに残る", () => {
     const { repo, session } = setup();
     processResult(repo, buildPayload(session.id));
     const saved = repo.listResults().find((r) => r.id === "res-compound")!;
-    const rests = saved.interval!.results.map((x) => x.restSec ?? x.restDistanceM);
+    const rests = saved.interval!.results.map((x) => x.restAfterSec ?? x.restAfterDistanceM);
     // 3分×3 → 5分 → 200mジョグ×2 → 最後は無し
     expect(rests).toEqual([180, 180, 180, 300, 200, 200, undefined]);
   });
@@ -92,5 +95,50 @@ describe("複合セットの結果が欠けずに残る", () => {
     processResult(repo, buildPayload(session.id));
     const saved = repo.listResults().find((r) => r.id === "res-compound")!;
     expect(saved.interval!.results).toHaveLength(7);
+  });
+});
+
+describe("保存内容の確認（読み返し）", () => {
+  it("本ごとの距離・タイム・レストをそのまま並べ直す", () => {
+    const { repo, session } = setup();
+    processResult(repo, buildPayload(session.id));
+    const audit = resultAudit(repo, "res-compound")!;
+    expect(audit.reps).toHaveLength(7);
+    expect(audit.reps.map((r) => r.timeSec)).toEqual([190, 192, 190, 189, 30, 30, 30]);
+    expect(audit.reps.map((r) => r.distanceM)).toEqual([
+      1000, 1000, 1000, 1000, 200, 200, 200,
+    ]);
+    expect(audit.reps.map((r) => r.restLabel)).toEqual([
+      "3分ジョグ",
+      "3分ジョグ",
+      "3分ジョグ",
+      "5分ジョグ",
+      "200mジョグ",
+      "200mジョグ",
+      undefined,
+    ]);
+  });
+
+  it("距離が混ざっていることを出す", () => {
+    const { repo, session } = setup();
+    processResult(repo, buildPayload(session.id));
+    expect(resultAudit(repo, "res-compound")!.mixedDistances).toBe(true);
+  });
+
+  it("何に使われたかを本物の判定から返す（説明が実処理とズレない）", () => {
+    const { repo, session } = setup();
+    processResult(repo, buildPayload(session.id));
+    const audit = resultAudit(repo, "res-compound")!;
+    const cfe = audit.usage.find((u) => u.label.includes("CFE"))!;
+    expect(cfe).toBeDefined();
+    // 使う/使わないのどちらでも、理由が必ず添う
+    expect(cfe.note).toBeTruthy();
+    // CFEに使われなくても、負荷には必ず算入されることが分かる
+    expect(audit.usage.some((u) => u.label.includes("負荷") && u.used)).toBe(true);
+  });
+
+  it("無いidでは undefined（存在しない記録を作って見せない）", () => {
+    const { repo } = setup();
+    expect(resultAudit(repo, "no-such-id")).toBeUndefined();
   });
 });
