@@ -56,8 +56,37 @@ for (const f of [...FILES, ...splashScreens]) {
   fs.copyFileSync(src, path.join(to, f));
 }
 
+/*
+ * 分割された chunk をプリキャッシュ対象へ差し込む。
+ *
+ * chunk のファイル名にはハッシュが入るので pwa/sw.js には書けない。
+ * 差し込まないと、インストール直後にオフラインへ入ったとき、
+ * 遅延読み込みしている画面だけが開けない（キャッシュにも無く、通信も無い）。
+ *
+ * build:pwa が先に走っている前提。無ければ空のままにして、静かに続ける
+ * （分割していない構成でもビルドは通す）。
+ */
+const swPath = path.join(to, "sw.js");
+const chunkFiles = fs
+  .readdirSync(to)
+  .filter((f) => /^chunk-.*\.js$/.test(f))
+  .sort();
+const swSource = fs.readFileSync(swPath, "utf8");
+if (!swSource.includes("const CHUNKS = [];")) {
+  throw new Error(
+    "pwa/sw.js に差し込み先（const CHUNKS = [];）がありません。sw.js を変えたならここも合わせてください。"
+  );
+}
+fs.writeFileSync(
+  swPath,
+  swSource.replace(
+    "const CHUNKS = [];",
+    `const CHUNKS = [${chunkFiles.map((f) => `"./${f}"`).join(", ")}];`
+  )
+);
+
 // 版数を出す。上げ忘れは配信後に気づいても手遅れになる
-const sw = fs.readFileSync(path.join(to, "sw.js"), "utf8");
+const sw = fs.readFileSync(swPath, "utf8");
 const v = /const VERSION = "([^"]+)"/.exec(sw)?.[1] ?? "不明";
 
 /*
@@ -131,4 +160,7 @@ fs.writeFileSync(
   )
 );
 
-console.log(`静的ファイルを配りました（Service Worker: ${v} / アイコンURLに ?v=${v} を付与）`);
+console.log(
+  `静的ファイルを配りました（Service Worker: ${v} / アイコンURLに ?v=${v} を付与 / ` +
+    `プリキャッシュするchunk ${chunkFiles.length}件）`
+);

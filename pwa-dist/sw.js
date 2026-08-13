@@ -11,7 +11,18 @@
  *
  * リリースのたびに VERSION を必ず上げること（上げないと install が走らない）。
  */
-const VERSION = "forge-v79";
+const VERSION = "forge-v80";
+/*
+ * 分割された chunk（遅延読み込みの画面・FIT解析）。
+ *
+ * ファイル名にハッシュが入るので、ここには実体の名前を書けない。
+ * ビルド時に scripts/build-static.mjs がこの行を実体の名前で置き換える。
+ *
+ * **プリキャッシュしないと、インストール直後にオフラインへ入ったとき
+ * 遅延読み込みの画面だけが開けない。** fetchハンドラはchunkをキャッシュ優先で
+ * 扱うが、一度も取っていなければキャッシュに無く、通信も無いので開けない。
+ */
+const CHUNKS = ["./chunk-2bw0rdpw.js", "./chunk-331n347h.js", "./chunk-62hfn5xk.js", "./chunk-6f2zxzps.js", "./chunk-6gww82e7.js", "./chunk-78mcc2dm.js", "./chunk-7b7p2rhr.js", "./chunk-7bswkxwc.js", "./chunk-8pv7yhtd.js", "./chunk-8rrp19am.js", "./chunk-awa8cqxd.js", "./chunk-bf3rgedf.js", "./chunk-bsjzj3x3.js", "./chunk-cvr3veps.js", "./chunk-dbdebag1.js", "./chunk-dgmykrk9.js", "./chunk-dp4skqvd.js", "./chunk-e7qhyet4.js", "./chunk-ebw39ccd.js", "./chunk-f1ra9bs9.js", "./chunk-fbrj1rpy.js", "./chunk-fnan0m1t.js", "./chunk-fqrk3z7n.js", "./chunk-fwa5yyhm.js", "./chunk-j7cqwden.js", "./chunk-jhs8mww0.js", "./chunk-kgqs68nm.js", "./chunk-kx3805j7.js", "./chunk-m52xkqve.js", "./chunk-ncnq89r5.js", "./chunk-pb16ts6c.js", "./chunk-qfy5xzzb.js", "./chunk-qw6yp9r1.js", "./chunk-s6e1adp3.js", "./chunk-sxppfggd.js", "./chunk-t8er4rbn.js", "./chunk-tzm3jz17.js", "./chunk-vce9ykem.js", "./chunk-w8arg5hh.js", "./chunk-xcjxmrys.js", "./chunk-xe36zg9w.js", "./chunk-xsgbdp5q.js", "./chunk-xwmw095y.js", "./chunk-ym44m92k.js", "./chunk-ytqc1csm.js", "./chunk-zden6n0m.js", "./chunk-zm47z20s.js"];
 const ASSETS = [
   "./",
   "./index.html",
@@ -53,11 +64,21 @@ function isAppShell(url) {
 
 self.addEventListener("install", (e) => {
   e.waitUntil(
-    caches
-      .open(VERSION)
+    caches.open(VERSION).then(async (c) => {
       // reload: HTTPキャッシュを迂回して必ず新しい実体を取る
-      .then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: "reload" }))))
-      .then(() => self.skipWaiting())
+      // アプリ本体はそろわないと動かないので、1つでも失敗したらinstallも失敗させる
+      await c.addAll(ASSETS.map((u) => new Request(u, { cache: "reload" })));
+      /*
+       * chunkは1つ落ちても他の画面は動くので、installごと失敗させない。
+       * 画面を分けたぶん数が増えており（数十件）、ここを全部必須にすると
+       * たまたま1つ取れなかっただけで**新しい版が一切届かなくなる**。
+       * 取れなかったchunkは、その画面を開いたときにfetchハンドラが取りに行く。
+       */
+      await Promise.allSettled(
+        CHUNKS.map((u) => c.add(new Request(u, { cache: "reload" })))
+      );
+      await self.skipWaiting();
+    })
   );
 });
 

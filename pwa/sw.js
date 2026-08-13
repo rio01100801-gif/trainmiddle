@@ -11,7 +11,18 @@
  *
  * リリースのたびに VERSION を必ず上げること（上げないと install が走らない）。
  */
-const VERSION = "forge-v79";
+const VERSION = "forge-v80";
+/*
+ * 分割された chunk（遅延読み込みの画面・FIT解析）。
+ *
+ * ファイル名にハッシュが入るので、ここには実体の名前を書けない。
+ * ビルド時に scripts/build-static.mjs がこの行を実体の名前で置き換える。
+ *
+ * **プリキャッシュしないと、インストール直後にオフラインへ入ったとき
+ * 遅延読み込みの画面だけが開けない。** fetchハンドラはchunkをキャッシュ優先で
+ * 扱うが、一度も取っていなければキャッシュに無く、通信も無いので開けない。
+ */
+const CHUNKS = [];
 const ASSETS = [
   "./",
   "./index.html",
@@ -53,11 +64,21 @@ function isAppShell(url) {
 
 self.addEventListener("install", (e) => {
   e.waitUntil(
-    caches
-      .open(VERSION)
+    caches.open(VERSION).then(async (c) => {
       // reload: HTTPキャッシュを迂回して必ず新しい実体を取る
-      .then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: "reload" }))))
-      .then(() => self.skipWaiting())
+      // アプリ本体はそろわないと動かないので、1つでも失敗したらinstallも失敗させる
+      await c.addAll(ASSETS.map((u) => new Request(u, { cache: "reload" })));
+      /*
+       * chunkは1つ落ちても他の画面は動くので、installごと失敗させない。
+       * 画面を分けたぶん数が増えており（数十件）、ここを全部必須にすると
+       * たまたま1つ取れなかっただけで**新しい版が一切届かなくなる**。
+       * 取れなかったchunkは、その画面を開いたときにfetchハンドラが取りに行く。
+       */
+      await Promise.allSettled(
+        CHUNKS.map((u) => c.add(new Request(u, { cache: "reload" })))
+      );
+      await self.skipWaiting();
+    })
   );
 });
 

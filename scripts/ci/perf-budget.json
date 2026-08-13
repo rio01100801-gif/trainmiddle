@@ -1,12 +1,14 @@
 {
-  "_note": "運用整備（2026-07-31）で、その時点の実測値に20%の余裕を持たせて設定した予算。根拠のない厳しい値ではなく、実測からの退行検出が目的。bundle.jsが実際に大きくなった場合はここを更新すること（scripts/ci/check-perf-budget.mjs --update-baseline）。",
-  "measuredAt": "2026-07-31",
+  "_note": "実測値に20%の余裕を持たせた予算。退行検出が目的で、根拠のある絶対値ではない。pwa-dist/bundle.js は起動のたびに読む量（体感に直結）、pwa-dist/*.js は配信物全体（画面を分けたぶんがchunkへ逃げても全体の膨張に気づけるように）。実際に増やしたときはここを更新すること（scripts/ci/check-perf-budget.mjs --update-baseline）。2026-08-14に画面の遅延読み込みを入れてbundle.jsが約半分になったので測り直した。",
+  "measuredAt": "2026-08-13",
   "measured": {
-    "pwa-dist/bundle.js": 898077,
-    "pwa-dist/styles.css": 27426
+    "pwa-dist/bundle.js": 550588,
+    "pwa-dist/styles.css": 28505,
+    "pwa-dist/*.js": 1476122
   },
   "budgets": {
-    "pwa-dist/bundle.js": 1077692,
-    "pwa-dist/styles.css": 32911
+    "pwa-dist/bundle.js": 660706,
+    "pwa-dist/styles.css": 34206,
+    "pwa-dist/*.js": 1771346
   }
 }

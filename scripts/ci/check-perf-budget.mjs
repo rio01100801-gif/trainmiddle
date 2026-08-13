@@ -20,14 +20,39 @@ const updateBaseline = process.argv.includes("--update-baseline");
 let failed = false;
 const measured = {};
 
+/*
+ * `*` を含むキーは、その形に一致するファイルの合計を見る。
+ *
+ * 画面を分けてからは bundle.js だけを見ても足りない。
+ * 分けたぶんは chunk-*.js に移るので、bundle.js は小さいまま
+ * 全体が太っていく、ということが起きうる。
+ *   pwa-dist/bundle.js  … 起動のたびに読む量（ここが体感に直結する）
+ *   pwa-dist/*.js       … 配信物全体の量
+ * の両方を見る。
+ */
+function measureSize(rel) {
+  if (!rel.includes("*")) {
+    const full = path.join(root, rel);
+    if (!fs.existsSync(full)) return undefined;
+    return fs.statSync(full).size;
+  }
+  const dir = path.join(root, path.dirname(rel));
+  if (!fs.existsSync(dir)) return undefined;
+  const pattern = new RegExp(
+    "^" + path.basename(rel).split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$"
+  );
+  const files = fs.readdirSync(dir).filter((f) => pattern.test(f));
+  if (files.length === 0) return undefined;
+  return files.reduce((sum, f) => sum + fs.statSync(path.join(dir, f)).size, 0);
+}
+
 for (const rel of Object.keys(budget.budgets)) {
-  const full = path.join(root, rel);
-  if (!fs.existsSync(full)) {
+  const size = measureSize(rel);
+  if (size === undefined) {
     console.error(`✗ ${rel} が存在しない（npm run build:allを先に実行）`);
     failed = true;
     continue;
   }
-  const size = fs.statSync(full).size;
   measured[rel] = size;
   const limit = budget.budgets[rel];
   const pct = ((size / limit) * 100).toFixed(0);

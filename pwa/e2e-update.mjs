@@ -124,6 +124,42 @@ await page
 const offlineBody = await page.textContent("body");
 if (!offlineBody || offlineBody.trim().length < 20) fail("オフライン時の描画が空");
 step("オフライン起動OK");
+
+/*
+ * オフラインで**遅延読み込みの画面**が開くか。
+ *
+ * TODAY以外の画面は別ファイル（chunk）に分けてある。chunkをプリキャッシュ
+ * していないと、一度も開いていない画面はオフラインで開けない
+ * （キャッシュにも無く、通信も無い）。起動だけ見ていても気づけない。
+ * 差し込みは scripts/build-static.mjs、受け側は pwa/sw.js の CHUNKS。
+ */
+let lazyOk = true;
+const lazyFail = (m) => {
+  lazyOk = false;
+  fail(m);
+};
+for (const [path, expect] of [
+  ["/analysis", "分析"],
+  ["/past", "過去データ"],
+]) {
+  await page.goto(`http://localhost:8792/#${path}`);
+  await page.reload();
+  await page
+    .waitForFunction(() => !document.getElementById("splash"), { timeout: 15000 })
+    .catch(() => lazyFail(`オフラインで ${path} が起動しない`));
+  // Suspenseの「読み込み中…」で止まっていないこと（= chunkが取れている）
+  await page
+    .waitForFunction(
+      () => !(document.body.textContent ?? "").includes("読み込み中…"),
+      { timeout: 10000 }
+    )
+    .catch(() => lazyFail(`オフラインで ${path} のchunkを読めていない（読み込み中のまま）`));
+  const body = (await page.textContent("body")) ?? "";
+  if (!body.includes(expect)) {
+    lazyFail(`オフラインで ${path} が描画されない（「${expect}」が無い）`);
+  }
+}
+if (lazyOk) step("オフラインで遅延読み込みの画面も開くOK（chunkがプリキャッシュされている）");
 await ctx.setOffline(false);
 
 console.log(

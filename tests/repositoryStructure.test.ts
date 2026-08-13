@@ -19,7 +19,14 @@ describe("画面ファイルのリポジトリ構造", () => {
     const entry = readFileSync(path.join(root, "pwa", "entry.tsx"), "utf8");
     const page = readFileSync(path.join(root, "app", "data", "page.tsx"), "utf8");
 
-    expect(entry).toContain('import SharedDataPage from "../app/data/page"');
+    /*
+     * 見たいのは「共通画面を使い回しているか」であって、importの書き方ではない。
+     * 静的importに固定していると、遅延読み込みへ変えただけで落ちる
+     * （実際 forge-v80 で画面をchunkに分けたときに落ちた）。
+     * 参照していること + 画面側で描画していること、の2点で見る。
+     */
+    expect(entry).toMatch(/import\(["']\.\.\/app\/data\/page["']\)|from ["']\.\.\/app\/data\/page["']/);
+    expect(entry).toContain("<SharedDataPage />");
     expect(page).toContain("export default function DataPage()");
   });
 

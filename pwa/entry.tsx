@@ -8,25 +8,34 @@ import { AppShell } from "../app/components/app-shell";
 import { CATEGORY_LABELS, Card, ConfirmButton, StatusText } from "../app/components/ui";
 
 import Dashboard from "../app/page";
-import Setup from "../app/setup/page";
-import Goal from "../app/goal/page";
-import Calendar from "../app/calendar/page";
-import Results from "../app/results/page";
-import Analysis from "../app/analysis/page";
-import Race from "../app/race/page";
-import Meet from "../app/meet/page";
-import Heat from "../app/heat/page";
-import PlanSettings from "../app/plan-settings/page";
-import Past from "../app/past/page";
-import Settings from "../app/settings/page";
-import Warnings from "../app/warnings/page";
-import SessionDetail from "../app/session/page";
-import SharedDataPage from "../app/data/page";
-import RunPage from "../app/run/page";
-import SummaryPage from "../app/summary/page";
-import SyncPage from "../app/sync/page";
-import DiagnosticsPage from "../app/diagnostics/page";
-import AskPage from "../app/ask/page";
+
+/*
+ * 起動時に要るのは TODAY だけ。他の画面はハッシュが変わってから読む。
+ *
+ * bundle.js は起動のたびに全部読まれるので、開かない画面のぶんまで
+ * 毎回読ませると起動が遅くなる（電波が悪いと体感に直結する）。
+ * chunk は Service Worker がプリキャッシュするので、
+ * オフラインでも初回から開ける（差し込みは scripts/build-static.mjs）。
+ */
+const Setup = React.lazy(() => import("../app/setup/page"));
+const Goal = React.lazy(() => import("../app/goal/page"));
+const Calendar = React.lazy(() => import("../app/calendar/page"));
+const Results = React.lazy(() => import("../app/results/page"));
+const Analysis = React.lazy(() => import("../app/analysis/page"));
+const Race = React.lazy(() => import("../app/race/page"));
+const Meet = React.lazy(() => import("../app/meet/page"));
+const Heat = React.lazy(() => import("../app/heat/page"));
+const PlanSettings = React.lazy(() => import("../app/plan-settings/page"));
+const Past = React.lazy(() => import("../app/past/page"));
+const Settings = React.lazy(() => import("../app/settings/page"));
+const Warnings = React.lazy(() => import("../app/warnings/page"));
+const SessionDetail = React.lazy(() => import("../app/session/page"));
+const SharedDataPage = React.lazy(() => import("../app/data/page"));
+const RunPage = React.lazy(() => import("../app/run/page"));
+const SummaryPage = React.lazy(() => import("../app/summary/page"));
+const SyncPage = React.lazy(() => import("../app/sync/page"));
+const DiagnosticsPage = React.lazy(() => import("../app/diagnostics/page"));
+const AskPage = React.lazy(() => import("../app/ask/page"));
 
 import type { FitParseResult } from "../src/lib/core/fitParse";
 import type {
@@ -1063,7 +1072,20 @@ function App() {
     <>
       <PersistFailureBanner />
       <AppShell>
-        <Page key={path} />
+        {/*
+          遅延読み込みの待ち。chunkはService Workerがプリキャッシュ済みなので
+          端末内から読むだけで、通常は一瞬しか出ない。
+          文言を出すのは、電波もキャッシュも無い異常時に画面が無言で白くならないため。
+        */}
+        <React.Suspense
+          fallback={
+            <p className="text-[13px]" style={{ color: "var(--text-3)" }}>
+              読み込み中…
+            </p>
+          }
+        >
+          <Page key={path} />
+        </React.Suspense>
       </AppShell>
     </>
   );
