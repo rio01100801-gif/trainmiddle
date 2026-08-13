@@ -1711,8 +1711,40 @@ if (varApi.recommended !== 1) fail(`S-9: おすすめが1つでない（${varApi
 if (varApi.distinct !== 2) fail("S-9: 2案の中身が同じ（選ぶ意味が無い）");
 if (!varApi.hasWhy) fail("S-9: 案に理由が付いていない");
 // TODAYから選べること
-const varCard = page.locator("section.card", { hasText: "この練習の進め方" }).first();
-if ((await varCard.count()) === 0) fail("S-9: TODAYに進め方の2案が出ていない");
+/*
+ * 見出しは対象によって「この練習の進め方」「次のポイント練習の進め方」に変わり、
+ * 調整案カードも同じ文言を出すことがある。文言で探すとどちらを見ているか曖昧になるので、
+ * このカードにしか無い「この進め方にする」ボタンで特定する。
+ */
+const varCard = page
+  .locator("section.card", { has: page.getByRole("button", { name: "この進め方にする" }) })
+  .first();
+if ((await varCard.count()) === 0) {
+  /*
+   * 出ていないときは、何を対象にしていたのかまで出す。
+   * この画面は「今日がポイント練習ならそれ、違えば /api/adaptive が選んだ次の1本」を
+   * 対象にするので、対象が nextHl と違うと、APIで2案が取れていても画面には出ない。
+   * 「出ない」だけでは、画面の不具合なのか対象が違うだけなのか区別できない。
+   */
+  const why = await page.evaluate(async (hl) => {
+    const a = await fetch("/api/adaptive").then((r) => r.json());
+    const target = a?.session?.id ?? null;
+    const v = target
+      ? await fetch(`/api/variants?sessionId=${target}`).then((r) => r.json())
+      : null;
+    const d = await fetch("/api/dashboard").then((r) => r.json());
+    return {
+      today: d?.today ?? null,
+      todayCategory: d?.todaySession?.category ?? null,
+      adaptiveTarget: target,
+      adaptiveCategory: a?.session?.category ?? null,
+      nextHl: hl,
+      sameSession: target === hl,
+      variantsForTarget: v?.variants?.length ?? null,
+    };
+  }, nextHl);
+  fail(`S-9: TODAYに進め方の2案が出ていない（${JSON.stringify(why)}）`);
+}
 else {
   if ((await varCard.getByRole("button", { name: "この進め方にする" }).count()) !== 2) {
     fail("S-9: TODAYで2案とも選べない");
@@ -3891,6 +3923,139 @@ if ((await fitRebuildCard.count()) === 0) {
     localStorage.removeItem("forge:assistant:consent");
   });
   step("相談（AI）OK（同意前は送らない・見せた文脈をそのまま送る・答えでCFEは動かない）");
+}
+
+// ---- 写真からの転記 ----
+/*
+ * 見張るのは「文字起こしが解釈に化けていないこと」。
+ *   ・鍵/同意が無ければ写真の欄すら出さない（何も送らない）
+ *   ・起こした文字は**入力欄に入るだけ**で、その時点では1件も保存されない
+ *   ・保存されるのは、これまでどおり「解釈する」→「確定」を通ったときだけ
+ * 通信は横取りして、本物のAPIも料金も使わない。
+ */
+{
+  const sentPhoto = [];
+  await page.route("https://api.anthropic.com/**", async (route) => {
+    const req = route.request();
+    sentPhoto.push({ headers: req.headers(), body: req.postData() ?? "" });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        content: [{ type: "text", text: "```\n7/4 2kmジョグ 8:40\n7/5 オフ\n```" }],
+        stop_reason: "end_turn",
+      }),
+    });
+  });
+
+  // 鍵も同意も無い状態では、写真の欄そのものを出さない
+  await page.evaluate(() => {
+    localStorage.removeItem("forge:assistant:key");
+    localStorage.removeItem("forge:assistant:consent");
+  });
+  await page.goto("http://localhost:8791/#/past");
+  await page.reload();
+  await page.waitForFunction(() => !document.getElementById("splash"), { timeout: 15000 });
+  await page.getByRole("button", { name: "まとめて入力" }).click().catch(() => {});
+  await page.waitForTimeout(500);
+  if (await page.locator('[data-testid="photo-file"]').count()) {
+    fail("写真転記: 鍵も同意も無いのに写真を選ばせている");
+  }
+
+  // 鍵と同意を入れると欄が出る
+  await page.evaluate(() => {
+    localStorage.setItem("forge:assistant:key", "sk-ant-api03-e2e-dummy-key-0000");
+    localStorage.setItem("forge:assistant:consent", "yes");
+  });
+  await page.reload();
+  await page.waitForFunction(() => !document.getElementById("splash"), { timeout: 15000 });
+  await page.getByRole("button", { name: "まとめて入力" }).click().catch(() => {});
+  await page.waitForSelector('[data-testid="photo-file"]', { timeout: 10000 });
+
+  // 登録件数を控えておく（転記だけでは増えないことを確かめるため）
+  const beforeCount = await page.evaluate(() =>
+    fetch("/api/past").then((r) => r.json()).then((d) => (d.entries ?? []).length)
+  );
+
+  // 1x1ではなく、実際に縮小経路を通る大きさの画像を渡す
+  const png = await page.evaluate(() => {
+    const c = document.createElement("canvas");
+    c.width = 3200;
+    c.height = 2400;
+    const g = c.getContext("2d");
+    g.fillStyle = "#fff";
+    g.fillRect(0, 0, c.width, c.height);
+    g.fillStyle = "#000";
+    g.font = "80px sans-serif";
+    g.fillText("7/4 2km jog", 100, 300);
+    return c.toDataURL("image/png").split(",")[1];
+  });
+  await page.setInputFiles('[data-testid="photo-file"]', {
+    name: "diary.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(png, "base64"),
+  });
+  await page.waitForSelector('[data-testid="photo-preview"]', { timeout: 10000 });
+
+  await page.click('[data-testid="photo-send"]');
+  await page.waitForSelector('[data-testid="photo-note"]', { timeout: 20000 }).catch(() => {});
+
+  if (sentPhoto.length !== 1) {
+    fail(`写真転記: 送信が1回になっていない（${sentPhoto.length}回）`);
+  } else {
+    let payload;
+    try {
+      payload = JSON.parse(sentPhoto[0].body);
+    } catch {
+      fail("写真転記: 送信本文がJSONではない");
+    }
+    if (payload) {
+      const content = payload.messages?.[0]?.content;
+      if (!Array.isArray(content)) fail("写真転記: 画像ブロックが送られていない");
+      else {
+        const img = content.find((b) => b.type === "image");
+        if (!img) fail("写真転記: 画像ブロックが無い");
+        else {
+          if (img.source?.type !== "base64") fail("写真転記: 画像がbase64で送られていない");
+          if (img.source?.media_type !== "image/jpeg") {
+            fail(`写真転記: JPEGに変換されていない（${img.source?.media_type}）`);
+          }
+          // 縮小されていること（3200pxのまま送っていたら容量がこの比ではない）
+          const bytes = (img.source?.data ?? "").length * 0.75;
+          if (bytes > 4_500_000) fail(`写真転記: 縮小されていない（${Math.round(bytes / 1024)}KB）`);
+        }
+      }
+      if (!String(payload.system ?? "").includes("推測で埋めない")) {
+        fail("写真転記: 推測で埋めさせない指示が送られていない");
+      }
+      if (!String(payload.system ?? "").includes("表記を整えないでください")) {
+        fail("写真転記: 解釈させない指示が送られていない");
+      }
+    }
+  }
+
+  // 起こした文字が入力欄に入っていること（フェンスは外れている）
+  const bulkText = await page.inputValue('[data-testid="bulk-text"]');
+  if (!bulkText.includes("7/4 2kmジョグ 8:40")) {
+    fail(`写真転記: 起こした文字が入力欄に入っていない（${bulkText.slice(0, 60)}）`);
+  }
+  if (bulkText.includes("```")) fail("写真転記: コードフェンスが残っている");
+
+  // **ここが本題**: 転記しただけでは1件も保存されていない
+  const afterCount = await page.evaluate(() =>
+    fetch("/api/past").then((r) => r.json()).then((d) => (d.entries ?? []).length)
+  );
+  if (afterCount !== beforeCount) {
+    fail(`写真転記: 転記しただけで保存された（${beforeCount} → ${afterCount}）`);
+  }
+
+  await shot("61_photo_transcribe");
+  await page.unroute("https://api.anthropic.com/**");
+  await page.evaluate(() => {
+    localStorage.removeItem("forge:assistant:key");
+    localStorage.removeItem("forge:assistant:consent");
+  });
+  step("写真からの転記OK（設定前は送らない・文字だけ起こす・転記だけでは保存しない）");
 }
 
 if (errors.length) {

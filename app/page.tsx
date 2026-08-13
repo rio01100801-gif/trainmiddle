@@ -327,18 +327,58 @@ function SessionVariants({
       .catch(() => setTarget(undefined));
   }, [sessionId]);
 
+  /*
+   * 対象に案が作れないことがある。
+   *
+   * 設定ペースの調整（M-2）は神経系にも効くので、今日が神経系ならその日が対象になる。
+   * ところが進め方の2案はテンプレートから作るので、神経系には案が無い。
+   * そのまま諦めるとカードごと消える。本人からは「壊れている」のか
+   * 「今日は出ないのが正しい」のかが区別できない。
+   * 案が作れなかったときだけ、次のポイント練習（調整案カードと同じ選び方）へ移す。
+   */
+  const [fellBack, setFellBack] = useState(false);
+  useEffect(() => {
+    setFellBack(false);
+  }, [sessionId]);
+
   useEffect(() => {
     if (!target) {
       setD(null);
       return;
     }
+    let alive = true;
     fetch(`/api/variants?sessionId=${encodeURIComponent(target)}`)
       .then((r) => r.json())
-      .then(setD)
-      .catch(() => setD(null));
-  }, [target]);
+      .then((x) => {
+        if (!alive) return;
+        if (x?.variants?.length) {
+          setD(x);
+          return;
+        }
+        setD(null);
+        // 1回だけ移す。移した先にも無ければ、出さないのが正しい
+        if (fellBack) return;
+        fetch("/api/adaptive")
+          .then((r) => r.json())
+          .then((a) => {
+            if (!alive) return;
+            const next = a?.session?.id;
+            setFellBack(true);
+            if (next && next !== target) setTarget(next);
+          })
+          .catch(() => {});
+      })
+      .catch(() => {
+        if (alive) setD(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [target, fellBack]);
 
   if (!target || !d?.variants?.length) return null;
+  // 今日の練習そのものではない場合は、どの練習の話かを見出しで断る
+  const forToday = d.session?.date === today;
 
   const apply = async (key: string) => {
     setBusy(true);
@@ -359,9 +399,11 @@ function SessionVariants({
   return (
     <Card>
       <div className="flex items-center justify-between gap-2 mb-1">
-        <span className="metric-label">この練習の進め方</span>
-        <span className="text-[11px]" style={{ color: "var(--text-3)" }}>
-          2案
+        <span className="metric-label">
+          {forToday ? "この練習の進め方" : "次のポイント練習の進め方"}
+        </span>
+        <span className="text-[11px] num" style={{ color: "var(--text-3)" }}>
+          {d.session?.date ? `${d.session.date.slice(5).replace("-", "/")} · ` : ""}2案
         </span>
       </div>
       <p className="text-[11.5px] leading-relaxed mb-2.5" style={{ color: "var(--text-3)" }}>

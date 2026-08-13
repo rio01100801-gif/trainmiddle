@@ -119,6 +119,11 @@ export interface AskOptions {
   apiKey: string;
   system: string;
   user: string;
+  /**
+   * 添える画像（写真からの転記）。
+   * 本文より前に置く。画像を先に見せてから指示を読ませるほうが読み取りが安定する。
+   */
+  image?: { mediaType: string; base64: string };
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   online?: boolean;
@@ -177,7 +182,24 @@ export async function askAssistant(options: AskOptions): Promise<AssistantAnswer
         max_tokens: ASSISTANT_MAX_TOKENS,
         output_config: { effort: "low" },
         system,
-        messages: [{ role: "user", content: user }],
+        messages: [
+          {
+            role: "user",
+            content: options.image
+              ? [
+                  {
+                    type: "image",
+                    source: {
+                      type: "base64",
+                      media_type: options.image.mediaType,
+                      data: options.image.base64,
+                    },
+                  },
+                  { type: "text", text: user },
+                ]
+              : user,
+          },
+        ],
       }),
       signal: controller.signal,
     });

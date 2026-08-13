@@ -11,6 +11,13 @@ import {
 import { localToday } from "@/lib/core/dates";
 import { computeReady } from "@/lib/core/bulkImport";
 import type { RestType, SessionCategory } from "@/lib/core/types";
+import { askAssistant, getApiKey, getConsent } from "../components/assistant";
+import { prepareImage, type PreparedImage } from "../components/image-input";
+import {
+  cleanTranscription,
+  TRANSCRIPTION_SYSTEM_PROMPT,
+  UNREADABLE_MARK,
+} from "@/lib/core/transcription";
 
 const KINDS: PastEntryKind[] = ["race", "timetrial", "interval", "continuous"];
 const RACE_DISTANCES = [400, 600, 800, 1000, 1500, 3000];
@@ -742,6 +749,175 @@ const SAMPLE_TEXT = `7/4 2kmジョグ 8:40
 7/16 65minジョグ　11.8km 平均心拍154
 7/18 1000(3:15-25)×4 r200jog 3:27 3:26 3:27 3:27 平均心拍180`;
 
+/**
+ * 写真から文字を起こす。
+ *
+ * **やるのは文字起こしだけ。** 起こした文字は下の入力欄に入るだけで、
+ * 解釈はこれまでどおり「解釈する」を押したあとに `parseRow` が行う。
+ * 保存までの間に本人が2回見る（起こした文字／解釈結果）ことになる。
+ * 文字起こしは必ず間違うので、この2回を飛ばさない。
+ *
+ * 鍵と同意は相談（AI）と共通。設定していなければ、ここでは何もせず案内だけ出す。
+ */
+function PhotoTranscribe({ onText }: { onText: (text: string) => void }) {
+  const [image, setImage] = useState<PreparedImage | undefined>();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [note, setNote] = useState("");
+  const [ready, setReady] = useState(false);
+  const [online, setOnline] = useState(true);
+
+  useEffect(() => {
+    setOnline(navigator.onLine);
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    try {
+      setReady(!!getApiKey() && getConsent());
+    } catch {
+      setReady(false);
+    }
+    return () => {
+      window.removeEventListener("online", on);
+      window.removeEventListener("offline", off);
+    };
+  }, []);
+
+  const pick = useCallback(async (file?: File) => {
+    setErr("");
+    setNote("");
+    if (!file) return;
+    try {
+      setImage(await prepareImage(file));
+    } catch (e) {
+      setImage(undefined);
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  const send = useCallback(async () => {
+    if (!image) return;
+    let apiKey: string | undefined;
+    try {
+      apiKey = getApiKey();
+    } catch {
+      apiKey = undefined;
+    }
+    if (!apiKey) {
+      setErr("先に相談（AI）でAPIキーと同意を設定してください。");
+      return;
+    }
+    setBusy(true);
+    setErr("");
+    setNote("");
+    const r = await askAssistant({
+      apiKey,
+      system: TRANSCRIPTION_SYSTEM_PROMPT,
+      user: "この画像の文字をそのまま書き起こしてください。",
+      image: { mediaType: image.mediaType, base64: image.base64 },
+    });
+    setBusy(false);
+    if (!r.ok) {
+      setErr(r.message);
+      return;
+    }
+    const cleaned = cleanTranscription(r.text);
+    if (cleaned.rejected) {
+      setErr(cleaned.rejected);
+      return;
+    }
+    onText(cleaned.text);
+    setImage(undefined);
+    setNote(
+      cleaned.unreadableCount > 0
+        ? `読み取りました。読めなかった箇所が${cleaned.unreadableCount}か所あり、${UNREADABLE_MARK} と入れてあります。埋めてから解釈してください。`
+        : "読み取りました。文字起こしは必ず間違えるので、解釈する前に目で確かめてください。"
+    );
+  }, [image, onText]);
+
+  if (!online) {
+    return (
+      <div className="mb-2.5">
+        <StatusText kind="warning" className="text-[11.5px] leading-relaxed">
+          写真からの読み取りは通信が要ります。オフラインでは手で貼り付けてください。
+        </StatusText>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-3">
+      <p className="text-[12px] leading-relaxed mb-2" style={{ color: "var(--text-2)" }}>
+        写真から文字を起こせます。<b style={{ color: "var(--text)" }}>起こすのは文字だけ</b>で、
+        練習の種類やタイムの意味を判定するのはこれまでどおりアプリ側です。
+        起こした文字は下の欄に入るので、目で直してから「解釈する」を押してください。
+      </p>
+      {!ready ? (
+        <StatusText kind="warning" className="text-[11.5px] leading-relaxed">
+          先に <a href="#/ask" style={{ color: "var(--forge)" }}>相談（AI）</a>{" "}
+          でAPIキーと同意を設定してください。設定するまで写真は送りません。
+        </StatusText>
+      ) : (
+        <>
+          <label className="block text-[13px] mb-2">
+            <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
+              練習日誌の写真
+            </span>
+            <input
+              type="file"
+              accept="image/*"
+              className="w-full"
+              onChange={(e) => pick(e.target.files?.[0])}
+              data-testid="photo-file"
+            />
+          </label>
+          {image ? (
+            <div className="mb-2">
+              <p className="text-[11px] mb-1.5" style={{ color: "var(--text-3)" }}>
+                この写真をAnthropicへ送ります（{image.width}×{image.height} /{" "}
+                {Math.round(image.bytes / 1024)}KB）。
+              </p>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={image.dataUrl}
+                alt="送る写真"
+                style={{ maxWidth: "100%", borderRadius: 10, border: "1px solid var(--border)" }}
+                data-testid="photo-preview"
+              />
+            </div>
+          ) : null}
+          <div className="flex gap-2 flex-wrap">
+            <button
+              className="btn-volt justify-center"
+              disabled={!image || busy}
+              onClick={send}
+              data-testid="photo-send"
+            >
+              {busy ? "読み取り中…" : "写真から読み取る"}
+            </button>
+            {image ? (
+              <button className="btn-ghost" onClick={() => setImage(undefined)}>
+                写真を外す
+              </button>
+            ) : null}
+          </div>
+        </>
+      )}
+      {err ? (
+        <StatusText kind="error" className="text-[11.5px] mt-2 leading-relaxed">
+          <span data-testid="photo-error">{err}</span>
+        </StatusText>
+      ) : null}
+      {note ? (
+        <StatusText kind="success" className="text-[11.5px] mt-2 leading-relaxed">
+          <span data-testid="photo-note">{note}</span>
+        </StatusText>
+      ) : null}
+    </div>
+  );
+}
+
 function BulkForm({
   onImported,
   onTaught,
@@ -862,6 +1038,15 @@ function BulkForm({
         </p>
       </details>
 
+      {/*
+        写真からの文字起こし。入る先はこの下の欄で、解釈はこれまでどおり
+        「解釈する」を押したあと。既に書いてある内容は消さずに足す
+        （手で打った途中の行を写真1枚で消されると、打ち直しになる）。
+      */}
+      <PhotoTranscribe
+        onText={(t) => setText((prev) => (prev.trim() ? `${prev.replace(/\s+$/, "")}\n${t}` : t))}
+      />
+
       <textarea
         className="w-full"
         rows={7}
@@ -869,6 +1054,7 @@ function BulkForm({
         placeholder={SAMPLE_TEXT}
         value={text}
         onChange={(e) => setText(e.target.value)}
+        data-testid="bulk-text"
       />
 
       <div className="flex gap-2 mt-2.5 flex-wrap">
