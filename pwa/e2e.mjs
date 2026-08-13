@@ -4058,6 +4058,152 @@ if ((await fitRebuildCard.count()) === 0) {
   step("写真からの転記OK（設定前は送らない・文字だけ起こす・転記だけでは保存しない）");
 }
 
+// ---- 表記辞書の候補出し ----
+/*
+ * 見張るのは「候補が辞書を勝手に書き換えないこと」。
+ *   ・設定前・オフラインではボタンを出さない
+ *   ・行に書かれていない語を返してきたら採用しない（言い換えを辞書にしない）
+ *   ・「これで埋める」は欄を埋めるだけで、辞書はまだ増えない
+ *   ・登録したあとは**AIを呼ばずに**同じ行が読める（決定的に戻る）
+ */
+{
+  const asked = [];
+  let reply = null;
+  await page.route("https://api.anthropic.com/**", async (route) => {
+    asked.push(route.request().postData() ?? "");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        content: [{ type: "text", text: reply }],
+        stop_reason: "end_turn",
+      }),
+    });
+  });
+
+  const LINE = "8/2 なわとび坂 300×5 r5min";
+
+  // 設定していなければボタンを出さない
+  await page.evaluate(() => {
+    localStorage.removeItem("forge:assistant:key");
+    localStorage.removeItem("forge:assistant:consent");
+  });
+  await page.goto("http://localhost:8791/#/past");
+  await page.reload();
+  await page.waitForFunction(() => !document.getElementById("splash"), { timeout: 15000 });
+  await page.getByRole("button", { name: "まとめて入力" }).click().catch(() => {});
+  await page.waitForSelector('[data-testid="bulk-text"]', { timeout: 10000 });
+  await page.fill('[data-testid="bulk-text"]', LINE);
+  await page.getByRole("button", { name: "解釈する" }).click();
+  await page.waitForTimeout(1200);
+  if (await page.locator('[data-testid="suggest-phrase"]').count()) {
+    fail("辞書候補: 設定していないのにボタンが出ている");
+  }
+
+  // 設定してから
+  await page.evaluate(() => {
+    localStorage.setItem("forge:assistant:key", "sk-ant-api03-e2e-dummy-key-0000");
+    localStorage.setItem("forge:assistant:consent", "yes");
+  });
+  await page.reload();
+  await page.waitForFunction(() => !document.getElementById("splash"), { timeout: 15000 });
+  await page.getByRole("button", { name: "まとめて入力" }).click().catch(() => {});
+  await page.waitForSelector('[data-testid="bulk-text"]', { timeout: 10000 });
+  await page.fill('[data-testid="bulk-text"]', LINE);
+  await page.getByRole("button", { name: "解釈する" }).click();
+  await page.waitForSelector('[data-testid="suggest-phrase"]', { timeout: 10000 });
+
+  const phrasesBefore = await page.evaluate(() =>
+    fetch("/api/phrases").then((r) => r.json()).then((d) => (d.phrases ?? []).length)
+  );
+
+  // 行に無い語を返してきたら採用しない
+  reply = JSON.stringify({
+    phrase: "縄跳び坂ダッシュ",
+    kind: "interval",
+    category: "high_lactate",
+    reason: "本数があるため",
+  });
+  await page.click('[data-testid="suggest-phrase"]');
+  await page.waitForSelector('[data-testid="suggest-error"]', { timeout: 15000 }).catch(() => {});
+  const rejected = (await page.textContent('[data-testid="suggest-error"]')) ?? "";
+  if (!rejected.includes("書かれていない")) {
+    fail(`辞書候補: 行に無い語を弾いていない（${rejected.slice(0, 60)}）`);
+  }
+  if (await page.locator('[data-testid="suggest-result"]').count()) {
+    fail("辞書候補: 弾いたのに候補として出している");
+  }
+
+  // 行にある語なら候補になる
+  reply = JSON.stringify({
+    phrase: "なわとび坂",
+    kind: "interval",
+    category: "high_lactate",
+    reason: "300mを5本くり返しているためポイント練習と読みました",
+  });
+  await page.click('[data-testid="suggest-phrase"]');
+  await page.waitForSelector('[data-testid="suggest-result"]', { timeout: 15000 });
+  const shown = (await page.textContent('[data-testid="suggest-result"]')) ?? "";
+  if (!shown.includes("なわとび坂")) fail("辞書候補: 語が出ていない");
+  if (!shown.includes("5本")) fail("辞書候補: 根拠が出ていない（却下する材料が無い）");
+
+  // 埋めるだけでは辞書は増えない
+  await page.click('[data-testid="suggest-accept"]');
+  await page.waitForTimeout(600);
+  const phrasesAfterAccept = await page.evaluate(() =>
+    fetch("/api/phrases").then((r) => r.json()).then((d) => (d.phrases ?? []).length)
+  );
+  if (phrasesAfterAccept !== phrasesBefore) {
+    fail(`辞書候補: 埋めただけで辞書が増えた（${phrasesBefore} → ${phrasesAfterAccept}）`);
+  }
+
+  // 本人が登録して初めて増える
+  await page.getByRole("button", { name: "この書き方を覚えさせる" }).first().click();
+  await page.waitForTimeout(400);
+  const filled = await page.inputValue('input[placeholder="覚えさせる語"]');
+  if (filled !== "なわとび坂") fail(`辞書候補: 埋めた語が欄に入っていない（${filled}）`);
+  await page.getByRole("button", { name: "登録", exact: true }).first().click();
+  await page.waitForTimeout(1000);
+  const phrasesAfterSave = await page.evaluate(() =>
+    fetch("/api/phrases").then((r) => r.json()).then((d) => (d.phrases ?? []).length)
+  );
+  if (phrasesAfterSave !== phrasesBefore + 1) {
+    fail(`辞書候補: 登録しても辞書が増えない（${phrasesBefore} → ${phrasesAfterSave}）`);
+  }
+
+  /*
+   * **ここが本題**: 登録後は同じ行がAIを呼ばずに読める。
+   * 「使うほどAIを呼ばなくなる」という設計が成立しているかを見る。
+   */
+  const askedBefore = asked.length;
+  const reparsed = await page.evaluate(async (line) => {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const d = await fetch("/api/past", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ previewText: line, today }),
+    }).then((r) => r.json());
+    const row = (d.rows ?? [])[0] ?? {};
+    return { kind: row.kind ?? null, category: row.category ?? null };
+  }, LINE);
+  if (reparsed.kind !== "interval") {
+    fail(`辞書候補: 登録した語が次から効いていない（kind=${reparsed.kind}）`);
+  }
+  if (asked.length !== askedBefore) {
+    fail(`辞書候補: 解釈のたびにAIを呼んでいる（${asked.length - askedBefore}回）`);
+  }
+
+  await shot("62_phrase_suggest");
+  await page.unroute("https://api.anthropic.com/**");
+  await page.evaluate(() => {
+    localStorage.removeItem("forge:assistant:key");
+    localStorage.removeItem("forge:assistant:consent");
+  });
+  step("表記辞書の候補OK（行に無い語は弾く・埋めるだけでは増えない・登録後はAI不要で読める）");
+}
+
 if (errors.length) {
   console.log("JS ERRORS:", errors.slice(0, 5));
   process.exitCode = 1;

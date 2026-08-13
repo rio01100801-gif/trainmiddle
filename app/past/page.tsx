@@ -18,6 +18,12 @@ import {
   TRANSCRIPTION_SYSTEM_PROMPT,
   UNREADABLE_MARK,
 } from "@/lib/core/transcription";
+import {
+  buildPhraseSuggestionRequest,
+  parsePhraseSuggestion,
+  PHRASE_SUGGESTION_SYSTEM_PROMPT,
+  type PhraseSuggestion,
+} from "@/lib/core/phraseSuggestion";
 
 const KINDS: PastEntryKind[] = ["race", "timetrial", "interval", "continuous"];
 const RACE_DISTANCES = [400, 600, 800, 1000, 1500, 3000];
@@ -930,6 +936,20 @@ function BulkForm({
   const [selected, setSelected] = useState<Record<number, boolean>>({});
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  /*
+   * すでに覚えている語。候補出しに渡して、同じものを二度提案させない。
+   * 解釈のたびに取り直すのは、直前に登録したぶんを反映するため。
+   */
+  const [knownPhrases, setKnownPhrases] = useState<string[]>([]);
+  const loadPhrases = useCallback(() => {
+    fetch("/api/phrases")
+      .then((r) => r.json())
+      .then((d: { phrases?: { phrase?: unknown }[] }) =>
+        setKnownPhrases((d.phrases ?? []).map((p) => String(p.phrase ?? "")).filter(Boolean))
+      )
+      .catch(() => setKnownPhrases([]));
+  }, []);
+  useEffect(loadPhrases, [loadPhrases]);
 
   const preview = async () => {
     setBusy(true);
@@ -1232,11 +1252,32 @@ function BulkForm({
                   </p>
                 ))}
 
+                {r.needsTeaching ? (
+                  <SuggestPhrase
+                    row={r}
+                    knownPhrases={knownPhrases}
+                    onAccept={(s) =>
+                      patch(i, {
+                        kind: s.kind,
+                        category: s.category ?? r.category,
+                        strengthType: s.strengthType ?? r.strengthType,
+                        phraseDraft: s.phrase,
+                      })
+                    }
+                  />
+                ) : null}
                 {r.needsTeaching && r.kind ? (
+                  /*
+                   * 候補で phraseDraft が変わったら入れ直したいので key に混ぜる。
+                   * TeachPhrase は初期値を useState で1度だけ読むため、
+                   * key を変えないと埋めた語が欄に出ない。
+                   */
                   <TeachPhrase
+                    key={r.phraseDraft ?? ""}
                     row={r}
                     onDone={(phrase) => {
                       patch(i, { needsTeaching: false, taught: phrase });
+                      loadPhrases();
                       onTaught();
                     }}
                   />
@@ -1269,6 +1310,122 @@ function BulkForm({
         </p>
       ) : null}
     </Card>
+  );
+}
+
+/**
+ * 読めなかった行について、辞書に入れる語の案を出す。
+ *
+ * **出すだけ。登録するのは本人。** 押すと下の「この書き方を覚えさせる」に
+ * 語・種類・カテゴリが入るだけで、そこから先はこれまでと同じ手順を通る。
+ * 登録されたあとは辞書で決定的に読まれるので、この機能は
+ * 「まだ知らない書き方に初めて出会ったとき」しか動かない（使うほど呼ばれなくなる）。
+ *
+ * 検査は `phraseSuggestion.ts` にある。行に書かれていない語は通さない。
+ */
+function SuggestPhrase({
+  row,
+  knownPhrases,
+  onAccept,
+}: {
+  /** 使うのは本文だけ。行の他の項目には触らない */
+  row: { raw?: string };
+  knownPhrases: string[];
+  onAccept: (s: PhraseSuggestion) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [s, setS] = useState<PhraseSuggestion | undefined>();
+  const [ready, setReady] = useState(false);
+  const [online, setOnline] = useState(true);
+
+  useEffect(() => {
+    setOnline(navigator.onLine);
+    try {
+      setReady(!!getApiKey() && getConsent());
+    } catch {
+      setReady(false);
+    }
+  }, []);
+
+  const run = useCallback(async () => {
+    let apiKey: string | undefined;
+    try {
+      apiKey = getApiKey();
+    } catch {
+      apiKey = undefined;
+    }
+    if (!apiKey) return;
+    setBusy(true);
+    setErr("");
+    setS(undefined);
+    const r = await askAssistant({
+      apiKey,
+      system: PHRASE_SUGGESTION_SYSTEM_PROMPT,
+      user: buildPhraseSuggestionRequest(String(row.raw ?? ""), knownPhrases),
+    });
+    setBusy(false);
+    if (!r.ok) {
+      setErr(r.message);
+      return;
+    }
+    const parsed = parsePhraseSuggestion(r.text, String(row.raw ?? ""), knownPhrases);
+    if (parsed.error || !parsed.suggestion) {
+      setErr(parsed.error ?? "候補になりませんでした。");
+      return;
+    }
+    setS(parsed.suggestion);
+  }, [row.raw, knownPhrases]);
+
+  // 設定していない・オフラインなら、そもそも出さない（押せないボタンを残さない）
+  if (!ready || !online) return null;
+
+  return (
+    <div className="mt-1.5">
+      {!s ? (
+        <button
+          className="btn-ghost !text-[10.5px] !py-1"
+          disabled={busy}
+          onClick={run}
+          data-testid="suggest-phrase"
+        >
+          {busy ? "候補を考えています…" : "読み方の候補を出す"}
+        </button>
+      ) : (
+        <div
+          className="rounded-lg p-2 text-[10.5px] leading-relaxed"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+          data-testid="suggest-result"
+        >
+          <div className="mb-1">
+            <b>{s.phrase}</b> →{" "}
+            {KIND_OPTIONS.find((k) => k.value === s.kind)?.label ?? s.kind}
+            {s.category ? `／${CATEGORY_LABELS[s.category] ?? s.category}` : ""}
+          </div>
+          <p style={{ color: "var(--text-3)" }}>{s.reason}</p>
+          <div className="flex gap-1.5 mt-1.5 flex-wrap">
+            <button
+              className="btn-volt !text-[10.5px] !py-1"
+              onClick={() => onAccept(s)}
+              data-testid="suggest-accept"
+            >
+              これで埋める
+            </button>
+            <button className="btn-ghost !text-[10.5px] !py-1" onClick={() => setS(undefined)}>
+              使わない
+            </button>
+          </div>
+          <p className="mt-1.5" style={{ color: "var(--text-3)" }}>
+            埋めるだけです。登録は下の「この書き方を覚えさせる」で行います。
+          </p>
+        </div>
+      )}
+      {err ? (
+        <StatusText kind="warning" className="text-[10.5px] mt-1 leading-relaxed">
+          <span data-testid="suggest-error">{err}</span>
+        </StatusText>
+      ) : null}
+    </div>
   );
 }
 
