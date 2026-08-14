@@ -712,7 +712,49 @@ if ((await repInputs.first().inputValue()) !== "39.2") {
 }
 step(`S-4 本ごとのレストOK（既定は非表示 / 最小幅 ${Math.round(narrowest3)}px）`);
 
-await page.locator('label:has-text("RPE") input').first().fill("10");
+/*
+ * RPEをこちらで埋めないこと（forge-v86）。
+ *
+ * RPEは本人にしか分からず、しかもCFEの補正に効く（RPE_ADJUST_SEC_PER_POINT）。
+ * 数字が入っている欄は「入力済み」に見えるので、既定値を置くと
+ * そのまま保存され、こちらが決めた値が能力の推定に混ざる。
+ * ここは新規入力なので、空欄で出ていなければならない。
+ */
+const rpeField = page.locator('label:has-text("RPE") input').first();
+const rpeInitial = await rpeField.inputValue();
+if (rpeInitial !== "") {
+  fail(`RPE: 新規入力なのに既定値が入っている（"${rpeInitial}"）`);
+}
+{
+  // 空のまま保存しようとしたら止まること（Number("")が0として混ざらない）
+  const before = await page.evaluate(() =>
+    fetch("/api/results").then((r) => r.json()).then((d) => (d.results ?? []).length)
+  );
+  let dialogText = "";
+  const onDialog = async (dialog) => {
+    dialogText = dialog.message();
+    await dialog.dismiss();
+  };
+  page.on("dialog", onDialog);
+  await page.getByRole("button", { name: /登録して補正を実行/ }).click();
+  await page.waitForTimeout(300);
+  await page.getByRole("button", { name: "実行する" }).click();
+  await page.waitForTimeout(900);
+  page.off("dialog", onDialog);
+
+  const after = await page.evaluate(() =>
+    fetch("/api/results").then((r) => r.json()).then((d) => (d.results ?? []).length)
+  );
+  if (!dialogText.includes("RPE")) {
+    fail(`RPE: 空のまま保存を止めていない（${dialogText || "案内なし"}）`);
+  } else if (after !== before) {
+    fail(`RPE: 空のまま保存された（${before} → ${after}）`);
+  } else {
+    step("RPEをこちらで埋めないOK（空欄で出す・空のままでは保存しない）");
+  }
+}
+
+await rpeField.fill("10");
 await page.locator('label:has-text("主観") select').selectOption("very_hard");
 // 2-1: 環境条件（折りたたみを開く）
 await page.getByText("環境条件（気温・湿度・風・雨）").click();

@@ -1096,7 +1096,8 @@ function ResultForm({
   const num = (v: number | undefined) => (v === undefined ? "" : String(v));
 
   // 共通
-  const [rpe, setRpe] = useState(existing ? String(existing.rpe ?? 7) : "7");
+  // RPEはこちらで埋めない（本人にしか分からず、CFEの補正に効くため）。登録済みならその値を出す
+  const [rpe, setRpe] = useState(existing ? String(existing.rpe ?? "") : "");
   const [subjective, setSubjective] = useState(existing?.subjective ?? "moderate");
   const [legs, setLegs] = useState(existing?.nextDayLegs ?? "");
 
@@ -1387,6 +1388,21 @@ function ResultForm({
         return;
       }
 
+      /*
+       * RPEは本人にしか分からない値なので、こちらで埋めない。
+       *
+       * 以前は新規入力でも 7 が入っていた。数字が入っている欄は「入力済み」に見えるので、
+       * そのまま保存されうる。RPEはCFEの補正に効く（RPE_ADJUST_SEC_PER_POINT）ため、
+       * こちらが置いた既定値が能力の推定に混ざることになる。
+       * 空欄にして、入っていなければ保存させない（推測で埋めない・黙って混ぜない）。
+       */
+      const rpeValue = Number(rpe);
+      if (!rpe.trim() || !isFinite(rpeValue) || rpeValue < 1 || rpeValue > 10) {
+        setBusy(false);
+        alert("RPE（1〜10）を入れてください。きつさの感じ方は本人にしか分からないので、こちらでは埋めません。");
+        return;
+      }
+
       const envPayload = {
         weatherTempC: tempC ? Number(tempC) : undefined,
         humidityPct: humidity ? Number(humidity) : undefined,
@@ -1419,7 +1435,7 @@ function ResultForm({
             maxHr: maxHr ? Number(maxHr) : undefined,
           },
           achievement: "achieved",
-          rpe: Number(rpe),
+          rpe: rpeValue,
           subjective,
           nextDayLegs: legs || undefined,
           durationMin: min,
@@ -1493,7 +1509,7 @@ function ResultForm({
           actualLapsSec: builtResults.map((result) => result.actualSec),
           lapDistancesM: builtResults.map((result) => result.distanceM),
           achievement: "achieved", // サービス層が実測から上書きする
-          rpe: Number(rpe),
+          rpe: rpeValue,
           subjective,
           nextDayLegs: legs || undefined,
           ...envPayload,

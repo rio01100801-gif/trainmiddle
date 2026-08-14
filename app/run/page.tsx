@@ -40,7 +40,8 @@ export default function RunPage() {
   const [view, setView] = useState<any | null>(null);
   const [session, setSession] = useState<any | null>(null);
   const [input, setInput] = useState("");
-  const [rpe, setRpe] = useState("8");
+  // RPEはこちらで埋めない（本人にしか分からず、CFEの補正に効く）。結果入力の欄と同じ扱い
+  const [rpe, setRpe] = useState("");
   const [subjective, setSubjective] = useState("hard");
   const [out, setOut] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
@@ -107,6 +108,12 @@ export default function RunPage() {
   };
 
   const finish = async (aborted: boolean) => {
+    // 空のまま終えると Number("") が0になり、RPE0としてCFEの補正に入ってしまう
+    const rpeValue = Number(rpe);
+    if (!rpe.trim() || !isFinite(rpeValue) || rpeValue < 1 || rpeValue > 10) {
+      alert("RPE（1〜10）を入れてください。きつさの感じ方は本人にしか分からないので、こちらでは埋めません。");
+      return;
+    }
     setBusy(true);
     try {
       const r = await fetch("/api/session-run", {
@@ -115,7 +122,7 @@ export default function RunPage() {
         body: JSON.stringify({
           action: "finish",
           sessionId,
-          rpe: Number(rpe),
+          rpe: rpeValue,
           subjective,
           aborted,
           today: localToday(),
