@@ -360,6 +360,12 @@ export class MemoryStore implements Store {
   listChangeLog(limit = 100): ChangeLogEntry[] {
     return [...this.state.changeLog].reverse().slice(0, limit);
   }
+  /** 書き出しからの復元。記録した日時をそのまま書く（logChange は今の時刻になる） */
+  restoreChangeLog(entries: ChangeLogEntry[]): void {
+    // 古い順で渡ってくる。listChangeLog が reverse するので、そのまま末尾に積む
+    this.state.changeLog.push(...entries);
+    this.touch();
+  }
 
   // ---- KV ----
   saveKv(key: string, value: unknown): void {

@@ -17,7 +17,7 @@ import type {
   SessionResult,
   SkipReason,
 } from "./core/types";
-import type { Store } from "./db/store";
+import type { ChangeLogEntry, Store } from "./db/store";
 import { addDays, diffDays, fmtTime, weekStart } from "./core/dates";
 import { CONFIRM_HORIZON_DAYS } from "./core/horizon";
 import { buildResultAudit, type ResultAudit } from "./core/resultAudit";
@@ -156,6 +156,7 @@ import {
 } from "./core/contactTime";
 import { buildWeeklyReview, type WeeklyReview } from "./core/weeklyReview";
 import {
+  BACKUP_CHANGE_LOG_LIMIT,
   BACKUP_FORMAT,
   BACKUP_VERSION,
   mergeByDate,
@@ -3998,6 +3999,17 @@ export function exportBackup(repo: Store, now: string): BackupFile {
     phrases: repo.listPhrases(),
     pastEntries: repo.listPastEntries(),
     fitImports: repo.listFitImports(),
+    /*
+     * 自動変更の履歴。
+     *
+     * これが入っていないと、iOSがストレージを消して書き出しから復元したときに
+     * 「設定ペースがなぜ下がったのか」「CFEがなぜ動いたのか」だけが消える。
+     * 結果もCFEの値も残るので、**失われたことに気づけない**。
+     *
+     * `listChangeLog` は新しい順で返すが、復元では古い順に積みたいので
+     * ここで並べ替えてから入れる（保存層の並び順を時系列と一致させるため）。
+     */
+    changeLog: [...repo.listChangeLog(BACKUP_CHANGE_LOG_LIMIT)].reverse(),
     kv: repo.listKv<unknown>(""),
   };
   const counts: Record<string, number> = {};
@@ -4127,6 +4139,26 @@ function importBackupData(
   }
   if (Array.isArray(d.heatEntries)) {
     for (const h of d.heatEntries) repo.saveHeatEntry(h.blockId, h.entry);
+  }
+  /*
+   * 自動変更の履歴。
+   *
+   * idを持たないので `put`（id突合）は使えない。
+   * merge のときは「同じ日時に同じセッションの同じ項目を同じ理由で変えた」ものを
+   * 同一とみなす。日時はミリ秒まであるので、これで実用上ぶつからない。
+   *
+   * 古い書き出しには入っていないので、無ければ何もしない（`?? []` ではなく
+   * 配列判定で分ける——空配列を渡して replace で全消しになるのを避ける）。
+   */
+  if (Array.isArray(d.changeLog)) {
+    const key = (e: ChangeLogEntry) =>
+      `${e.createdAt}|${e.sessionId}|${e.field}|${e.triggeredBy}|${e.reason}`;
+    const mine = mode === "replace" ? [] : repo.listChangeLog(Number.MAX_SAFE_INTEGER);
+    const have = new Set(mine.map(key));
+    const incoming = (d.changeLog as ChangeLogEntry[]).filter((e) => !have.has(key(e)));
+    repo.restoreChangeLog(incoming);
+    report.added.changeLog = incoming.length;
+    report.kept.changeLog = (d.changeLog as ChangeLogEntry[]).length - incoming.length;
   }
   if (Array.isArray(d.kv)) {
     for (const x of d.kv) repo.saveKv(x.key, x.value);

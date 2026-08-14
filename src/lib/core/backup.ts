@@ -22,6 +22,21 @@ export const BACKUP_VERSION = 1;
  */
 export const BACKUP_MAX_BYTES = 50 * 1024 * 1024;
 
+/**
+ * 書き出しに入れる変更履歴の件数。
+ *
+ * 変更履歴は**復元できないと意味が無い**——「設定ペースがなぜ下がったのか」
+ * 「CFEがなぜ動いたのか」を残すためのものなので、結果だけ戻って理由が消えると、
+ * 数字を疑ったときに追えなくなる。結果もCFEの値も残るので、
+ * **失われたことに気づけない**のがいちばん危ない。
+ *
+ * 一方で無制限に積むとファイルが肥大する（1件あたり200バイト前後）。
+ * 2000件は、結果1件につき数件が積まれる想定で**1〜2シーズンぶん**にあたる。
+ * それより古い自動変更は、その頃の設定ペースを疑う場面がもう来ない。
+ * 古い方から落とす（新しい方を優先して残す）。
+ */
+export const BACKUP_CHANGE_LOG_LIMIT = 2000;
+
 export function validateBackupFileSize(bytes: number): { ok: true } | { ok: false; message: string } {
   if (bytes > BACKUP_MAX_BYTES) {
     return {

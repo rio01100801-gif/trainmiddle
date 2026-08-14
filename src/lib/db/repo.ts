@@ -18,7 +18,7 @@ import type {
   StrengthSession,
 } from "../core/types";
 import type { DbDriver } from "./driver";
-import type { Store } from "./store";
+import type { ChangeLogEntry, Store } from "./store";
 import type { SyncRecord } from "../core/healthImport";
 import type { CustomMenu, WeekTemplate } from "../core/weekTemplate";
 import type { PastEntry } from "../core/backfill";
@@ -388,6 +388,23 @@ export class Repo implements Store {
         rejectReason ?? null,
         JSON.stringify(c)
       );
+  }
+  /** 書き出しからの復元。記録した日時をそのまま書く（logChange は今の時刻になる） */
+  restoreChangeLog(entries: ChangeLogEntry[]): void {
+    const stmt = this.db.prepare(
+      "INSERT INTO change_log (created_at, session_id, triggered_by, accepted, reject_reason, json) VALUES (?, ?, ?, ?, ?, ?)"
+    );
+    for (const e of entries) {
+      const { createdAt, accepted, rejectReason, ...change } = e;
+      stmt.run(
+        createdAt,
+        change.sessionId,
+        change.triggeredBy,
+        accepted === undefined ? null : accepted ? 1 : 0,
+        rejectReason ?? null,
+        JSON.stringify(change)
+      );
+    }
   }
   // ---- KV ----
   saveKv(key: string, value: unknown): void {

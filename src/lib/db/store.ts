@@ -101,6 +101,17 @@ export interface Store {
 
   logChange(c: SessionChange, accepted?: boolean, rejectReason?: string): void;
   listChangeLog(limit?: number): ChangeLogEntry[];
+  /**
+   * 書き出しから戻すとき用。`logChange` と違って**記録した日時をそのまま書く**。
+   *
+   * `logChange` は「いま起きた変更」を積むので日時を今にする。
+   * 復元でそれを通すと、去年の変更が全部「復元した日」になり、
+   * 変更履歴が時系列として読めなくなる（何がいつ効いたのか分からない）。
+   *
+   * 渡すのは**古い順**。保存層が並び順を持っている実装（SQLiteのseq）でも
+   * 時系列と一致させるため。
+   */
+  restoreChangeLog(entries: ChangeLogEntry[]): void;
 
   /**
    * 汎用のキー・バリュー。
