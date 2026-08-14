@@ -77,6 +77,18 @@ export function wbgtLevel(wbgt: number): WbgtLevel {
 export const HEAT_FLAG_WBGT_THRESHOLD = 25;
 export const HEAT_FLAG_TEMP_THRESHOLD = 28;
 
+/**
+ * 暑熱条件フラグ＝**その練習を能力推定から外すかどうか**を決める。
+ *
+ * 見るのは気温と湿度だけ。`EnvironmentConditions` には風と雨も入っているが、
+ * **ここでは意図的に使っていない**（`environmentNote` の注意書きにだけ効く）。
+ *
+ * 入れていないのは根拠が無いから。風雨は「体感が下がるので能力推定から
+ * 外すべきでない」方向にも、「条件が悪いので外すべき」方向にも効きうる。
+ * どちらか決められないまま係数を置くと、その数字がどこから来たのか説明できなくなる。
+ * 根拠が出たらここに足す（画面にも「風雨は入れていない」と書いてあるので、
+ * 足すときはそちらも直すこと）。
+ */
 export function evaluateEnvironment(env: EnvironmentConditions): WbgtResult | undefined {
   const { tempC, humidityPct } = env;
   if (tempC === undefined) return undefined;

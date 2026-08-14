@@ -2048,7 +2048,7 @@ function ResultForm({
                   inputMode="numeric"
                 />
               </L>
-              <L label="風">
+              <L label="風（記録用）">
                 <select className="w-full" value={wind} onChange={(e) => setWind(e.target.value)}>
                   <option value="">-</option>
                   {Object.entries(WIND_LABELS).map(([k, v]) => (
@@ -2065,8 +2065,29 @@ function ResultForm({
                   onChange={(e) => setRain(e.target.checked)}
                   className="w-5 h-5"
                 />
-                雨
+                雨（記録用）
               </label>
+              {/*
+                風と雨がどこまで効くのかを書く。
+
+                効くのは上の注意書き（`environmentNote`）まで。
+                暑熱条件フラグ＝**その練習を能力推定から外すかどうか**は、
+                気温と湿度から出すWBGTだけで決めていて、風雨は入っていない。
+
+                入れていないのは根拠が無いから。風雨は「体感が下がるので
+                能力推定から外すべきでない」方向にも、「条件が悪いので外すべき」方向にも
+                効きうる。どちらか決められないまま係数を置くと、
+                その数字がどこから来たのか説明できなくなる。
+                根拠が出たら `evaluateEnvironment` に足す。
+              */}
+              <p
+                className="col-span-2 text-[10.5px] leading-relaxed"
+                style={{ color: "var(--text-3)" }}
+              >
+                風と雨は、達成度を読むときの注意として上に出すだけです。
+                暑熱条件（その練習を能力推定から外すかどうか）は気温と湿度のWBGTだけで決めていて、
+                風雨は入れていません——どちらに効かせるべきかの根拠が無いためです。
+              </p>
               {envNotes.length > 0 ? (
                 <div
                   role="status"
