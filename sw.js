@@ -11,7 +11,7 @@
  *
  * リリースのたびに VERSION を必ず上げること（上げないと install が走らない）。
  */
-const VERSION = "forge-v81";
+const VERSION = "forge-v82";
 /*
  * 分割された chunk（遅延読み込みの画面・FIT解析）。
  *
@@ -22,7 +22,7 @@ const VERSION = "forge-v81";
  * 遅延読み込みの画面だけが開けない。** fetchハンドラはchunkをキャッシュ優先で
  * 扱うが、一度も取っていなければキャッシュに無く、通信も無いので開けない。
  */
-const CHUNKS = ["./chunk-05wdq288.js", "./chunk-0hc37gdh.js", "./chunk-0y2pgby4.js", "./chunk-1qgsnk80.js", "./chunk-29r1gffa.js", "./chunk-38aqpfrj.js", "./chunk-3ecpr05e.js", "./chunk-3eyh984r.js", "./chunk-3trdshrm.js", "./chunk-44hav43q.js", "./chunk-488czs1g.js", "./chunk-5811r8tn.js", "./chunk-5r38ywye.js", "./chunk-69pyhxsb.js", "./chunk-6afegvkc.js", "./chunk-6qj9ngz5.js", "./chunk-730nb392.js", "./chunk-7hxb2g0t.js", "./chunk-9xkfgqfq.js", "./chunk-bcb2w5mw.js", "./chunk-bnmaqvtt.js", "./chunk-btnv0fv5.js", "./chunk-cjxm28da.js", "./chunk-cm78hc10.js", "./chunk-cpvvrp3r.js", "./chunk-edd0vyxm.js", "./chunk-g38nnq6h.js", "./chunk-gf457qgk.js", "./chunk-gqfe3dv0.js", "./chunk-gwd2c5q0.js", "./chunk-h0yama1j.js", "./chunk-h94a6kgr.js", "./chunk-j6ytvd61.js", "./chunk-k6bdrrdq.js", "./chunk-k9mfj64q.js", "./chunk-kc7thnn7.js", "./chunk-knw2z981.js", "./chunk-nkx7qfjt.js", "./chunk-q79sscth.js", "./chunk-r1m724mv.js", "./chunk-rq45w33c.js", "./chunk-rr7p2pfh.js", "./chunk-saz7fba7.js", "./chunk-vnctn2w5.js", "./chunk-x5v609na.js", "./chunk-xhme7pmk.js", "./chunk-z48t8c47.js", "./chunk-z8hwyvas.js"];
+const CHUNKS = ["./chunk-05wdq288.js", "./chunk-0y2pgby4.js", "./chunk-14t9fwm4.js", "./chunk-1qgsnk80.js", "./chunk-29r1gffa.js", "./chunk-38aqpfrj.js", "./chunk-3eyh984r.js", "./chunk-3trdshrm.js", "./chunk-44hav43q.js", "./chunk-488czs1g.js", "./chunk-5811r8tn.js", "./chunk-69pyhxsb.js", "./chunk-6qj9ngz5.js", "./chunk-7hxb2g0t.js", "./chunk-9j3q7rcy.js", "./chunk-9xkfgqfq.js", "./chunk-bcb2w5mw.js", "./chunk-bnmaqvtt.js", "./chunk-btnv0fv5.js", "./chunk-cm78hc10.js", "./chunk-cpvvrp3r.js", "./chunk-dts5cph3.js", "./chunk-ecp163b6.js", "./chunk-edd0vyxm.js", "./chunk-g38nnq6h.js", "./chunk-gf457qgk.js", "./chunk-gqfe3dv0.js", "./chunk-gwd2c5q0.js", "./chunk-h0yama1j.js", "./chunk-h94a6kgr.js", "./chunk-j6ytvd61.js", "./chunk-k6bdrrdq.js", "./chunk-k963bv57.js", "./chunk-k9mfj64q.js", "./chunk-kc7thnn7.js", "./chunk-knw1abyf.js", "./chunk-nkx7qfjt.js", "./chunk-q31nfe02.js", "./chunk-q79sscth.js", "./chunk-r1m724mv.js", "./chunk-rq45w33c.js", "./chunk-rr7p2pfh.js", "./chunk-saz7fba7.js", "./chunk-vnctn2w5.js", "./chunk-x5v609na.js", "./chunk-xhme7pmk.js", "./chunk-z48t8c47.js", "./chunk-z8hwyvas.js"];
 const ASSETS = [
   "./",
   "./index.html",
