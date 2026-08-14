@@ -46,6 +46,7 @@ import {
   OFF_SEASON_HORIZON_WEEKS,
   OFF_SEASON_LABELS,
   describeOffSeasonBlock,
+  offSeasonBlockNumber,
   offSeasonEmphasis,
 } from "./offSeason";
 import {
@@ -1280,6 +1281,10 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
         aerobicPurpose: tpl.aerobicPurpose,
         surface: "track",
         generation: custom ? undefined : built.generation,
+        // どのブロックで作ったかは、あとから計算し直せない（Session の定義を参照）
+        offSeasonBlock: emphasis
+          ? { emphasis, number: offSeasonBlockNumber(weekIndex) }
+          : undefined,
       };
       sessions.push(session);
       /*

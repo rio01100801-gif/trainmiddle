@@ -112,7 +112,12 @@ import {
   type SyncRecord,
 } from "./core/healthImport";
 import { analyzeRace, RaceAnalysisOutput } from "./core/raceAnalysis";
-import { validateWeekTemplate } from "./core/weekTemplate";
+import { cycleOf, cyclePositionFor, validateWeekTemplate } from "./core/weekTemplate";
+import {
+  OFF_SEASON_LABELS,
+  OFF_SEASON_REASONS,
+  type OffSeasonEmphasis,
+} from "./core/offSeason";
 import {
   planVolumeProgression,
   VOLUME_HORIZON_DAYS,
@@ -751,6 +756,44 @@ function regeneratePlanCore(repo: Store, startDate: string): {
       repo.saveSessions(recovery);
     }
   }
+
+  /*
+   * 生成の途中で内容を差し替えた枠を、変更履歴に残す。
+   *
+   * これまで `limiterSwaps` と `spacingSwaps` は生成直後の画面メッセージにしか出ず、
+   * **画面を離れると理由が消えていた**。あとで予定を見返したときに
+   * 「なぜここだけCVなのか」が分からない。
+   * 変更履歴はバックアップにも入る（forge-v89）ので、端末を替えても残る。
+   *
+   * 保存済みの枠ぶんだけ残す——安全性の判定で捨てた枠の理由を残しても、
+   * 対応する予定が無いので読めない。
+   */
+  const savedIds = new Set(generatedSessions.map((s) => s.id));
+  const logSwap = (
+    swap: { date: string; from: string; to: string; note: string },
+    triggeredBy: string
+  ) => {
+    const sessionId = `s-plan-${swap.date}-pm`;
+    if (!savedIds.has(sessionId)) return;
+    repo.logChange({
+      sessionId,
+      field: "category",
+      before: swap.from,
+      after: swap.to,
+      reason: swap.note,
+      triggeredBy,
+      /*
+       * 上げ・下げのどちらでもない。
+       * 制限因子の振り替えも間隔の調整も、量や強度を動かしているのではなく
+       * **枠の中身を入れ替えている**だけ（CVを経済走に、経済走をCVに）。
+       * down にすると「軽くした」記録として集計に効いてしまう。
+       */
+      direction: "neutral",
+      action: "modify",
+    });
+  };
+  for (const swap of plan.limiterSwaps) logSwap(swap, "M-7");
+  for (const swap of plan.spacingSwaps) logSwap(swap, "RULE-04");
 
   const violations = runRuleEngine(buildRuleContext(repo, startDate));
   return {
@@ -1783,6 +1826,14 @@ export function dashboard(repo: Store, today: string) {
       )
       .sort((a, b) => (a.timeOfDay ?? "pm").localeCompare(b.timeOfDay ?? "pm")),
     readiness: today_.readiness,
+    /*
+     * 今日が「何の繰り返しの、どこ」なのか。
+     *
+     * N日周期と冬季ブロックは、決めたあと画面から見えなくなっていた。
+     * 繰り返している構造が見えないと、周期にした意味（間隔を自分で決める）が
+     * 本人にも分からない。理由まで出して、違うと思ったら設定を変えられるようにする。
+     */
+    todayStructure: todayStructure(repo, today, today_.session),
     aerobicProfile,
     ltRefreshHint: aerobicProfile.refreshHint,
     lastSync: repo.listSyncs(1)[0],
@@ -4028,6 +4079,76 @@ export function exportBackup(repo: Store, now: string): BackupFile {
 }
 
 /**
+ * 相談に送る「練習の組み方」。
+ *
+ * 画面（`todayStructure`）と同じものを、文章にして送る。
+ * 別々に組み立てると、片方を直したときに
+ * 「画面ではこう見えているのにAIは別の前提で答える」ことになる。
+ */
+export function assistantStructure(
+  repo: Store,
+  today: string
+): { cycle?: string; offSeason?: { label: string; reason: string } } | undefined {
+  const session = repo
+    .listSessions(today, today)
+    .find((s) => s.offSeasonBlock !== undefined);
+  const s = todayStructure(repo, today, session);
+  if (!s.cycle && !s.offSeason) return undefined;
+  return {
+    cycle: s.cycle
+      ? `${s.cycle.lengthDays}日周期（今日は${s.cycle.position}日目）`
+      : undefined,
+    offSeason: s.offSeason,
+  };
+}
+
+export interface TodayStructure {
+  /** N日周期なら「4日目 / 10日」のような位置。曜日で組んでいれば undefined */
+  cycle?: { position: number; lengthDays: number; label: string };
+  /** 冬季・基礎構築モードなら、その日のブロックと理由 */
+  offSeason?: { label: string; reason: string };
+}
+
+/**
+ * 今日が「何の繰り返しの、どこ」なのか。
+ *
+ * 周期は保存してある起点から**その場で数える**（`cyclePositionFor`）。
+ * 冬季のブロックは生成時にしか分からないので、セッションに持たせたものを読む
+ * （`Session.offSeasonBlock` のコメントを参照）。
+ */
+export function todayStructure(
+  repo: Store,
+  today: string,
+  session: Session | undefined
+): TodayStructure {
+  const out: TodayStructure = {};
+
+  const template = repo.getWeekTemplate();
+  const position = cyclePositionFor(template, today);
+  const cycle = cycleOf(template);
+  if (position !== undefined && cycle) {
+    out.cycle = {
+      position: position + 1,
+      lengthDays: cycle.lengthDays,
+      label: `周期 ${position + 1}日目 / ${cycle.lengthDays}日`,
+    };
+  }
+
+  const block = session?.offSeasonBlock;
+  if (block) {
+    const emphasis = block.emphasis as OffSeasonEmphasis;
+    const name = OFF_SEASON_LABELS[emphasis];
+    if (name) {
+      out.offSeason = {
+        label: `第${block.number}ブロック ${name}`,
+        reason: OFF_SEASON_REASONS[emphasis],
+      };
+    }
+  }
+  return out;
+}
+
+/**
  * いま何期か。
  *
  * フェーズ別の表（補強の内容など）を画面に出すときに、
@@ -4287,6 +4408,12 @@ export function assistantContext(repo: Store, today: string): AssistantContext {
         }
       : undefined,
     phase: race ? phaseForDate(today, race.dateStart) : undefined,
+    /*
+     * 組み方（N日周期・冬季モード）。
+     * 画面に出しているのと同じものを送る。片方だけ更新すると、
+     * 「画面ではこう見えているのにAIは別の前提で答える」ことになる。
+     */
+    structure: assistantStructure(repo, today),
     todaySessions: repo.listSessions(today, today).map(toSession),
     upcomingSessions: repo.listSessions(addDays(today, 1), addDays(today, UPCOMING_DAYS)).map(toSession),
     recentResults,

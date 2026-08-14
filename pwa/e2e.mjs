@@ -4914,6 +4914,80 @@ if ((await fitRebuildCard.count()) === 0) {
   step(`フェーズ別の補強OK（画面に5期・いまは${nowPhase}・実物と表が一致 ${checked}件）`);
 }
 
+// ---- 周期・冬季が画面に残る／相談にも送られる ----
+/*
+ * 決めた直後の画面メッセージにしか出ていなかったものを、あとからも追えるようにした。
+ * ここで見るのは3つ。
+ *   ・TODAYに「周期の何日目か」が出ること
+ *   ・冬季モードなら「第何ブロックか」と理由も出ること
+ *   ・相談に送る文脈にも同じことが入っていること（画面と送信がずれない）
+ *
+ * 手前のブロックで曜日設定に戻してあるので、まず周期に入れ直す。
+ */
+{
+  const anchorDate = await page.evaluate(() => {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  });
+
+  await page.goto("http://localhost:8791/#/plan-settings");
+  await page.waitForTimeout(700);
+  await page.getByRole("button", { name: "日数の周期で決める" }).click();
+  await page.waitForTimeout(250);
+  const len = page.getByLabel("周期の長さ（日）");
+  await len.fill("10");
+  await len.dispatchEvent("change");
+  await page.getByLabel("1日目にする日").fill(anchorDate);
+  await page.waitForTimeout(300);
+  await page.getByRole("button", { name: "設定を保存" }).click();
+  await page.waitForTimeout(250);
+  await page.getByRole("button", { name: "実行する" }).click();
+  await page.waitForTimeout(700);
+
+  const regen = await page.evaluate(async () =>
+    fetch("/api/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }).then((r) => r.json())
+  );
+  if (regen.error) fail("周期で再生成できない: " + regen.error);
+
+  // TODAY に構造の1行が出ること
+  await page.goto("http://localhost:8791/#/");
+  await page.waitForTimeout(1000);
+  const line = page.locator('[data-testid="today-structure"]');
+  if (!(await line.count())) fail("TODAYに周期の位置が出ていない");
+  const lineText = (await line.first().textContent()) ?? "";
+  if (!/周期\s*1日目\s*\/\s*10日/.test(lineText)) {
+    fail("周期の何日目かが読めない: " + lineText);
+  }
+
+  // 相談に送る文脈にも入っていること（画面と送信がずれない）
+  const ctx = await page.evaluate(async () =>
+    fetch("/api/assistant-context").then((r) => r.json())
+  );
+  const text = ctx.context?.text ?? ctx.text ?? "";
+  if (!text.includes("10日周期")) {
+    fail("相談の文脈に周期が入っていない（画面と送信がずれる）");
+  }
+
+  // 生成で入れ替えた枠の理由が、変更履歴に残ること
+  const changes = await page.evaluate(async () =>
+    fetch("/api/changes").then((r) => r.json())
+  );
+  const swaps = (changes.changes ?? []).filter(
+    (c) => c.triggeredBy === "M-7" || c.triggeredBy === "RULE-04"
+  );
+  if (!swaps.length) {
+    fail("生成で入れ替えた枠の理由が変更履歴に残っていない");
+  }
+  if (swaps.some((c) => !c.reason)) fail("理由の無い変更が記録されている");
+
+  step(`周期・冬季の構造が残るOK（TODAYに位置・相談にも同じ・入れ替え${swaps.length}件の理由が履歴に）`);
+}
+
 if (errors.length) {
   console.log("JS ERRORS:", errors.slice(0, 5));
   process.exitCode = 1;

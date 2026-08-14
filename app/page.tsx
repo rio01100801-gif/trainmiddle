@@ -109,6 +109,7 @@ export default function Home() {
         セッションの後ろへ下げる。消してはいない（レースまでの日数・警告件数はここだけ）。
       */}
       <TodayHeader d={d} />
+      <TodayStructureLine s={d.todayStructure} />
       <Today d={d} today={today} onChanged={load} />
       <HomePriority d={d} />
       {/*
@@ -246,6 +247,51 @@ function WeeklySummary({ d }: { d: WeeklySummaryData }) {
         ))}
       </div>
     </section>
+  );
+}
+
+/**
+ * 今日が「何の繰り返しの、どこ」なのか。
+ *
+ * N日周期も冬季ブロックも、設定したあと画面から見えなくなっていた。
+ * 繰り返している構造が見えないと、周期にした意味（間隔を自分で決める）が
+ * 本人にも分からなくなる。
+ *
+ * 曜日で組んでいてレースにも向かっているときは何も出さない——
+ * そのときは「毎週これ」が当たり前なので、書いても情報が増えない。
+ */
+function TodayStructureLine({
+  s,
+}: {
+  s?: {
+    cycle?: { position: number; lengthDays: number; label: string };
+    offSeason?: { label: string; reason: string };
+  } | null;
+}) {
+  if (!s || (!s.cycle && !s.offSeason)) return null;
+  return (
+    <Link
+      href="/plan-settings"
+      className="rounded-lg p-2.5 block"
+      style={{ background: "var(--surface-2)", textDecoration: "none" }}
+      data-testid="today-structure"
+    >
+      <div className="flex items-baseline gap-2 flex-wrap">
+        {s.cycle ? (
+          <span className="text-[12px] font-semibold" style={{ color: "var(--forge)" }}>
+            {s.cycle.label}
+          </span>
+        ) : null}
+        {s.offSeason ? (
+          <span className="text-[12px] font-semibold">{s.offSeason.label}</span>
+        ) : null}
+      </div>
+      {s.offSeason ? (
+        <p className="text-[11px] mt-1 leading-relaxed" style={{ color: "var(--text-2)" }}>
+          {s.offSeason.reason}
+        </p>
+      ) : null}
+    </Link>
   );
 }
 

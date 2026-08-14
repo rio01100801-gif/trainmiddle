@@ -76,6 +76,19 @@ export interface AssistantContextInput {
     history: { date: string; before: number; after: number; source: string }[];
   };
   phase?: string;
+  /**
+   * 練習の組み方。
+   *
+   * 送っていなかったので、**冬季モードで相談してもレースに向けた期分けの前提で
+   * 答えが返っていた**。10日周期で組んでいても週7日前提で返っていた。
+   * 送っている文脈が実態とずれていると、答えは噛み合わない。
+   */
+  structure?: {
+    /** N日周期で組んでいるなら「10日周期（1日目が起点）」のような説明 */
+    cycle?: string;
+    /** 冬季・基礎構築モードなら、そのブロックと理由 */
+    offSeason?: { label: string; reason: string };
+  };
   todaySessions: AssistantSessionInput[];
   upcomingSessions: AssistantSessionInput[];
   recentResults: AssistantResultInput[];
@@ -156,6 +169,19 @@ export function buildAssistantContext(input: AssistantContextInput): AssistantCo
     basics.push(`目標レース: ${race}${days !== undefined ? `（あと${days}日）` : ""}`);
   }
   if (input.phase) basics.push(`現在のフェーズ: ${input.phase}`);
+  /*
+   * 組み方は「目標と現在地」に入れる。別の節にすると、
+   * 目標レースが無いこと（冬季）と期分けの話が離れて読まれる。
+   */
+  if (input.structure?.cycle) {
+    basics.push(`練習の組み方: ${input.structure.cycle}（曜日ではなく日数の周期で組んでいる）`);
+  }
+  if (input.structure?.offSeason) {
+    basics.push(
+      `冬季・基礎構築モード（目標レース未定・ピーキングしない）: ${input.structure.offSeason.label}`
+    );
+    basics.push(`このブロックの狙い: ${input.structure.offSeason.reason}`);
+  }
   sections.push({ id: "basics", title: "目標と現在地", lines: basics });
 
   // ---- CFE ----
