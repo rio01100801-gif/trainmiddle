@@ -13,6 +13,7 @@ import {
   fitWithin,
   isAcceptedImageType,
   MAX_IMAGE_EDGE,
+  NOTHING_TO_READ,
   TRANSCRIPTION_SYSTEM_PROMPT,
   UNREADABLE_MARK,
 } from "@/lib/core/transcription";
@@ -68,15 +69,21 @@ describe("応答の受け取り", () => {
     expect(cleanTranscription("7/4 2kmジョグ 8:40").unreadableCount).toBe(0);
   });
 
-  it("日誌が写っていない応答は本文にしない", () => {
-    const r = cleanTranscription("練習日誌が写っていません");
+  it("文字が写っていない応答は本文にしない", () => {
+    const r = cleanTranscription(NOTHING_TO_READ);
     expect(r.text).toBe("");
     expect(r.rejected).toContain("読み取れませんでした");
   });
 
   it("同じ言葉が本文中に出てきただけなら拒否にしない", () => {
-    const long =
-      "7/4 2kmジョグ 8:40\n7/5 コーチに練習日誌が写っていませんと言われたのでやり直した\n7/6 オフ";
+    /*
+     * 合図の文字列そのものを本文に含めておく。
+     * 含めないと「合図が無いから拒否されない」を確かめるだけの空テストになる
+     * （実際、合図を NOTHING_TO_READ へ変えたときに一度そうなった）。
+     */
+    const long = `7/4 2kmジョグ 8:40\n7/5 メモに「${NOTHING_TO_READ}」と書いてあったので撮り直した\n7/6 オフ`;
+    expect(long).toContain(NOTHING_TO_READ);
+    expect(long.length).toBeGreaterThanOrEqual(40);
     const r = cleanTranscription(long);
     expect(r.rejected).toBeUndefined();
     expect(r.text).toBe(long);

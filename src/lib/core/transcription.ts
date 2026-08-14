@@ -31,8 +31,16 @@ export const UNREADABLE_MARK = "【読めず】";
  *   1. 見えている文字だけを書く（読めないものを推測で埋めない）
  *   2. 整えない・並べ替えない・単位を足さない（整形は解釈の一種）
  */
+/**
+ * 文字が写っていなかったときに返させる合図。
+ *
+ * 撮る対象は練習日誌だけではない（コーチがホワイトボードに書いたメニューもある）ので、
+ * 対象を名指ししない言い方にしてある。
+ */
+export const NOTHING_TO_READ = "読み取れる文字がありません";
+
 export const TRANSCRIPTION_SYSTEM_PROMPT = [
-  "あなたは画像に写っている練習日誌の文字を、そのまま書き起こす作業をしています。",
+  "あなたは画像に写っている練習メニュー・練習日誌の文字を、そのまま書き起こす作業をしています。",
   "",
   "守ること:",
   "- 画像に見えている文字だけを書いてください。見えていないものを補わないでください。",
@@ -42,7 +50,7 @@ export const TRANSCRIPTION_SYSTEM_PROMPT = [
   "- 単位・記号・全角半角を勝手に足したり直したりしないでください。",
   "- 内容の意味を説明したり、練習の種類を判定したりしないでください。あなたの仕事は文字起こしだけです。",
   "- 前置き・後書き・見出しを付けず、書き起こした本文だけを返してください。",
-  "- 練習日誌が写っていない場合は、本文を返さず「練習日誌が写っていません」とだけ書いてください。",
+  `- 文字が読み取れない、または練習の記録が写っていない場合は、本文を返さず「${NOTHING_TO_READ}」とだけ書いてください。`,
 ].join("\n");
 
 export interface TranscriptionResult {
@@ -83,11 +91,12 @@ export function cleanTranscription(raw: string): TranscriptionResult {
   const stripped = stripCodeFence(raw).replace(/\r\n?/g, "\n");
   const text = stripped.replace(/^\n+/, "").replace(/\s+$/, "");
 
-  if (/練習日誌が写っていません/.test(text) && text.length < 40) {
+  if (text.includes(NOTHING_TO_READ) && text.length < 40) {
     return {
       text: "",
       unreadableCount: 0,
-      rejected: "写真から練習日誌を読み取れませんでした。日誌の面が写っているか確認してください。",
+      rejected:
+        "写真から文字を読み取れませんでした。書かれている面が写っているか、明るさが足りているかを確認してください。",
     };
   }
 

@@ -4204,6 +4204,107 @@ if ((await fitRebuildCard.count()) === 0) {
   step("表記辞書の候補OK（行に無い語は弾く・埋めるだけでは増えない・登録後はAI不要で読める）");
 }
 
+// ---- カレンダーの編集シートでも写真から転記できる ----
+/*
+ * 見張るのは「同じ部品が両方の入口で動くこと」と、
+ * **転記しても予定はまだ変わらないこと**（保存は本人が押したときだけ）。
+ */
+{
+  const asked = [];
+  await page.route("https://api.anthropic.com/**", async (route) => {
+    asked.push(route.request().postData() ?? "");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        content: [{ type: "text", text: "300m×6 r5min" }],
+        stop_reason: "end_turn",
+      }),
+    });
+  });
+  await page.evaluate(() => {
+    localStorage.setItem("forge:assistant:key", "sk-ant-api03-e2e-dummy-key-0000");
+    localStorage.setItem("forge:assistant:consent", "yes");
+  });
+
+  await page.goto("http://localhost:8791/#/calendar");
+  await page.reload();
+  await page.waitForFunction(() => !document.getElementById("splash"), { timeout: 15000 });
+  await page.waitForTimeout(900);
+
+  // 編集シートを開く
+  const pencil = page.locator('button[aria-label="編集"], button:has-text("✎")').first();
+  if ((await pencil.count()) === 0) {
+    fail("カレンダー写真転記: 編集ボタンが見つからない");
+  } else {
+    await pencil.click();
+    await page.waitForTimeout(700);
+    if ((await page.locator('[data-testid="photo-file"]').count()) === 0) {
+      fail("カレンダー写真転記: 編集シートに写真の欄が出ていない");
+    } else {
+      const before = await page.locator("textarea").first().inputValue();
+      /*
+       * 生成器も 300m×N の予定を作るので「その本文が存在しない」では確かめられない。
+       * 転記の前後で件数が増えていないことを見る。
+       */
+      const countWith = () =>
+        page.evaluate(async () => {
+          const d = await fetch("/api/sessions").then((r) => r.json());
+          return (d.sessions ?? []).filter((s) => (s.prescription ?? "").includes("300m×6")).length;
+        });
+      const savedBefore = await countWith();
+
+      const png = await page.evaluate(() => {
+        const c = document.createElement("canvas");
+        c.width = 1600;
+        c.height = 1200;
+        const g = c.getContext("2d");
+        g.fillStyle = "#fff";
+        g.fillRect(0, 0, c.width, c.height);
+        g.fillStyle = "#000";
+        g.font = "60px sans-serif";
+        g.fillText("300x6", 80, 200);
+        return c.toDataURL("image/png").split(",")[1];
+      });
+      await page.setInputFiles('[data-testid="photo-file"]', {
+        name: "menu.png",
+        mimeType: "image/png",
+        buffer: Buffer.from(png, "base64"),
+      });
+      await page.waitForSelector('[data-testid="photo-preview"]', { timeout: 10000 });
+      await page.click('[data-testid="photo-send"]');
+      await page.waitForSelector('[data-testid="photo-note"]', { timeout: 20000 }).catch(() => {});
+
+      if (asked.length !== 1) fail(`カレンダー写真転記: 送信が1回でない（${asked.length}回）`);
+
+      const after = await page.locator("textarea").first().inputValue();
+      if (!after.includes("300m×6")) {
+        fail(`カレンダー写真転記: 本文に入っていない（${after.slice(0, 60)}）`);
+      }
+      // 既にあった本文を消していない
+      if (before.trim() && !after.includes(before.trim().slice(0, 8))) {
+        fail("カレンダー写真転記: 元の本文を消している");
+      }
+
+      // **保存していないので予定はまだ変わっていない**
+      const savedAfter = await countWith();
+      if (savedAfter !== savedBefore) {
+        fail(
+          `カレンダー写真転記: 保存していないのに予定へ書き込まれている（${savedBefore} → ${savedAfter}）`
+        );
+      }
+    }
+  }
+
+  await shot("63_calendar_photo");
+  await page.unroute("https://api.anthropic.com/**");
+  await page.evaluate(() => {
+    localStorage.removeItem("forge:assistant:key");
+    localStorage.removeItem("forge:assistant:consent");
+  });
+  step("カレンダーの編集シートでも写真転記OK（本文に入るだけ・保存前は予定を変えない）");
+}
+
 if (errors.length) {
   console.log("JS ERRORS:", errors.slice(0, 5));
   process.exitCode = 1;

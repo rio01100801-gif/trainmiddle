@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Card, ConfirmButton, StatusText } from "./ui";
 import { withQuery } from "./route-query";
 import { PrescriptionFields, prescriptionPayload, usePrescriptionFields } from "./prescription-fields";
+import { PhotoTranscribe } from "./photo-transcribe";
 import type { Session } from "@/lib/core/types";
 
 /**
@@ -167,6 +168,20 @@ export function SessionEditSheet({
 
   return (
     <Card title={title ?? `${session.date.slice(5).replace("-", "/")} ${session.name}`}>
+      {/*
+        コーチがホワイトボードに書いたメニューを撮って、そのまま本文に入れる。
+        起こすのは文字だけで、種目・設定・カテゴリの判定はこれまでどおり
+        本文から欄が組み上がる経路（parseRow）が行う。
+      */}
+      <PhotoTranscribe
+        label="メニューの写真"
+        hint="ホワイトボードや紙のメニューを撮ると、文字を起こして下の本文に入れます。"
+        onText={(t: string) =>
+          // 既に書いてある本文は消さずに足す（手で打った途中を写真1枚で消さない）
+          setPrescription((prev: string) => (prev.trim() ? `${prev.trimEnd()} ${t}` : t))
+        }
+      />
+
       <label className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
         メニュー本文
       </label>
