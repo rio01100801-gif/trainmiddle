@@ -12,6 +12,12 @@
  */
 import type { RuleViolation, SessionCategory } from "./types";
 import { isHighLoadCategory, isSpecificCategory } from "./trainingClassification";
+import {
+  MAX_CYCLE_DAYS,
+  MIN_CYCLE_DAYS,
+  clampCycleLength,
+  cyclePositionOf,
+} from "./cycleTemplate";
 
 /** 0=日曜 … 6=土曜（JavaScript の Date#getDay と同じ並び） */
 export type Dow = 0 | 1 | 2 | 3 | 4 | 5 | 6;
@@ -86,10 +92,75 @@ export interface WeekTemplate {
   /** ロングランを置く曜日（aerobic のうち長い方）。未設定なら自動 */
   longRunDow?: Dow;
   enabled: boolean;
+  /**
+   * N日周期。入っていて `enabled` なら、**曜日ではなく周期で組む**。
+   *
+   * 曜日の設定（`slots` など）は消さずに残す。周期を試して戻したくなったときに
+   * 曜日の設定を入れ直させるのは、設定を壊すのと同じだから。
+   */
+  cycle?: TrainingCycle;
+}
+
+/**
+ * N日周期の枠。
+ *
+ * 位置は**0始まり**（画面には「1日目」と出す）。
+ * 曜日と同じ語彙（`WeekdaySlot` / `WeekdayPreferenceMode`）を使うので、
+ * 曜日と周期で意味が食い違うことはない。
+ */
+export interface TrainingCycle {
+  enabled: boolean;
+  /** 周期の長さ（日）。4〜14 */
+  lengthDays: number;
+  /** この日を1日目にする */
+  anchorDate: string;
+  slots?: Partial<Record<number, WeekdaySlot>>;
+  modes?: Partial<Record<number, WeekdayPreferenceMode>>;
+  amSlots?: Partial<Record<number, WeekdaySlot>>;
+  longRunIndex?: number;
 }
 
 export function emptyWeekTemplate(): WeekTemplate {
   return { slots: {}, modes: {}, enabled: false };
+}
+
+export function emptyCycle(anchorDate: string): TrainingCycle {
+  return { enabled: false, lengthDays: 10, anchorDate, slots: {}, modes: {} };
+}
+
+/** 周期モードで動いているか（曜日ではなく周期で組む） */
+export function isCycleMode(t: WeekTemplate | undefined): boolean {
+  return !!t?.enabled && !!t.cycle?.enabled && !!t.cycle.anchorDate;
+}
+
+/** 有効な周期。周期モードでなければ undefined */
+export function cycleOf(t: WeekTemplate | undefined): TrainingCycle | undefined {
+  if (!isCycleMode(t)) return undefined;
+  const c = t!.cycle!;
+  return { ...c, lengthDays: clampCycleLength(c.lengthDays) };
+}
+
+export function cycleSlotOf(c: TrainingCycle | undefined, position: number): WeekdaySlot {
+  if (!c || !c.enabled) return "auto";
+  return c.slots?.[position] ?? "auto";
+}
+
+export function cycleModeOf(
+  c: TrainingCycle | undefined,
+  position: number
+): WeekdayPreferenceMode {
+  if (cycleSlotOf(c, position) === "auto") return "none";
+  // 周期は最初から modes を持つ。旧データの fixed 既定（曜日側）は持ち込まない
+  return c?.modes?.[position] ?? "fixed";
+}
+
+export function cycleAmSlotOf(
+  c: TrainingCycle | undefined,
+  position: number
+): WeekdaySlot | undefined {
+  if (!c || !c.enabled) return undefined;
+  const slot = c.amSlots?.[position];
+  return slot && slot !== "auto" ? slot : undefined;
 }
 
 export function slotOf(t: WeekTemplate | undefined, dow: Dow): WeekdaySlot {
@@ -142,6 +213,35 @@ export function normalizeWeekTemplate(t: WeekTemplate): WeekTemplate {
     amSlots,
     longRunDow: t.longRunDow,
     enabled: t.enabled,
+    cycle: t.cycle ? normalizeCycle(t.cycle) : undefined,
+  };
+}
+
+export function normalizeCycle(c: TrainingCycle): TrainingCycle {
+  const lengthDays = clampCycleLength(c.lengthDays);
+  const slots: NonNullable<TrainingCycle["slots"]> = {};
+  const modes: NonNullable<TrainingCycle["modes"]> = {};
+  const amSlots: NonNullable<TrainingCycle["amSlots"]> = {};
+  for (let i = 0; i < lengthDays; i++) {
+    const slot = c.slots?.[i] ?? "auto";
+    const mode = cycleModeOf(c, i);
+    if (slot !== "auto" && mode !== "none") {
+      slots[i] = slot;
+      modes[i] = mode;
+    }
+    const am = c.amSlots?.[i];
+    if (am && am !== "auto") amSlots[i] = am;
+  }
+  return {
+    enabled: c.enabled,
+    lengthDays,
+    anchorDate: c.anchorDate,
+    slots,
+    modes,
+    amSlots,
+    // 周期が短くなって位置が消えたら、ロングランの指定も落とす
+    longRunIndex:
+      c.longRunIndex !== undefined && c.longRunIndex < lengthDays ? c.longRunIndex : undefined,
   };
 }
 
@@ -165,6 +265,8 @@ export function isPointSlot(slot: WeekdaySlot): boolean {
 export function validateWeekTemplate(t: WeekTemplate): RuleViolation[] {
   const out: RuleViolation[] = [];
   if (!t.enabled) return out;
+  // 周期モードでは曜日の枠は使われない。使われていないものを検証しても混乱するだけ
+  if (isCycleMode(t)) return validateCycle(cycleOf(t)!);
 
   /*
    * 2部練習の検証。
@@ -328,6 +430,199 @@ export function validateWeekTemplate(t: WeekTemplate): RuleViolation[] {
   }
 
   return out;
+}
+
+/**
+ * 周期の枠を検証する。
+ *
+ * 曜日版と見ているものは同じ（間隔・回数・休養・高乳酸の重複）だが、
+ * **折り返す長さが7ではなくNになる**。10日周期で1日目と6日目にポイントを置いたら
+ * 間隔は5日と5日で、これは曜日で言う「中4日」に相当する。
+ * 7で割って考えると必ず間違える。
+ */
+export function validateCycle(c: TrainingCycle): RuleViolation[] {
+  const out: RuleViolation[] = [];
+  if (!c.enabled) return out;
+  const n = clampCycleLength(c.lengthDays);
+  const label = (i: number) => `${i + 1}日目`;
+  const all = Array.from({ length: n }, (_, i) => i);
+
+  if (!c.anchorDate) {
+    out.push({
+      rule: "TEMPLATE",
+      level: "ERROR",
+      message: "周期の起点（1日目にする日）が決まっていません。",
+      dates: [],
+      sessionIds: [],
+      suggestion: "1日目にしたい日付を選んでください。ここが決まらないと周期を暦に置けません。",
+    });
+  }
+  if (c.lengthDays < MIN_CYCLE_DAYS || c.lengthDays > MAX_CYCLE_DAYS) {
+    out.push({
+      rule: "TEMPLATE",
+      level: "WARN",
+      message: `周期の長さを${c.lengthDays}日から${n}日に丸めました（${MIN_CYCLE_DAYS}〜${MAX_CYCLE_DAYS}日）。`,
+      dates: [],
+      sessionIds: [],
+      suggestion: `${MIN_CYCLE_DAYS}日未満はポイント練習の間隔が中2日を切ります。${MAX_CYCLE_DAYS}日を超えると周期のほうがフェーズより粗くなります。`,
+    });
+  }
+
+  for (const i of all) {
+    const am = cycleAmSlotOf(c, i);
+    if (!am) continue;
+    const pm = cycleSlotOf(c, i);
+    if (isPointSlot(am) && isPointSlot(pm)) {
+      out.push({
+        rule: "RULE-03",
+        level: "ERROR",
+        message: `${label(i)}は午前・午後とも高負荷（${SLOT_LABELS[am] ?? am}／${SLOT_LABELS[pm] ?? pm}）です。同じ日に高負荷を2本置くと回復が間に合いません。`,
+        dates: [],
+        sessionIds: [],
+        suggestion:
+          "2部にするなら片方はジョグ・補強・神経系にしてください。質は1日1本に集約するほうが転移します。",
+      });
+    }
+    if (pm === "off") {
+      out.push({
+        rule: "RULE-04",
+        level: "WARN",
+        message: `${label(i)}は午後が休養なのに午前枠（${SLOT_LABELS[am] ?? am}）が入っています。`,
+        dates: [],
+        sessionIds: [],
+        suggestion:
+          "休養日にするなら午前枠も外してください。半日だけ走るなら午後側を「自動」か「ジョグ」にしてください。",
+      });
+    }
+  }
+
+  const pointIndexes = all.filter(
+    (i) => cycleModeOf(c, i) === "fixed" && isPointSlot(cycleSlotOf(c, i))
+  );
+
+  /*
+   * 回数の上限は「暦の1週間で何本になるか」で見る。
+   * ルールエンジン（RULE-04）が暦の週で数える以上、
+   * 周期の中で何本かではなく、**週に均すと何本か**が効く。
+   */
+  const perWeek = (pointIndexes.length * 7) / n;
+  if (perWeek > 3.0001) {
+    out.push({
+      rule: "RULE-04",
+      level: "ERROR",
+      message: `高負荷練習を${n}日に${pointIndexes.length}本（${pointIndexes
+        .map(label)
+        .join("・")}）固定しています。週に均すと${perWeek.toFixed(1)}本です。`,
+      dates: [],
+      sessionIds: [],
+      suggestion:
+        "週3本を超えると暦の1週間に高負荷が4日入る週ができ、必ずERRORになります。1つを「優先」か指定なしに戻してください。",
+    });
+  } else if (perWeek > 2.0001) {
+    out.push({
+      rule: "RULE-04",
+      level: "WARN",
+      message: `高負荷練習が週換算で${perWeek.toFixed(1)}本（${n}日に${pointIndexes.length}本）です。`,
+      dates: [],
+      sessionIds: [],
+      suggestion:
+        "一律には禁止しませんが、高乳酸・中距離特異的は暦の1週間に2日までです。3本目はCV・閾値にすると成立します。",
+    });
+  }
+
+  // --- ポイントの間隔（周期は折り返す） ---
+  for (let a = 0; a < pointIndexes.length; a++) {
+    for (let b = a + 1; b < pointIndexes.length; b++) {
+      const i = pointIndexes[a];
+      const j = pointIndexes[b];
+      const raw = Math.abs(j - i);
+      const gap = Math.min(raw, n - raw);
+      if (gap <= 1) {
+        out.push({
+          rule: "RULE-03",
+          level: "ERROR",
+          message: `${label(i)}と${label(j)}のポイント練習が${gap === 0 ? "同日" : "連日"}です。ポイント練習の間隔は最低でも中1日（48時間）必要です。`,
+          dates: [],
+          sessionIds: [],
+          suggestion: `${label(j)}を1日ずらすか「自動」に戻してください。`,
+        });
+      } else if (gap === 2) {
+        out.push({
+          rule: "RULE-03",
+          level: "WARN",
+          message: `${label(i)}と${label(j)}のポイント練習は中1日（約48時間）です。`,
+          dates: [],
+          sessionIds: [],
+          suggestion:
+            "許容範囲ですが、間の日は必ずジョグか休養にしてください（神経系の流しは可）。高乳酸を含む周期は中2日（72時間）が安全です。",
+        });
+      }
+    }
+  }
+
+  // --- 高乳酸の間隔（RULE-01: 最短5日） ---
+  const hl = all.filter(
+    (i) => cycleModeOf(c, i) === "fixed" && cycleSlotOf(c, i) === "high_lactate"
+  );
+  for (let a = 0; a < hl.length; a++) {
+    for (let b = a + 1; b < hl.length; b++) {
+      const raw = Math.abs(hl[b] - hl[a]);
+      const gap = Math.min(raw, n - raw);
+      if (gap < 5) {
+        out.push({
+          rule: "RULE-01",
+          level: "ERROR",
+          message: `${label(hl[a])}と${label(hl[b])}の高乳酸が${gap}日間隔です。高乳酸は最短でも5日あけます。`,
+          dates: [],
+          sessionIds: [],
+          suggestion:
+            "片方を「ポイント練習」（内容はフェーズに応じて自動決定）または経済走に変えてください。",
+        });
+      }
+    }
+  }
+
+  const offs = all.filter((i) => cycleModeOf(c, i) === "fixed" && cycleSlotOf(c, i) === "off");
+  const fixed = all.filter((i) => cycleModeOf(c, i) === "fixed");
+  if (fixed.length >= n - 1 && offs.length === 0) {
+    out.push({
+      rule: "TEMPLATE",
+      level: "WARN",
+      message: `${n}日ぶんをほぼ全部固定していますが、休養日が1日もありません。`,
+      dates: [],
+      sessionIds: [],
+      suggestion:
+        "完全休養を周期に1日入れることを推奨します。入れない場合でも、最低1日は「自動」にして回復日を確保できる余地を残してください。",
+    });
+  }
+
+  return out;
+}
+
+/**
+ * 周期の位置が、これから何曜日に当たるかの並び。
+ *
+ * 7の倍数でない周期にすると、**同じ内容が来る曜日が毎回ずれる**。
+ * 10日周期なら70日たたないと元の曜日に戻らない。
+ * 学校・仕事・チーム練習が曜日で決まっている人には効く話なので、
+ * 警告ではなく事実として画面に出す（禁止する理由は無い）。
+ */
+export function cycleWeekdayDrift(lengthDays: number): number | undefined {
+  const n = clampCycleLength(lengthDays);
+  if (n % 7 === 0) return undefined;
+  // n と 7 の最小公倍数（7は素数なので n*7/gcd）
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+  return (n * 7) / gcd(n, 7);
+}
+
+/** その日付が周期の何日目か（0始まり）。周期モードでなければ undefined */
+export function cyclePositionFor(
+  t: WeekTemplate | undefined,
+  date: string
+): number | undefined {
+  const c = cycleOf(t);
+  if (!c) return undefined;
+  return cyclePositionOf(c.anchorDate, date, c.lengthDays);
 }
 
 // ---------------------------------------------------------------------------

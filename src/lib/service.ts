@@ -540,6 +540,10 @@ export function regeneratePlan(repo: Store, startDate: string): {
   violations: RuleViolation[];
   templateViolations: RuleViolation[];
   customMenusUsed: number;
+  /** N日周期で組んだときに、週テンプレートの配分から変えた点（理由つき） */
+  cycleNotes: string[];
+  /** 暦の1週間に高負荷が集中するのを避けて内容を落とした枠。理由つきで見せる */
+  spacingSwaps: { date: string; from: string; to: string; note: string }[];
   limiterSwaps: { date: string; from: string; to: string; note: string }[];
   limiterNote?: string;
   unsafeSkipped: number;
@@ -560,6 +564,10 @@ function regeneratePlanCore(repo: Store, startDate: string): {
   /** 3-1: 曜日テンプレート自体の問題（生成前に気づけるように別枠で返す） */
   templateViolations: RuleViolation[];
   customMenusUsed: number;
+  /** N日周期で組んだときに、週テンプレートの配分から変えた点（理由つき） */
+  cycleNotes: string[];
+  /** 暦の1週間に高負荷が集中するのを避けて内容を落とした枠。理由つきで見せる */
+  spacingSwaps: { date: string; from: string; to: string; note: string }[];
   /** M-7: 制限因子で振り替えた枠。黙って配分を変えないための記録 */
   limiterSwaps: { date: string; from: string; to: string; note: string }[];
   limiterNote?: string;
@@ -733,6 +741,12 @@ function regeneratePlanCore(repo: Store, startDate: string): {
     violations,
     templateViolations: weekTemplate ? validateWeekTemplate(weekTemplate) : [],
     customMenusUsed: usedCounts.size,
+    /*
+     * N日周期で組んだときに、週テンプレートの配分から変えた点。
+     * 「10日周期にしたら高乳酸が減った」のを黙って起こさない。
+     */
+    cycleNotes: plan.cycleNotes,
+    spacingSwaps: plan.spacingSwaps,
     limiterSwaps: plan.limiterSwaps,
     limiterNote:
       plan.limiterSwaps.length > 0

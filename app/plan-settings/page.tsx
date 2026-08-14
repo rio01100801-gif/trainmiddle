@@ -14,6 +14,9 @@ import {
   DOW_LABELS,
   SLOT_LABELS,
   SOURCE_LABELS,
+  cycleModeOf,
+  cycleWeekdayDrift,
+  emptyCycle,
   emptyWeekTemplate,
   modeOf,
   normalizeWeekTemplate,
@@ -21,10 +24,17 @@ import {
   type CustomMenu,
   type CustomMenuSource,
   type Dow,
+  type TrainingCycle,
   type WeekdayPreferenceMode,
   type WeekdaySlot,
   type WeekTemplate,
 } from "@/lib/core/weekTemplate";
+import {
+  MAX_CYCLE_DAYS,
+  MIN_CYCLE_DAYS,
+  clampCycleLength,
+} from "@/lib/core/cycleTemplate";
+import { addDays } from "@/lib/core/dates";
 import type { SessionCategory } from "@/lib/core/types";
 
 const DOWS: Dow[] = [1, 2, 3, 4, 5, 6, 0]; // 月〜日で表示
@@ -41,6 +51,173 @@ const SLOT_OPTIONS: WeekdaySlot[] = [
   "aerobic",
   "off",
 ];
+
+const MODE_OPTIONS: WeekdayPreferenceMode[] = ["none", "preferred", "fixed"];
+const MODE_LABELS: Record<WeekdayPreferenceMode, string> = {
+  none: "指定なし",
+  preferred: "優先",
+  fixed: "固定",
+};
+
+/**
+ * 枠1つぶんの行。
+ *
+ * **コンポーネントの中で定義しない。** 再描画のたびに別の関数になると
+ * Reactが中身の input を作り直し、iOSでは1文字打つたびにキーボードが閉じる
+ * （CLAUDE.md「落とし穴」）。曜日と周期で同じ行を使うので、ここは1か所だけ。
+ *
+ * `id` は「火曜」「3日目」のような呼び名。読み上げラベルにそのまま使う。
+ */
+function SlotRow({
+  id,
+  badge,
+  badgeColor,
+  slot,
+  mode,
+  amSlot,
+  isLongRun,
+  longRunGroup,
+  disabled,
+  onSlot,
+  onMode,
+  onAmSlot,
+  onLongRun,
+}: {
+  id: string;
+  badge: string;
+  badgeColor: string;
+  slot: WeekdaySlot;
+  mode: WeekdayPreferenceMode;
+  amSlot: WeekdaySlot;
+  isLongRun: boolean;
+  longRunGroup: string;
+  disabled: boolean;
+  onSlot: (slot: WeekdaySlot) => void;
+  onMode: (mode: WeekdayPreferenceMode) => void;
+  onAmSlot: (slot: WeekdaySlot) => void;
+  onLongRun: () => void;
+}) {
+  const cat =
+    SLOT_OPTIONS.includes(slot) && slot !== "auto" && slot !== "point"
+      ? (slot as SessionCategory)
+      : undefined;
+  return (
+    <div
+      className="grid grid-cols-[3.5rem_1fr] gap-x-2 gap-y-1.5 rounded-lg p-2"
+      style={{ background: "var(--surface-2)" }}
+    >
+      <span
+        className="text-[12px] font-bold text-center rounded self-start pt-2 leading-tight whitespace-pre-line"
+        style={{ color: badgeColor }}
+      >
+        {badge}
+      </span>
+      <div className="min-w-0">
+        <div className="grid grid-cols-3 gap-1 mb-1.5" role="group" aria-label={`${id}の指定強度`}>
+          {MODE_OPTIONS.map((option) => (
+            <button
+              key={option}
+              type="button"
+              className={mode === option ? "btn-volt !py-1.5 !px-1" : "btn-ghost !py-1.5 !px-1"}
+              disabled={disabled}
+              aria-pressed={mode === option}
+              aria-label={`${id} ${MODE_LABELS[option]}`}
+              onClick={() => onMode(option)}
+            >
+              {MODE_LABELS[option]}
+            </button>
+          ))}
+        </div>
+        {/*
+          午前／午後を対で見せる。
+          以前は主枠にラベルが無く、下の行だけ「午前」と書いてあったので
+          「じゃあ上は何なのか」が分からなかった（本人から指摘）。
+          時間帯は行の「上」に置く。横に並べると 320px幅（iPhone SE）で
+          セレクトが押し出されて画面からはみ出す（E2Eで18px検出）。
+        */}
+        <div className="metric-label mb-0.5">午後（主）</div>
+        <div className="flex items-center gap-2">
+          <span
+            aria-hidden="true"
+            className="w-1 h-6 rounded-sm flex-shrink-0"
+            style={{
+              background: cat
+                ? CATEGORY_COLORS[cat]
+                : slot === "point"
+                  ? "var(--volt)"
+                  : "transparent",
+            }}
+          />
+          <select
+            className="flex-1 min-h-[44px]"
+            aria-label={`${id}のメニュー`}
+            disabled={disabled}
+            value={slot}
+            onChange={(e) => onSlot(e.target.value as WeekdaySlot)}
+          >
+            {SLOT_OPTIONS.map((o) => (
+              <option key={o} value={o}>
+                {SLOT_LABELS[o]}
+              </option>
+            ))}
+          </select>
+          <label
+            className="text-[10.5px] flex items-center gap-1 min-h-[44px]"
+            style={{ color: "var(--text-3)" }}
+          >
+            <input
+              type="radio"
+              name={longRunGroup}
+              className="w-4 h-4"
+              disabled={disabled || slot !== "aerobic" || mode === "none"}
+              checked={isLongRun}
+              onChange={onLongRun}
+            />
+            長走
+          </label>
+        </div>
+        {/*
+          2部練習の午前枠。既定は「なし」。
+          午前を自動で埋めないのは、頼んでいない量が勝手に乗るのを避けるため。
+        */}
+        <div className="metric-label mb-0.5 mt-1.5">午前（2部）</div>
+        <div className="flex items-center gap-2">
+          <span aria-hidden="true" className="w-1 h-6 flex-shrink-0" />
+          <select
+            className="flex-1 min-h-[44px] !text-[12px]"
+            aria-label={`${id}の午前（2部練習）`}
+            disabled={disabled}
+            value={amSlot}
+            onChange={(e) => onAmSlot(e.target.value as WeekdaySlot)}
+          >
+            <option value="auto">なし（1部）</option>
+            {SLOT_OPTIONS.filter((o) => o !== "auto" && o !== "off").map((o) => (
+              <option key={o} value={o}>
+                {SLOT_LABELS[o]}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const JP_DOW = ["日", "月", "火", "水", "木", "金", "土"];
+
+/** 起点から数えてその位置が何月何日・何曜になるか（最初の1周） */
+function cycleDayLabel(anchorDate: string, position: number): string {
+  if (!anchorDate) return `${position + 1}日目`;
+  const date = addDays(anchorDate, position);
+  const d = new Date(date + "T00:00:00Z");
+  return `${position + 1}日目\n${d.getUTCMonth() + 1}/${d.getUTCDate()}(${JP_DOW[d.getUTCDay()]})`;
+}
+
+function todayISO(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
 
 export default function PlanSettingsPage() {
   return (
@@ -117,8 +294,68 @@ function WeekTemplateCard() {
       return { ...prev, amSlots };
     });
 
+  // --- N日周期 ---
+  const cycle = t.cycle;
+  const cycleOn = !!cycle?.enabled;
+  const cycleLength = clampCycleLength(cycle?.lengthDays ?? 10);
+  const drift = cycleWeekdayDrift(cycleLength);
+
+  const patchCycle = (patch: Partial<TrainingCycle>) =>
+    setT((prev) => ({
+      ...prev,
+      cycle: { ...(prev.cycle ?? emptyCycle(todayISO())), ...patch },
+    }));
+
+  const setCycleSlot = (position: number, slot: WeekdaySlot) =>
+    setT((prev) => {
+      const c = prev.cycle ?? emptyCycle(todayISO());
+      return {
+        ...prev,
+        cycle: {
+          ...c,
+          slots: { ...c.slots, [position]: slot },
+          modes: {
+            ...c.modes,
+            [position]:
+              slot === "auto"
+                ? "none"
+                : cycleModeOf(c, position) === "none"
+                  ? "preferred"
+                  : cycleModeOf(c, position),
+          },
+        },
+      };
+    });
+
+  const setCycleMode = (position: number, mode: WeekdayPreferenceMode) =>
+    setT((prev) => {
+      const c = prev.cycle ?? emptyCycle(todayISO());
+      const current = c.slots?.[position];
+      return {
+        ...prev,
+        cycle: {
+          ...c,
+          modes: { ...c.modes, [position]: mode },
+          slots: {
+            ...c.slots,
+            [position]:
+              mode === "none" ? "auto" : !current || current === "auto" ? "point" : current,
+          },
+        },
+      };
+    });
+
+  const setCycleAmSlot = (position: number, slot: WeekdaySlot) =>
+    setT((prev) => {
+      const c = prev.cycle ?? emptyCycle(todayISO());
+      const amSlots = { ...(c.amSlots ?? {}) };
+      if (slot === "auto") delete amSlots[position];
+      else amSlots[position] = slot;
+      return { ...prev, cycle: { ...c, amSlots } };
+    });
+
   return (
-    <Card title="曜日の優先設定">
+    <Card title="メニューの枠">
       <label className="flex items-center gap-2 text-[13px] mb-3 min-h-[44px]">
         <input
           type="checkbox"
@@ -126,13 +363,47 @@ function WeekTemplateCard() {
           checked={t.enabled}
           onChange={(e) => setT({ ...t, enabled: e.target.checked })}
         />
-        曜日ごとの希望を使う
+        枠の希望を使う
       </label>
 
+      {/*
+        曜日か周期か。
+        7日は生活の都合であって、回復に必要な日数とは関係がない。
+        「高乳酸のあと中2日」を守りたいのに週2枠に押し込むと、
+        どちらかが中1日になるか片方が消える。10日で3本のほうが素直な局面がある。
+        切り替えても**もう一方の設定は消さない**（試して戻せるようにする）。
+      */}
+      <div className="grid grid-cols-2 gap-1 mb-3" role="group" aria-label="枠の決め方">
+        <button
+          type="button"
+          className={!cycleOn ? "btn-volt !py-2" : "btn-ghost !py-2"}
+          disabled={!t.enabled}
+          aria-pressed={!cycleOn}
+          onClick={() => patchCycle({ enabled: false })}
+        >
+          曜日で決める
+        </button>
+        <button
+          type="button"
+          className={cycleOn ? "btn-volt !py-2" : "btn-ghost !py-2"}
+          disabled={!t.enabled}
+          aria-pressed={cycleOn}
+          onClick={() =>
+            patchCycle({
+              enabled: true,
+              lengthDays: cycleLength,
+              anchorDate: cycle?.anchorDate || todayISO(),
+            })
+          }
+        >
+          日数の周期で決める
+        </button>
+      </div>
+
       <p className="text-[11px] mb-3 leading-relaxed" style={{ color: "var(--text-2)" }}>
-        「優先」は週の回数を増やさず、可能なら既存メニューをその曜日へ移します。
+        「優先」は回数を増やさず、可能なら既存メニューをその枠へ移します。
         連続高負荷、回復週、レース・テーパーでは自動配置を優先します。
-        「固定」はユーザーが動かしたくない曜日だけに使い、安全上の問題は警告します。
+        「固定」は動かしたくない枠だけに使い、安全上の問題は警告します。
       </p>
       {/*
         一覧に無い内容をやりたいときの逃げ道。
@@ -146,121 +417,103 @@ function WeekTemplateCard() {
         （どちらもジョグ30分が別枠で付きます）。
       </p>
 
+      {cycleOn ? (
+        <div className="flex flex-col gap-2 mb-3">
+          <div className="flex gap-2 flex-wrap">
+            <label className="flex-1 min-w-[8rem]">
+              <span className="metric-label block mb-0.5">周期の長さ（日）</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                className="w-full min-h-[44px]"
+                min={MIN_CYCLE_DAYS}
+                max={MAX_CYCLE_DAYS}
+                disabled={!t.enabled}
+                value={cycle?.lengthDays ?? 10}
+                onChange={(e) => patchCycle({ lengthDays: Number(e.target.value) })}
+              />
+            </label>
+            <label className="flex-1 min-w-[10rem]">
+              <span className="metric-label block mb-0.5">1日目にする日</span>
+              <input
+                type="date"
+                className="w-full min-h-[44px]"
+                disabled={!t.enabled}
+                value={cycle?.anchorDate ?? ""}
+                onChange={(e) => patchCycle({ anchorDate: e.target.value })}
+              />
+            </label>
+          </div>
+          {/*
+            周期にすると何が起きるかを先に出す。
+            10日周期は70日たたないと曜日が戻らない。学校・チーム練習が曜日で
+            決まっている人には効く話なので、禁止はしないが黙ってもいない。
+          */}
+          <p className="text-[11px] leading-relaxed" style={{ color: "var(--text-2)" }}>
+            {cycleLength}日ごとに同じ並びを繰り返します。1日目にポイント練習が入ります
+            （ずらしたいときは「1日目にする日」を動かしてください）。
+            {drift
+              ? `${cycleLength}日周期は7日と噛み合わないので、同じ内容が同じ曜日に戻るのは${drift}日後です。`
+              : "7の倍数なので曜日は固定されます。"}
+          </p>
+          <p className="text-[11px] leading-relaxed" style={{ color: "var(--text-3)" }}>
+            指定しなかった枠は自動で埋まります。ポイント練習の本数は、暦の1週間に
+            高乳酸・中距離特異的が3日入らない範囲で決まります
+            （減らした場合は生成時に理由が出ます）。
+            レース直前のテーパーは周期ではなくレース日から逆算します。
+          </p>
+        </div>
+      ) : null}
+
       <div className="flex flex-col gap-1.5">
-        {DOWS.map((dow) => {
-          const slot = t.slots[dow] ?? "auto";
-          const mode = modeOf(t, dow);
-          const cat = SLOT_OPTIONS.includes(slot) && slot !== "auto" && slot !== "point"
-            ? (slot as SessionCategory)
-            : undefined;
-          return (
-            <div
-              key={dow}
-              className="grid grid-cols-[2rem_1fr] gap-x-2 gap-y-1.5 rounded-lg p-2"
-              style={{ background: "var(--surface-2)" }}
-            >
-              <span
-                className="w-8 text-[13px] font-bold text-center rounded"
-                style={{
-                  color: dow === 0 ? "var(--red)" : dow === 6 ? "var(--cat-race-economy)" : "var(--text)",
-                }}
-              >
-                {DOW_LABELS[dow]}
-              </span>
-              <div className="min-w-0">
-                <div
-                  className="grid grid-cols-3 gap-1 mb-1.5"
-                  role="group"
-                  aria-label={`${DOW_LABELS[dow]}曜の指定強度`}
-                >
-                  {(["none", "preferred", "fixed"] as WeekdayPreferenceMode[]).map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      className={mode === option ? "btn-volt !py-1.5 !px-1" : "btn-ghost !py-1.5 !px-1"}
-                      disabled={!t.enabled}
-                      aria-pressed={mode === option}
-                      aria-label={`${DOW_LABELS[dow]}曜 ${option === "none" ? "指定なし" : option === "preferred" ? "優先" : "固定"}`}
-                      onClick={() => setMode(dow, option)}
-                    >
-                      {option === "none" ? "指定なし" : option === "preferred" ? "優先" : "固定"}
-                    </button>
-                  ))}
-                </div>
-                {/*
-                  午前／午後を対で見せる。
-                  以前は主枠にラベルが無く、下の行だけ「午前」と書いてあったので
-                  「じゃあ上は何なのか」が分からなかった（本人から指摘）。
-                  両方に時間帯を書く。
-                */}
-                {/*
-                  時間帯は行の「上」に置く。横に並べると 320px幅（iPhone SE）で
-                  セレクトが押し出されて画面からはみ出す（E2Eで18px検出）。
-                */}
-                <div className="metric-label mb-0.5">午後（主）</div>
-                <div className="flex items-center gap-2">
-                  <span
-                    aria-hidden="true"
-                    className="w-1 h-6 rounded-sm flex-shrink-0"
-                    style={{
-                      background: cat ? CATEGORY_COLORS[cat] : slot === "point" ? "var(--volt)" : "transparent",
-                    }}
-                  />
-                  <select
-                    className="flex-1 min-h-[44px]"
-                    aria-label={`${DOW_LABELS[dow]}曜のメニュー`}
-                    disabled={!t.enabled}
-                    value={slot}
-                    onChange={(e) => setSlot(dow, e.target.value as WeekdaySlot)}
-                  >
-                    {SLOT_OPTIONS.map((o) => (
-                      <option key={o} value={o}>
-                        {SLOT_LABELS[o]}
-                      </option>
-                    ))}
-                  </select>
-                  <label className="text-[10.5px] flex items-center gap-1 min-h-[44px]" style={{ color: "var(--text-3)" }}>
-                    <input
-                      type="radio"
-                      name="longrun"
-                      className="w-4 h-4"
-                      disabled={!t.enabled || slot !== "aerobic" || mode === "none"}
-                      checked={t.longRunDow === dow}
-                      onChange={() => setT({ ...t, longRunDow: dow })}
-                    />
-                    長走
-                  </label>
-                </div>
-                {/*
-                  2部練習の午前枠。
-                  既定は「なし」。午前を自動で埋めないのは、頼んでいない量が
-                  勝手に乗るのを避けるため（800mで効くのは量ではない）。
-                  上の枠は午後（主練習）を指す。
-                */}
-                <div className="metric-label mb-0.5 mt-1.5">午前（2部）</div>
-                <div className="flex items-center gap-2">
-                  {/* 午後側の色帯と幅を揃えて、2つが対だと分かるようにする */}
-                  <span aria-hidden="true" className="w-1 h-6 flex-shrink-0" />
-                  <select
-                    className="flex-1 min-h-[44px] !text-[12px]"
-                    aria-label={`${DOW_LABELS[dow]}曜の午前（2部練習）`}
-                    disabled={!t.enabled}
-                    value={t.amSlots?.[dow] ?? "auto"}
-                    onChange={(e) => setAmSlot(dow, e.target.value as WeekdaySlot)}
-                  >
-                    <option value="auto">なし（1部）</option>
-                    {SLOT_OPTIONS.filter((o) => o !== "auto" && o !== "off").map((o) => (
-                      <option key={o} value={o}>
-                        {SLOT_LABELS[o]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
-          );
-        })}
+        {cycleOn
+          ? Array.from({ length: cycleLength }, (_, position) => {
+              const id = `${position + 1}日目`;
+              return (
+                <SlotRow
+                  key={position}
+                  id={id}
+                  badge={cycleDayLabel(cycle?.anchorDate ?? "", position)}
+                  badgeColor="var(--text)"
+                  slot={cycle?.slots?.[position] ?? "auto"}
+                  mode={cycleModeOf(cycle, position)}
+                  amSlot={cycle?.amSlots?.[position] ?? "auto"}
+                  isLongRun={cycle?.longRunIndex === position}
+                  longRunGroup="longrun-cycle"
+                  disabled={!t.enabled}
+                  onSlot={(slot) => setCycleSlot(position, slot)}
+                  onMode={(mode) => setCycleMode(position, mode)}
+                  onAmSlot={(slot) => setCycleAmSlot(position, slot)}
+                  onLongRun={() => patchCycle({ longRunIndex: position })}
+                />
+              );
+            })
+          : DOWS.map((dow) => (
+              <SlotRow
+                key={dow}
+                id={`${DOW_LABELS[dow]}曜`}
+                badge={DOW_LABELS[dow]}
+                badgeColor={
+                  dow === 0
+                    ? "var(--red)"
+                    : dow === 6
+                      ? "var(--cat-race-economy)"
+                      : "var(--text)"
+                }
+                slot={t.slots[dow] ?? "auto"}
+                mode={modeOf(t, dow)}
+                amSlot={t.amSlots?.[dow] ?? "auto"}
+                isLongRun={t.longRunDow === dow}
+                longRunGroup="longrun-dow"
+                disabled={!t.enabled}
+                onSlot={(slot) => setSlot(dow, slot)}
+                onMode={(mode) => setMode(dow, mode)}
+                onAmSlot={(slot) => setAmSlot(dow, slot)}
+                onLongRun={() => setT({ ...t, longRunDow: dow })}
+              />
+            ))}
       </div>
+
 
       {t.enabled && violations.length > 0 ? (
         <div className="mt-3">

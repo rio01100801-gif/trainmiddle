@@ -195,7 +195,17 @@ export default function GoalPage() {
           : "") +
         (d.safetyAdjustments?.length
           ? ` ／ 継続中の故障記録により高負荷${d.safetyAdjustments.length}枠を回復メニューへ変更しました`
-          : "")
+          : "") +
+        /*
+         * N日周期にしたときの調整。
+         * 「10日周期にしたら高乳酸が減った」を黙って起こさない。
+         * どちらも本人が却下できる（曜日に戻す・周期の長さを変える）ので、
+         * 何をしたのかが分かる形で出す。
+         */
+        (d.spacingSwaps?.length
+          ? ` ／ 暦の1週間に高負荷が集中する${d.spacingSwaps.length}枠をCVへ落としました`
+          : "") +
+        (d.cycleNotes?.length ? `\n周期の調整: ${d.cycleNotes.join(" ")}` : "")
     );
     setViolations([...(d.templateViolations ?? []), ...(d.violations ?? [])]);
   };
@@ -377,7 +387,8 @@ export default function GoalPage() {
             プランを自動生成（既存の予定セッションは置き換え）
           </button>
         </div>
-        {msg ? <p className="text-sm mt-2">{msg}</p> : null}
+        {/* 周期の調整は改行して出す（1行に詰めると読み飛ばされる） */}
+        {msg ? <p className="text-sm mt-2 whitespace-pre-line">{msg}</p> : null}
         {violations.length > 0 ? (
           <div className="mt-2">
             <ViolationList violations={violations} />

@@ -21,18 +21,33 @@ import { guardedBaseTime } from "./cfe";
 import { AerobicProfile, specificPace } from "./pace";
 import { rationaleFor } from "./rationale";
 import { buildSessionSpec, type TemplateHistoryEntry } from "./progression";
-import { isHighLoadCategory } from "./trainingClassification";
+import { isHighLoadCategory, isSpecificCategory } from "./trainingClassification";
 import type { TrendVerdict } from "./adaptive";
 import {
   type CustomMenu,
   type Dow,
+  type TrainingCycle,
   type WeekTemplate,
+  type WeekdayPreferenceMode,
+  type WeekdaySlot,
   amSlotOf,
+  cycleAmSlotOf,
+  cycleModeOf,
+  cycleOf,
+  cycleSlotOf,
   isPointSlot,
   modeOf,
   pickCustomMenu,
   slotOf,
 } from "./weekTemplate";
+import {
+  type CycleShape,
+  type CycleShapeInput,
+  cycleNumberOf,
+  cyclePositionOf,
+  planCycleShape,
+  pointCategoryAt,
+} from "./cycleTemplate";
 
 /** レースまでの日数からフェーズを判定する（仕様書 4-6 の表） */
 export function phaseForDaysToRace(days: number): Phase {
@@ -399,36 +414,72 @@ export function applyWeekPreferences(
   weekParity: number
 ): (DayTemplate | null)[] {
   if (!preference?.enabled) return [...source];
+  return applySlotPreferences(
+    source,
+    {
+      slotAt: (index) => slotOf(preference, DOW_BY_WEEK_INDEX[index]),
+      modeAt: (index) => modeOf(preference, DOW_BY_WEEK_INDEX[index]),
+      isLongRunAt: (index) => preference.longRunDow === DOW_BY_WEEK_INDEX[index],
+      /*
+       * modes の無い旧データだけは「指定曜日以外にポイントを置かない」従来仕様を保つ。
+       * 周期には旧データが存在しない（最初から modes を持つ）ので false 固定になる。
+       */
+      legacyFixedPointsOnly: preference.modes === undefined,
+    },
+    phase,
+    economyWeek,
+    weekParity
+  );
+}
+
+/**
+ * 枠の指定を1日ずつのテンプレートに反映する。
+ *
+ * 曜日（7日）と周期（N日）で同じ実装を通す。
+ * 別々に書くと、片方だけ直したときに「同じ設定なのに曜日と周期で結果が違う」になる。
+ * 折り返しの長さは `source.length` で決まるので、7でもNでも同じ意味になる。
+ */
+interface SlotAccess {
+  slotAt(index: number): WeekdaySlot;
+  modeAt(index: number): WeekdayPreferenceMode;
+  isLongRunAt(index: number): boolean;
+  legacyFixedPointsOnly: boolean;
+}
+
+function applySlotPreferences(
+  source: (DayTemplate | null)[],
+  access: SlotAccess,
+  phase: Phase,
+  economyWeek: number,
+  parity: number
+): (DayTemplate | null)[] {
   const out = [...source];
-  const fixedPointDows = DOW_BY_WEEK_INDEX.filter(
-    (dow) => modeOf(preference, dow) === "fixed" && isPointSlot(slotOf(preference, dow))
+  const indexes = source.map((_, i) => i);
+  const fixedPointIndexes = indexes.filter(
+    (i) => access.modeAt(i) === "fixed" && isPointSlot(access.slotAt(i))
   );
 
-  // 旧形式の完全固定動作を維持する。
-  for (let index = 0; index < DOW_BY_WEEK_INDEX.length; index++) {
-    const dow = DOW_BY_WEEK_INDEX[index];
-    if (modeOf(preference, dow) !== "fixed") continue;
-    const slot = slotOf(preference, dow);
+  for (const index of indexes) {
+    if (access.modeAt(index) !== "fixed") continue;
+    const slot = access.slotAt(index);
     const current = out[index];
     if (!current) continue;
     if (slot === "auto") continue;
-    const pointIndex = Math.max(0, fixedPointDows.indexOf(dow));
+    const pointIndex = Math.max(0, fixedPointIndexes.indexOf(index));
     out[index] = templateForSlot(
       slot,
       current,
       phase,
       economyWeek,
       pointIndex,
-      weekParity,
-      preference.longRunDow === dow
+      parity,
+      access.isLongRunAt(index)
     );
   }
-  // modes の無い旧データだけは「指定曜日以外にポイントを置かない」従来仕様を保つ。
-  if (fixedPointDows.length > 0 && preference.modes === undefined) {
-    for (let index = 0; index < out.length; index++) {
-      const dow = DOW_BY_WEEK_INDEX[index];
+  if (fixedPointIndexes.length > 0 && access.legacyFixedPointsOnly) {
+    for (const index of indexes) {
       if (
-        modeOf(preference, dow) !== "fixed" &&
+        access.modeAt(index) !== "fixed" &&
         out[index] &&
         isHighLoadCategory(out[index]!.category)
       ) {
@@ -437,21 +488,19 @@ export function applyWeekPreferences(
     }
   }
 
-  // 優先は回数を増やさず、同じ週の動かせる枠との交換だけを試す。
-  for (let target = 0; target < DOW_BY_WEEK_INDEX.length; target++) {
-    const dow = DOW_BY_WEEK_INDEX[target];
-    if (modeOf(preference, dow) !== "preferred") continue;
-    const slot = slotOf(preference, dow);
+  // 優先は回数を増やさず、同じ周期の中の動かせる枠との交換だけを試す。
+  for (const target of indexes) {
+    if (access.modeAt(target) !== "preferred") continue;
+    const slot = access.slotAt(target);
     const current = out[target];
     if (!current || slot === "auto") continue;
 
     const wantsPoint = isPointSlot(slot);
     const sourceIndex = out.findIndex((candidate, index) => {
       if (!candidate || index === target) return false;
-      const candidateDow = DOW_BY_WEEK_INDEX[index];
-      if (modeOf(preference, candidateDow) === "fixed") return false;
+      if (access.modeAt(index) === "fixed") return false;
       if (wantsPoint) return isHighLoadCategory(candidate.category);
-      if (slot === "aerobic" && preference.longRunDow === dow) {
+      if (slot === "aerobic" && access.isLongRunAt(target)) {
         return candidate.category === "aerobic" && candidate.name === "ロングラン";
       }
       return candidate.category === slot;
@@ -470,8 +519,8 @@ export function applyWeekPreferences(
             phase,
             economyWeek,
             0,
-            weekParity,
-            preference.longRunDow === dow
+            parity,
+            access.isLongRunAt(target)
           );
 
     if (wantsPoint && hasAdjacentHighLoad(out, target)) {
@@ -480,6 +529,97 @@ export function applyWeekPreferences(
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// N日周期
+// ---------------------------------------------------------------------------
+
+/**
+ * そのフェーズの週テンプレートを**実際に数えて**、周期へ引き伸ばす比率を出す。
+ *
+ * 「Baseは週1.5本」のような別表は作らない。
+ * 表と生成器がずれると、曜日で組んだときと周期で組んだときで中身が変わってしまう
+ * （`categoryCountsPerFourWeeks` と同じ理由）。
+ */
+function cycleShapeInputFor(phase: Phase, lengthDays: number): CycleShapeInput {
+  let points = 0;
+  let demanding = 0;
+  let neural = 0;
+  let longRuns = 0;
+  const demandingStream: SessionCategory[] = [];
+  const aerobicHighStream: SessionCategory[] = [];
+  for (const parity of [0, 1]) {
+    for (const day of weekTemplate(phase, parity, 0)) {
+      if (!day) continue;
+      if (day.category === "neural") neural++;
+      if (day.name === "ロングラン") longRuns++;
+      if (!isHighLoadCategory(day.category)) continue;
+      points++;
+      if (isSpecificCategory(day.category)) {
+        demanding++;
+        demandingStream.push(day.category);
+      } else {
+        aerobicHighStream.push(day.category);
+      }
+    }
+  }
+  return {
+    lengthDays,
+    pointsPerWeek: points / 2,
+    neuralPerWeek: neural / 2,
+    longRunPerWeek: longRuns / 2,
+    demandingStream: demandingStream.length > 0 ? demandingStream : ["race_economy"],
+    aerobicHighStream: aerobicHighStream.length > 0 ? aerobicHighStream : ["cv"],
+    demandingRate: points > 0 ? demanding / points : 0,
+  };
+}
+
+/**
+ * 周期モードで使う、その周のテンプレート（長さN）。
+ *
+ * 内容の並び（何本目が高乳酸か）は**周期の通し番号**で決まるので、
+ * 何周目を作っても、あとで作り直しても同じ答えになる。
+ */
+function cycleDayTemplates(
+  cycle: TrainingCycle,
+  cycleNumber: number,
+  shape: CycleShape,
+  economyWeek: number,
+  phase: Phase
+): (DayTemplate | null)[] {
+  const base: (DayTemplate | null)[] = shape.roles.map((role, position) => {
+    switch (role) {
+      case "point": {
+        const indexInCycle = shape.pointPositions.indexOf(position);
+        const category = pointCategoryAt(
+          shape,
+          cycleNumber * shape.pointsPerCycle + indexInCycle
+        );
+        return categoryTemplate(category, economyWeek) ?? jog(40);
+      }
+      case "recovery_jog":
+        return jog(40, "回復ジョグ");
+      case "long_run":
+        return longRun(60);
+      case "neural":
+        return strides(6);
+      default:
+        return jog(40);
+    }
+  });
+  return applySlotPreferences(
+    base,
+    {
+      slotAt: (i) => cycleSlotOf(cycle, i),
+      modeAt: (i) => cycleModeOf(cycle, i),
+      isLongRunAt: (i) => cycle.longRunIndex === i,
+      legacyFixedPointsOnly: false,
+    },
+    phase,
+    economyWeek,
+    cycleNumber % 2
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -533,6 +673,18 @@ export interface GeneratedPlan {
   usedCustomMenus: { menuId: string; date: string }[];
   /** M-7: 制限因子によって振り替えた枠 */
   limiterSwaps: { date: string; from: SessionCategory; to: SessionCategory; note: string }[];
+  /**
+   * N日周期で組んだときに、週テンプレートの配分から変えた点。
+   * 黙って減らすと「調子が落ちたのか設定が変わったのか」が分からなくなるので、
+   * 理由とセットで返して画面に出す。周期モードでなければ空。
+   */
+  cycleNotes: string[];
+  /**
+   * 暦の1週間に高乳酸・中距離特異的が3日入るのを避けて、内容を落とした枠。
+   * 落としたことは必ず本人に見せる（黙って軽くすると、伸びていないのか
+   * 軽くされたのかが分からなくなる）。
+   */
+  spacingSwaps: { date: string; from: SessionCategory; to: SessionCategory; note: string }[];
 }
 
 function generatedSessionId(date: string, timeOfDay: Session["timeOfDay"]): string {
@@ -603,6 +755,60 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
   let economyWeek = 0;
   let lastHlDate: string | undefined;
 
+  /*
+   * 置いた「きつい方」（高乳酸・経済走・モデリング）の日付。
+   * RULE-04 が暦の週で数えるので、こちらも日付で持って7日窓で数える。
+   *
+   * 日付順に作っているので、これから置く日より後のことは分からない。
+   * それでよい——3日入る窓には必ず最後の日があり、その日を置くときに
+   * 手前の2日が見えるので、**後ろ向きの7日だけ見れば全部の窓を見たことになる**。
+   */
+  const demandingDates: string[] = [];
+  const demandingDaysEndingAt = (date: string): number =>
+    new Set(
+      demandingDates.filter((d) => {
+        const back = diffDays(d, date);
+        return back >= 0 && back <= 6;
+      })
+    ).size;
+  const spacingSwaps: GeneratedPlan["spacingSwaps"] = [];
+
+  /*
+   * N日周期。
+   *
+   * テーパー期だけは周期を当てない。あそこはレース日から逆算した固定の手順
+   * （8日前に最終高乳酸／7日前以降は高負荷なし／3日前から総量を削る）で、
+   * 起点が本人の決めた日にある周期とは**基準にしている日が違う**。
+   * 周期を優先すると、レース1週間前に高乳酸が入る周が出てくる。
+   */
+  const cycle = cycleOf(input.weekTemplate);
+  const cycleShapes = new Map<Phase, CycleShape>();
+  const cycleNotes: string[] = [];
+  const shapeFor = (phase: Phase): CycleShape => {
+    const cached = cycleShapes.get(phase);
+    if (cached) return cached;
+    const shape = planCycleShape(cycleShapeInputFor(phase, cycle!.lengthDays));
+    cycleShapes.set(phase, shape);
+    for (const note of shape.adjustments) {
+      const line = `${PHASE_LABEL[phase]}期: ${note}`;
+      if (!cycleNotes.includes(line)) cycleNotes.push(line);
+    }
+    return shape;
+  };
+  const cycleTemplateCache = new Map<string, (DayTemplate | null)[]>();
+  const cycleTemplateFor = (
+    phase: Phase,
+    cycleNumber: number,
+    economy: number
+  ): (DayTemplate | null)[] => {
+    const key = `${phase}|${cycleNumber}|${economy}`;
+    const cached = cycleTemplateCache.get(key);
+    if (cached) return cached;
+    const built = cycleDayTemplates(cycle!, cycleNumber, shapeFor(phase), economy, phase);
+    cycleTemplateCache.set(key, built);
+    return built;
+  };
+
   while (w <= raceDate) {
     const midWeek = addDays(w, 3);
     const phase = phaseForDate(midWeek, raceDate);
@@ -629,7 +835,18 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
       if (date < startDate || date > raceDate) continue;
       if (raceDays.has(date)) continue; // レース当日はセッションを置かない
 
-      let tpl = template[d];
+      const cyclePosition =
+        cycle && phase !== "Taper"
+          ? cyclePositionOf(cycle.anchorDate, date, cycle.lengthDays)
+          : undefined;
+      let tpl =
+        cycle && cyclePosition !== undefined
+          ? cycleTemplateFor(
+              phase,
+              cycleNumberOf(cycle.anchorDate, date, cycle.lengthDays),
+              economyWeek
+            )[cyclePosition]
+          : template[d];
       if (!tpl) continue;
       const dow = new Date(date + "T00:00:00Z").getUTCDay() as Dow;
 
@@ -710,7 +927,21 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
       const down = downWeights.find((w) => w.category === current.category);
       if (down && upTarget && upTarget.category !== current.category) {
         const swapped = categoryTemplate(upTarget.category, economyWeek);
-        if (swapped) {
+        /*
+         * 振り替え先がきつい方（高乳酸・経済走・モデリング）のとき、
+         * その週がもう2日埋まっているなら振り替えない。
+         *
+         * ここが無いと「CVを経済走に回す」が**全部のCVに効いて**、
+         * 暦の1週間に経済走が3日入る週ができる（RULE-04がERRORを出す）。
+         * 曜日で組んでいたころはポイントが週2枠しか無かったので表に出なかった。
+         * N日周期にして3枠目ができた時点で毎回起きる。
+         */
+        const wouldCrowd =
+          swapped !== undefined &&
+          isSpecificCategory(upTarget.category) &&
+          !isSpecificCategory(current.category) &&
+          demandingDaysEndingAt(date) >= MAX_DEMANDING_DAYS_PER_WEEK;
+        if (swapped && !wouldCrowd) {
           limiterSwaps.push({
             date,
             from: current.category,
@@ -718,6 +949,31 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
             note: `${down.note} / ${upTarget.note}`,
           });
           tpl = swapped;
+        }
+      }
+
+      /*
+       * 最後の保険。暦の1週間に高乳酸・中距離特異的が3日入るなら、有酸素高強度に落とす。
+       *
+       * 配置（`cycleTemplate.ts`）はここを守るように作ってあるが、守れるのは
+       * **その周期の中だけ**。フェーズが変わって配置が切り替わる境目や、
+       * 上の振り替えが重なったときには、周期をまたいで3日入ることがある。
+       * ルールエンジンにERRORを出させてから直すのでは、
+       * 「なぜそう置いたのか」がもう分からない。
+       */
+      if (
+        isSpecificCategory(tpl.category) &&
+        demandingDaysEndingAt(date) >= MAX_DEMANDING_DAYS_PER_WEEK
+      ) {
+        const eased = categoryTemplate("cv", economyWeek);
+        if (eased) {
+          spacingSwaps.push({
+            date,
+            from: tpl.category,
+            to: "cv",
+            note: "直前7日間に高乳酸・中距離特異的がすでに2日あるため、この枠はCVに落としました。",
+          });
+          tpl = eased;
         }
       }
 
@@ -833,6 +1089,17 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
         built.prescription += `（高乳酸翌日のため通常ジョグ+20〜30秒/kmに減速: 目安 ${fmtPacePerKm(slowed)}）`;
       }
       const timeOfDay = tpl.timeOfDay ?? "pm";
+      /*
+       * 固定枠かどうかは、周期モードでは**曜日ではなく周期の位置**で見る。
+       * ここを曜日のままにすると、周期で固定した日が固定として扱われず、
+       * ルール違反の自動回避で勝手に動かされる。
+       */
+      const slotIsFixed =
+        cyclePosition !== undefined
+          ? cycleModeOf(cycle, cyclePosition) === "fixed" &&
+            slotMatchesCategory(cycleSlotOf(cycle, cyclePosition), tpl.category)
+          : modeOf(input.weekTemplate, dow) === "fixed" &&
+            slotMatchesCategory(slotOf(input.weekTemplate, dow), tpl.category);
       const session: Session = {
         // 同じ日・同じ時間帯の自動生成枠は同じIDにする。
         // 再生成やスナップショット同期を繰り返しても別レコードとして増殖させないため。
@@ -849,14 +1116,12 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
         rationale: rationaleFor(tpl.category),
         status: "planned",
         origin: "generated",
-        isFixed:
-          modeOf(input.weekTemplate, dow) === "fixed" &&
-          slotMatchesCategory(slotOf(input.weekTemplate, dow), tpl.category),
-        fixedSource:
-          modeOf(input.weekTemplate, dow) === "fixed" &&
-          slotMatchesCategory(slotOf(input.weekTemplate, dow), tpl.category)
-            ? `${DOW_LABEL_FOR_SOURCE[dow]}曜の固定設定`
-            : undefined,
+        isFixed: slotIsFixed,
+        fixedSource: slotIsFixed
+          ? cyclePosition !== undefined
+            ? `周期${cyclePosition + 1}日目の固定設定`
+            : `${DOW_LABEL_FOR_SOURCE[dow]}曜の固定設定`
+          : undefined,
         timeOfDay,
         distanceKm: built.distanceKm,
         durationMin: built.durationMin,
@@ -884,7 +1149,10 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
        * 主練習が既に午前に置かれている日（tpl.timeOfDay==="am"）も置かない
        * ——同じ時間帯に2本入って id が衝突する。
        */
-      const amSlot = amSlotOf(input.weekTemplate, dow);
+      const amSlot =
+        cyclePosition !== undefined
+          ? cycleAmSlotOf(cycle, cyclePosition)
+          : amSlotOf(input.weekTemplate, dow);
       const amPlaced =
         amSlot !== undefined &&
         amSlot !== "off" &&
@@ -991,6 +1259,7 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
       if (tpl.category === "high_lactate" || tpl.category === "modeling") {
         lastHlDate = date;
       }
+      if (isSpecificCategory(session.category)) demandingDates.push(date);
 
       // 4-8: 補強を高負荷練習日のpmにブロック化
       const st = strengthForPhase(phase, date, session);
@@ -1004,8 +1273,27 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
     w = addDays(w, 7);
   }
 
-  return { sessions, strengthSessions, phaseByWeek, usedCustomMenus, limiterSwaps };
+  return {
+    sessions,
+    strengthSessions,
+    phaseByWeek,
+    usedCustomMenus,
+    limiterSwaps,
+    cycleNotes,
+    spacingSwaps,
+  };
 }
+
+/** 暦の7日間に置いてよい「きつい方」の日数（RULE-04: 3日以上でERROR） */
+const MAX_DEMANDING_DAYS_PER_WEEK = 2;
+
+const PHASE_LABEL: Record<Phase, string> = {
+  Base: "Base",
+  Build: "Build",
+  Specific: "Specific",
+  Modeling: "Modeling",
+  Taper: "Taper",
+};
 
 const DOW_LABEL_FOR_SOURCE: Record<Dow, string> = {
   0: "日",

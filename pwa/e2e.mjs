@@ -171,7 +171,7 @@ step("NEXT-001 0秒のボーダーを保存せず、保存済みの値も壊さ�
 await page.goto("http://localhost:8791/#/plan-settings");
 await page.waitForTimeout(600);
 // 固定曜日を有効化して 火=ポイント / 木=休養 / 土=ポイント / 日=ジョグ
-await page.getByText("曜日ごとの希望を使う").click();
+await page.getByText("枠の希望を使う").click();
 await page.waitForTimeout(200);
 const dowSelect = (label) =>
   page.getByLabel(`${label}曜のメニュー`);
@@ -4598,6 +4598,148 @@ if ((await fitRebuildCard.count()) === 0) {
       `複合（モデリング）の欄OK（${target.date} ${target.distances.join("+")}m / 欄${repCount}個）`
     );
   }
+}
+
+// ---- N日周期でメニューの枠を組む ----
+/*
+ * 7日は生活の都合であって、回復に必要な日数とは関係がない。
+ * 10日周期にしたときに、
+ *   ・設定画面が10日ぶんの枠になること
+ *   ・生成された予定が10日おきの並びになること（曜日ではなく）
+ *   ・減らした点が理由とセットで出ること
+ * を見る。**周期にしただけで自分のルールがERRORを出す**のがいちばん怖いので、
+ * 生成後の警告も確認する。
+ */
+{
+  await page.goto("http://localhost:8791/#/plan-settings");
+  await page.waitForTimeout(700);
+
+  const anchorDate = await page.evaluate(() => {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  });
+
+  // 曜日モードでは「1日目のメニュー」は無い
+  if (await page.getByLabel("1日目のメニュー").count()) {
+    fail("周期に切り替える前から周期の枠が出ている");
+  }
+
+  await page.getByRole("button", { name: "日数の周期で決める" }).click();
+  await page.waitForTimeout(300);
+
+  const lengthInput = page.getByLabel("周期の長さ（日）");
+  await lengthInput.fill("10");
+  await lengthInput.dispatchEvent("change");
+  await page.getByLabel("1日目にする日").fill(anchorDate);
+  await page.waitForTimeout(400);
+
+  const rows = await page.getByLabel(/^\d+日目のメニュー$/).count();
+  if (rows !== 10) fail(`10日周期にしたのに枠が${rows}個（10個であるべき）`);
+  if (await page.getByLabel("火曜のメニュー").count()) {
+    fail("周期モードなのに曜日の枠が残っている（どちらが効くのか分からない）");
+  }
+  const noteText = await page.textContent("body");
+  if (!noteText.includes("70日後")) {
+    fail("10日周期で曜日がずれることを出していない（禁止しないが黙ってもいけない）");
+  }
+
+  // 1日目を高乳酸で固定して保存する
+  await page.getByLabel("1日目のメニュー").selectOption("high_lactate");
+  await page.getByRole("button", { name: "1日目 固定", exact: true }).click();
+  await page.waitForTimeout(300);
+  await page.getByRole("button", { name: "設定を保存" }).click();
+  await page.waitForTimeout(250);
+  await page.getByRole("button", { name: "実行する" }).click();
+  await page.waitForTimeout(700);
+  if (!(await page.textContent("body")).includes("保存しました")) {
+    fail("周期の設定が保存されない");
+  }
+
+  // 保存された内容がAPIから戻ること（片方の実行環境だけで動くのを防ぐ）
+  const saved = await page.evaluate(async () =>
+    fetch("/api/plan-settings").then((r) => r.json())
+  );
+  if (!saved.weekTemplate?.cycle?.enabled || saved.weekTemplate.cycle.lengthDays !== 10) {
+    fail("周期の設定がAPIから戻らない（シムに対で足していない可能性）: " + JSON.stringify(saved.weekTemplate?.cycle));
+  }
+
+  // 生成しなおす
+  const gen = await page.evaluate(async () =>
+    fetch("/api/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }).then((r) => r.json())
+  );
+  if (gen.error) fail("周期で生成できない: " + gen.error);
+  if (!Array.isArray(gen.cycleNotes)) fail("周期の調整内容が返らない");
+  /*
+   * 生成した予定だけで起きているERRORを見る。
+   * このE2Eは手前で「追加テスト（構造）」などを手で作っているので、
+   * 全部のERRORを数えると、周期とは関係ない手入力との衝突まで拾ってしまう。
+   * 周期の不具合は**生成した予定どうし**で必ず出るので、そこだけに絞る。
+   */
+  // 周期が決めているのは「間隔」と「1週間あたりの回数」。そこのルールだけを見る。
+  // RULE-12（赤信号のあとの高負荷）などは本人の状態の話で、周期の責任ではない。
+  const PLACEMENT_RULES = ["RULE-01", "RULE-03", "RULE-04"];
+  const hardErrors = (gen.violations ?? []).filter(
+    (v) =>
+      v.level === "ERROR" &&
+      PLACEMENT_RULES.includes(v.rule) &&
+      (v.sessionIds ?? []).length > 0 &&
+      v.sessionIds.every((id) => String(id).startsWith("s-plan-"))
+  );
+  if (hardErrors.length) {
+    fail("周期で生成した予定どうしでERRORが出る: " + hardErrors.map((v) => v.rule + " " + v.message).join(" / "));
+  }
+
+  // 高負荷が10日おきの位置にだけ来ること（曜日ではなく周期になっている）
+  const sessions = await page.evaluate(async () =>
+    fetch("/api/sessions").then((r) => r.json())
+  );
+  const list = (Array.isArray(sessions) ? sessions : sessions.sessions ?? []).filter(
+    (s) => s.timeOfDay !== "am" && s.date >= anchorDate
+  );
+  const HIGH = ["high_lactate", "race_economy", "modeling", "cv", "threshold"];
+  const dayOf = (d) => Math.round((Date.parse(d) - Date.parse(anchorDate)) / 86400000);
+  const positions = new Set(
+    list.filter((s) => HIGH.includes(s.category)).map((s) => ((dayOf(s.date) % 10) + 10) % 10)
+  );
+  if (positions.size === 0) fail("周期で生成したのに高負荷が1本も無い");
+  if (positions.size > 4) {
+    fail(`高負荷が周期の${positions.size}か所に散っている（周期になっていない）: ${[...positions].sort().join(",")}`);
+  }
+  if (!positions.has(0)) fail("1日目を固定したのに1日目に高負荷が来ていない");
+
+  /*
+   * 暦の1週間で数えても集中していないこと。
+   * 周期の中で等間隔でも、10日と7日は噛み合わないので
+   * 「暦の第2週だけ高負荷3日」という並びが普通に出る。見た目には気づけない。
+   */
+  const DEMANDING = ["high_lactate", "race_economy", "modeling"];
+  const generated = list.filter((s) => String(s.id).startsWith("s-plan-"));
+  for (const from of generated.map((s) => s.date)) {
+    const to = new Date(Date.parse(from) + 6 * 86400000).toISOString().slice(0, 10);
+    const win = generated.filter((s) => s.date >= from && s.date <= to);
+    const highDays = new Set(win.filter((s) => HIGH.includes(s.category)).map((s) => s.date)).size;
+    const hardDays = new Set(win.filter((s) => DEMANDING.includes(s.category)).map((s) => s.date)).size;
+    if (highDays > 3) fail(`${from}からの7日間に高負荷が${highDays}日ある（RULE-04）`);
+    if (hardDays > 2) fail(`${from}からの7日間に高乳酸・中距離特異的が${hardDays}日ある（RULE-04）`);
+  }
+
+  step(`N日周期OK（10日ぶんの枠・高負荷は${positions.size}か所・生成後ERRORなし）`);
+
+  // 曜日に戻したときに、曜日の設定が消えていないこと
+  await page.goto("http://localhost:8791/#/plan-settings");
+  await page.waitForTimeout(600);
+  await page.getByRole("button", { name: "曜日で決める" }).click();
+  await page.waitForTimeout(300);
+  const back = await page.getByLabel("火曜のメニュー").inputValue();
+  if (back !== "point") {
+    fail(`曜日に戻したら以前の設定が消えている（火曜=${back}、pointであるべき）`);
+  }
+  step("周期↔曜日の切り替えで、もう一方の設定を消さないOK");
 }
 
 if (errors.length) {
