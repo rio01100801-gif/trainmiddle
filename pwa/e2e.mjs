@@ -4988,6 +4988,50 @@ if ((await fitRebuildCard.count()) === 0) {
   step(`周期・冬季の構造が残るOK（TODAYに位置・相談にも同じ・入れ替え${swaps.length}件の理由が履歴に）`);
 }
 
+// ---- 予定と実際のズレが分析画面に出る ----
+/*
+ * 341行あって完成していたのに、どこからも呼ばれていなかったモジュール。
+ * 繋いだので、両方の実行環境で取れることと、画面に出ることを見る。
+ *
+ * 数字が画面とAPIで一致することまで見ないと、
+ * 「表は出ているが別の値を映している」に気づけない。
+ */
+{
+  const balance = await page.evaluate(async () =>
+    fetch("/api/analysis").then((r) => r.json())
+  );
+  const b = balance.balance;
+  if (!b) fail("予定と実際のズレがAPIから返らない（シムに対で足していない可能性）");
+  if (!Array.isArray(b.weeks) || b.weeks.length !== 4) {
+    fail(`4週ぶん返っていない（${b.weeks?.length}週)`);
+  }
+  // 月曜始まりであること（期間サマリーと区切りをそろえる）
+  for (const w of b.weeks) {
+    const dow = new Date(w.weekStart + "T00:00:00Z").getUTCDay();
+    if (dow !== 1) fail(`週の区切りが月曜でない: ${w.weekStart}`);
+  }
+
+  await page.goto("http://localhost:8791/#/analysis");
+  await page.waitForTimeout(900);
+  await page.getByRole("button", { name: "推移" }).click();
+  await page.waitForTimeout(600);
+
+  const body = await page.textContent("body");
+  if (!body.includes("予定どおりにできたか")) {
+    fail("予定と実際のズレが分析画面に出ていない");
+  }
+  if (!body.includes("（今週）")) fail("どれが今週か分からない");
+
+  // 画面の「実施/予定」がAPIの数字と一致すること
+  const last = b.weeks[b.weeks.length - 1];
+  const want = `${last.completedSessions}/${last.plannedSessions}`;
+  if (!body.includes(want)) {
+    fail(`今週の実施/予定が画面と合わない（APIは ${want}）`);
+  }
+
+  step(`予定と実際のズレOK（4週・今週 ${want}・気づき${(b.signals ?? []).length}件）`);
+}
+
 if (errors.length) {
   console.log("JS ERRORS:", errors.slice(0, 5));
   process.exitCode = 1;

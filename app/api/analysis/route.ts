@@ -10,6 +10,7 @@ import {
   buildRuleContext,
   performanceSummaries,
   samePrescriptionGroups,
+  trainingBalance,
   trustedResults,
 } from "@/lib/service";
 
@@ -87,6 +88,8 @@ export async function GET(req: NextRequest) {
     performance: performanceSummaries(repo, today),
     timeline,
     weeks,
+    // 予定と実際のズレ（合計は periodSummary の担当。役割を分けている）
+    balance: trainingBalance(repo, today),
     changeLog: repo.listChangeLog(50),
   });
 }

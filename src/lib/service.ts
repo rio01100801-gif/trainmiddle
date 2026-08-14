@@ -112,6 +112,7 @@ import {
   type SyncRecord,
 } from "./core/healthImport";
 import { analyzeRace, RaceAnalysisOutput } from "./core/raceAnalysis";
+import { buildFourWeekBalance, type FourWeekBalance } from "./core/trainingBalance";
 import { cycleOf, cyclePositionFor, validateWeekTemplate } from "./core/weekTemplate";
 import {
   OFF_SEASON_LABELS,
@@ -4076,6 +4077,32 @@ export function exportBackup(repo: Store, now: string): BackupFile {
     counts,
     data,
   };
+}
+
+/**
+ * 直近4週の「予定と実際のズレ」。
+ *
+ * `periodSummary` と役割を分ける。
+ *   ・`periodSummary` = 距離・時間・強度の**合計**（WEEK / MONTH / YEAR）。伸びたかを見る
+ *   ・ここ            = 予定に対して**どれだけ実施できたか**。守れているかを見る
+ * 同じ週の数字が2種類出ないよう、こちらは合計を主役にしない。
+ *
+ * 見る意味は、設定を守れているかが処方の組み立てに効いているから
+ * （`recentTrend` がカテゴリ単位で同じことを見て、本数とレストを動かしている）。
+ * その判断の材料を、本人も週単位で見返せるようにする。
+ */
+export function trainingBalance(repo: Store, today: string): FourWeekBalance {
+  const goal = repo.getGoal();
+  const race = goal ? repo.listRaces().find((r) => r.id === goal.targetRaceId) : undefined;
+  return buildFourWeekBalance({
+    sessions: repo.listSessions(),
+    results: repo.listResults(),
+    strengths: repo.listStrengths(),
+    today,
+    raceDate: race?.dateStart,
+    // レースが無い期間（冬季）は Base のまま。currentPhase と同じ判定を通す
+    phase: currentPhase(repo, today).phase,
+  });
 }
 
 /**

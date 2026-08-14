@@ -164,6 +164,7 @@ export default function AnalysisPage() {
 
       <div className={seg === "trend" ? "flex flex-col gap-3" : "hidden"}>
         <PerformancePanel periods={data.performance ?? []} />
+        <BalanceCard balance={data.balance} />
         <TimelineCard days={data.timeline ?? []} />
       </div>
 
@@ -325,6 +326,131 @@ export default function AnalysisPage() {
  * グラフは既存の LineChart を使わず専用に描く——薄いグリッド線・小さい点・
  * 軸ラベルという構成がリファレンス固有で、汎用の折れ線に足すと他の画面が変わる。
  */
+/**
+ * 直近4週の「予定と実際のズレ」。
+ *
+ * 隣の PerformancePanel（期間サマリー）と役割を分ける。
+ *   ・PerformancePanel = 距離・時間・強度の**合計**。伸びたかを見る
+ *   ・ここ             = 予定に対して**どれだけ実施できたか**。守れているかを見る
+ * 同じ週の合計を2か所に出さない（数字が食い違って見える）。
+ *
+ * 守れているかを見る意味は、それが処方の組み立てに効いているから
+ * （`recentTrend` が同じことをカテゴリ単位で見て、本数とレストを動かしている）。
+ * 自動で動いている判断の材料を、本人も同じ形で見返せるようにする。
+ */
+interface BalanceWeekView {
+  weekStart: string;
+  plannedSessions: number;
+  completedSessions: number;
+  skippedSessions: number;
+  adherencePct?: number;
+  highLoadDays: number;
+  glycolyticSessions: number;
+  recoveryDays: number;
+}
+interface BalanceView {
+  weeks: BalanceWeekView[];
+  adherencePct?: number;
+  signals: { code: string; level: string; message: string; action: string }[];
+}
+
+function BalanceCard({ balance }: { balance?: BalanceView | null }) {
+  if (!balance || !balance.weeks?.length) return null;
+  const md = (d: string) => {
+    const [, m, day] = d.split("-");
+    return `${Number(m)}/${Number(day)}`;
+  };
+  return (
+    <Card title="予定どおりにできたか（直近4週）">
+      <p className="text-[11px] mb-2 leading-relaxed" style={{ color: "var(--text-2)" }}>
+        合計の伸びは上の期間サマリーで見ます。ここは
+        <strong>予定に対して実施できた割合</strong>。
+        設定を守れているかは、次の処方の本数とレストに効いています。
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12px]" style={{ borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              {["週", "実施/予定", "達成率", "高負荷", "高乳酸", "回復"].map((h) => (
+                <th
+                  key={h}
+                  className="metric-label text-left py-1 pr-2 whitespace-nowrap"
+                  style={{ borderBottom: "1px solid var(--border)" }}
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {balance.weeks.map((w, i) => {
+              const last = i === balance.weeks.length - 1;
+              const pct = w.adherencePct;
+              return (
+                <tr
+                  key={w.weekStart}
+                  style={{
+                    borderBottom: "1px solid var(--border)",
+                    background: last ? "var(--surface-2)" : "transparent",
+                  }}
+                >
+                  <td className="py-1.5 pr-2 whitespace-nowrap num">
+                    {md(w.weekStart)}
+                    {last ? <small style={{ color: "var(--text-3)" }}>（今週）</small> : null}
+                  </td>
+                  <td className="py-1.5 pr-2 num whitespace-nowrap">
+                    {w.completedSessions}/{w.plannedSessions}
+                    {w.skippedSessions > 0 ? (
+                      <small style={{ color: "var(--text-3)" }}> 欠{w.skippedSessions}</small>
+                    ) : null}
+                  </td>
+                  <td
+                    className="py-1.5 pr-2 num whitespace-nowrap"
+                    style={{
+                      color:
+                        pct === undefined
+                          ? "var(--text-3)"
+                          : pct < 70
+                            ? "var(--amber)"
+                            : "var(--forge)",
+                    }}
+                  >
+                    {pct === undefined ? "—" : `${Math.round(pct)}%`}
+                  </td>
+                  <td className="py-1.5 pr-2 num">{w.highLoadDays}</td>
+                  <td className="py-1.5 pr-2 num">{w.glycolyticSessions}</td>
+                  <td className="py-1.5 num">{w.recoveryDays}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {/*
+        気づきは「出たときだけ」出す。毎回同じ行が出ると読まれなくなる
+        （午前枠の助言と同じ考え方）。断定せず、対処案まで書く。
+      */}
+      {balance.signals?.length ? (
+        <div className="mt-2 flex flex-col gap-1.5">
+          {balance.signals.map((s, i) => (
+            <div key={i} className="rounded-lg p-2.5" style={{ background: "var(--surface-2)" }}>
+              <p
+                className="text-[12px] leading-relaxed"
+                style={{ color: s.level === "warn" ? "var(--amber)" : "var(--text)" }}
+              >
+                {s.message}
+              </p>
+              <p className="text-[11px] mt-1 leading-relaxed" style={{ color: "var(--text-3)" }}>
+                {s.action}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
 function PerformancePanel({ periods }: { periods: PeriodSummary[] }) {
   const [idx, setIdx] = useState(1); // 既定は MONTH
   if (!periods || periods.length === 0) {
