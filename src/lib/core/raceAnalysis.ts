@@ -124,17 +124,3 @@ export function analyzeRace(input: RaceAnalysisInput): RaceAnalysisOutput {
     feasibility,
   };
 }
-
-export function describeRaceAnalysis(o: RaceAnalysisOutput): string {
-  const lines = [
-    `合計 ${fmtTime(o.totalSec)}（前後半差 ${o.splitDiffSec >= 0 ? "+" : ""}${o.splitDiffSec.toFixed(1)}秒）`,
-    `診断: ${o.primaryIssue}`,
-    ...o.adjustments.map(
-      (a) =>
-        `- ${a.category}: ${a.change === "increase" ? "比率を上げる" : a.change === "decrease" ? "比率を下げる" : "維持"}（${a.reason}）`
-    ),
-    ...o.extraActions,
-  ];
-  if (o.feasibility.warn && o.feasibility.message) lines.push(`⚠ ${o.feasibility.message}`);
-  return lines.join("\n");
-}

@@ -116,13 +116,23 @@ export default function SetupPage() {
       <Card title="選手プロフィール">
         <div className="grid grid-cols-2 gap-x-3 md:gap-x-6">
           {F("名前", "name")}
-          {F("身長(cm)", "heightCm", "171")}
+          {/*
+            身長と骨格筋量は、いまどの計算にも使っていない（体重は暑熱の計算に使う）。
+            入力できるのに何にも効かないと「効いているはず」と読めてしまうので、
+            記録用だと分かる名前にする。消さないのは、体組成の推移を残しておくと
+            あとで「あの時期は絞れていた」を照合できるため。
+          */}
+          {F("身長(cm・記録用)", "heightCm", "171")}
           {F("体重(kg)", "weightKg", "64.5")}
-          {F("骨格筋量(kg・任意)", "skeletalMuscleKg", "32.5")}
+          {F("骨格筋量(kg・記録用)", "skeletalMuscleKg", "32.5")}
           {F("400m PB", "pb400", "49.0")}
           {F("800m PB（必須）", "pb800", "1:49.51")}
           {F("1500m PB", "pb1500", "3:56.0")}
-          {/* R-1: 相対強度の基準。任意。年齢からの推定式は使わない */}
+          {/*
+            R-1: 相対強度の基準。任意。年齢からの推定式は使わない。
+            分析の相対強度にだけ効く（メニューの生成・調整には入れていない）。
+            心拍で処方を動かすと、暑熱や睡眠不足の影響を能力の変化と取り違える。
+          */}
           {F("最大心拍(bpm・任意)", "maxHrBpm", "196")}
           <label className="block text-sm mb-2">
             <span className="block text-xs mb-0.5" style={{ color: "var(--text-2)" }}>
@@ -156,6 +166,12 @@ export default function SetupPage() {
         <p className="text-xs mb-2" style={{ color: "var(--text-2)" }}>
           ※ 高校時代の3000m/5000mのPBは現在の有酸素能力の根拠には使いません。有酸素の設定は
           実測（結果入力のペース走等）から算出されます。
+          {/*
+            「使わない」だけ書いて置き場所を書かないと、入れる場所を探して迷う。
+            マーカーは日付つきで、直近8週の重み付け・暑熱の除外・用途の区別まで効く。
+          */}
+          いまの3000m/5000mを走ったときは「記録」画面の
+          <b>有酸素マーカー</b>として入れてください（日付つきで扱われ、直近8週ぶんが設定に効きます）。
         </p>
         <div className="flex flex-col sm:flex-row sm:items-center gap-2">
           <button onClick={save} className="btn-volt justify-center">

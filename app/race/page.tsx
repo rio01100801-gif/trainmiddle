@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Card, ChangeList, ViolationList, fmtSec } from "../components/ui";
+import { Card, ChangeList, ConfirmButton, ViolationList, fmtSec } from "../components/ui";
 import { localToday } from "@/lib/core/dates";
 
 type RoundInput = {
@@ -20,6 +20,8 @@ export default function RaceAnalysisPage() {
   ]);
   const [out, setOut] = useState<any | null>(null);
   const [msg, setMsg] = useState("");
+  const [deleteId, setDeleteId] = useState("");
+  const [deleteMsg, setDeleteMsg] = useState("");
 
   useEffect(() => {
     fetch("/api/goal")
@@ -29,6 +31,27 @@ export default function RaceAnalysisPage() {
         if (d.races?.[0]) setRaceId(d.races[0].id);
       });
   }, []);
+
+  const removeRace = async () => {
+    if (!deleteId) {
+      setDeleteMsg("消す大会を選んでください");
+      return;
+    }
+    const res = await fetch(`/api/goal?raceId=${encodeURIComponent(deleteId)}`, {
+      method: "DELETE",
+    });
+    const d = await res.json();
+    if (d.error) {
+      setDeleteMsg(d.error);
+      return;
+    }
+    const left = (d.races ?? []) as { id: string }[];
+    setRaces(left);
+    setDeleteId("");
+    // 選択中の大会を消したら、結果入力側の選択も外れたままにしない
+    if (!left.some((r) => r.id === raceId)) setRaceId(left[0]?.id ?? "");
+    setDeleteMsg("消しました。");
+  };
 
   const submit = async () => {
     const payload = rounds
@@ -109,6 +132,51 @@ export default function RaceAnalysisPage() {
         </button>
         {msg ? <p className="text-sm mt-2">{msg}</p> : null}
       </Card>
+
+      {/*
+        間違えて登録したレースを消す導線。
+        保存層には前から `deleteRace` があったのに呼ぶ側が無く、
+        目標から外しても記録としては残り続けていた。
+
+        本命レースと、結果を入力済みのレースは消せない（APIが断る）。
+        押す前に理由が分かるよう、断られる条件をここにも書く。
+      */}
+      {races.length > 0 ? (
+        <Card title="登録したレースを消す">
+          <p className="text-[11px] mb-2 leading-relaxed" style={{ color: "var(--text-2)" }}>
+            間違えて登録したレース用です。<strong>本命レース</strong>と
+            <strong>結果を入力済みのレース</strong>は消せません
+            （走った記録は現在地の根拠になっているため）。
+          </p>
+          <div className="flex flex-wrap gap-2 items-end">
+            <label className="text-sm">
+              <span className="block text-xs">消す大会</span>
+              <select
+                className="w-full md:w-auto max-w-full"
+                aria-label="消す大会"
+                value={deleteId}
+                onChange={(e) => setDeleteId(e.target.value)}
+              >
+                <option value="">選択</option>
+                {races.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}（{r.dateStart}）
+                  </option>
+                ))}
+              </select>
+            </label>
+            <ConfirmButton
+              label="このレースを消す"
+              title="登録したレースを消しますか？"
+              message="目標から外れ、一覧からも消えます。走った記録（有酸素マーカー）がある大会は消せません。"
+              danger
+              className="btn-ghost min-h-[44px]"
+              onConfirm={removeRace}
+            />
+          </div>
+          {deleteMsg ? <p className="text-sm mt-2">{deleteMsg}</p> : null}
+        </Card>
+      ) : null}
 
       {out ? (
         <>

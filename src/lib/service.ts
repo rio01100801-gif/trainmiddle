@@ -4080,6 +4080,42 @@ export function exportBackup(repo: Store, now: string): BackupFile {
 }
 
 /**
+ * 登録したレースを消す。
+ *
+ * 保存層には前から `deleteRace` があったが、呼ぶ側が無かった。
+ * 間違えて登録したレースが残り続け、目標から外しても記録としては消えなかった。
+ *
+ * 消さないものが2つある。
+ *   ・**本命レース**——消すと目標が指す先が無くなり、冬季モードに落ちる。
+ *     やりたいなら先に目標側で外す（あちらは「レース未定」を選ぶ導線がある）
+ *   ・**結果が紐づいているレース**——それは競技記録で、間違いではない。
+ *     `processRaceResult` が有酸素マーカーを作っているので、消すと現在地の根拠が欠ける
+ */
+export function deleteRace(repo: Store, raceId: string): { deleted: boolean; reason?: string } {
+  const goal = repo.getGoal();
+  if (goal?.targetRaceId === raceId) {
+    return {
+      deleted: false,
+      reason:
+        "本命レースは消せません。先に「目標・レース」で別のレースを本命にするか、レース未定（冬季・基礎構築）にしてください。",
+    };
+  }
+  const hasResult = repo.listMarkers().some((m) => m.description.startsWith(`${raceId} `));
+  if (hasResult) {
+    return {
+      deleted: false,
+      reason:
+        "結果を入力済みのレースは消せません。走った記録は現在地の根拠になっているためです（目標から外すことはできます）。",
+    };
+  }
+  repo.deleteRace(raceId);
+  if (goal) {
+    repo.saveGoal({ ...goal, subRaceIds: (goal.subRaceIds ?? []).filter((id) => id !== raceId) });
+  }
+  return { deleted: true };
+}
+
+/**
  * 直近4週の「予定と実際のズレ」。
  *
  * `periodSummary` と役割を分ける。

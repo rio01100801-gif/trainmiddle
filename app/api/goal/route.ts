@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openRepo } from "@/lib/db/node";
-import { saveGoalAndRaces } from "@/lib/service";
+import { deleteRace, saveGoalAndRaces } from "@/lib/service";
 
 export const dynamic = "force-dynamic";
 
@@ -26,4 +26,14 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
+}
+
+/** 登録したレースを消す。本命と結果ありは消さない（service 側で判断する） */
+export async function DELETE(req: NextRequest) {
+  const repo = openRepo();
+  const raceId = req.nextUrl.searchParams.get("raceId");
+  if (!raceId) return NextResponse.json({ error: "raceId が必要です" }, { status: 400 });
+  const out = deleteRace(repo, raceId);
+  if (!out.deleted) return NextResponse.json({ error: out.reason }, { status: 400 });
+  return NextResponse.json({ ok: true, races: repo.listRaces() });
 }

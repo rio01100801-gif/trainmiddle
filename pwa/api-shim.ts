@@ -58,6 +58,7 @@ import {
   limiterAssessment,
   splitAnalysis,
   currentPhase,
+  deleteRace,
   contactTimeStatus,
   trainingBalance,
   listContactSamples,
@@ -118,6 +119,14 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
       const { goal, races } = body;
       if (!goal || !races) return { error: "目標とレースが必要です" };
       return { ok: true, ...saveGoalAndRaces(repo, goal, races) };
+    },
+    // 登録したレースを消す。本命と結果ありは消さない（service 側で判断する）
+    DELETE: (repo, _b, params) => {
+      const raceId = params.get("raceId");
+      if (!raceId) return { error: "raceId が必要です" };
+      const out = deleteRace(repo, raceId);
+      if (!out.deleted) return { error: out.reason };
+      return { ok: true, races: repo.listRaces() };
     },
   },
 

@@ -19,13 +19,6 @@ export interface InjuryRecord {
   note?: string;
 }
 
-/** 過去PB。長距離PBは is_current で「現在走れるか」を必ず区別する（仕様書 3-1 注意） */
-export interface PersonalBest {
-  timeSec: number;
-  isCurrent: boolean; // false = 過去の記録。現在の有酸素能力の根拠に使わない
-  date?: string;
-}
-
 export interface Athlete {
   id: string;
   name: string;
@@ -35,8 +28,14 @@ export interface Athlete {
   pb400mSec?: number;
   pb800mSec: number;
   pb1500mSec?: number;
-  pb3000m?: PersonalBest;
-  pb5000m?: PersonalBest;
+  /*
+   * 3000m・5000m の記録はここに持たない。
+   *
+   * 有酸素の実測は「記録」画面の有酸素マーカーとして入れる（`FitnessMarker`）。
+   * あちらは日付つきで、直近8週の重み付け・暑熱条件の除外・用途（閾値/CV/レース）の
+   * 区別まで効く。静的なPBを別に持つと、LTの出どころが2つになって
+   * どちらを信じるのか分からなくなる。
+   */
   heatTolerance: HeatTolerance;
   recoveryProfile: RecoveryProfile;
   injuryHistory: InjuryRecord[];
@@ -49,8 +48,12 @@ export interface Athlete {
   maxHrBpm?: number;
   /**
    * 3-4: 選手タイプの手動設定。
-   * 未設定なら PB からの自動診断（4-1）を使う。
-   * 手動設定がある場合はそちらを優先し、自動診断との差異を通知する。
+   * 未設定なら PB からの自動診断（4-1）を使う。手動設定があればそちらを優先する。
+   *
+   * **画面からは設定できない**（APIとCLIだけ）。
+   * 以前ここには「自動診断との差異を通知する」と書いてあったが実装が無く、
+   * コメントが実装より先を書いている状態だった。設定する導線が無い以上、
+   * 差異を通知する場面も無いので、約束のほうを実態に合わせた。
    */
   athleteTypeOverride?: AthleteType;
 }

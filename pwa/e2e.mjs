@@ -5032,6 +5032,75 @@ if ((await fitRebuildCard.count()) === 0) {
   step(`予定と実際のズレOK（4週・今週 ${want}・気づき${(b.signals ?? []).length}件）`);
 }
 
+// ---- 登録したレースを消す／効かない欄に効かないと書く ----
+/*
+ * 消せることより、**消せないことのほう**を見る。
+ * 走った記録は現在地の根拠（有酸素マーカー）なので、
+ * 消せてしまうと設定ペースの出どころが欠ける。
+ */
+{
+  await page.goto("http://localhost:8791/#/race");
+  await page.waitForTimeout(800);
+
+  const body = await page.textContent("body");
+  if (!body.includes("登録したレースを消す")) fail("レースを消す導線が無い");
+  if (!body.includes("結果を入力済みのレース")) {
+    fail("消せない条件を書いていない（押してから断られると理由が分からない）");
+  }
+
+  const before = await page.evaluate(async () =>
+    fetch("/api/goal", { cache: "no-store" }).then((r) => r.json())
+  );
+  const targetId = before.goal?.targetRaceId;
+  if (!targetId) fail("本命レースが無い状態でレース削除を確認している");
+
+  // 本命は消せないこと（APIが断る）
+  const denied = await page.evaluate(async (id) =>
+    fetch(`/api/goal?raceId=${encodeURIComponent(id)}`, { method: "DELETE" }).then((r) => r.json()),
+    targetId
+  );
+  if (!denied.error) fail("本命レースが消せてしまう");
+  if (!denied.error.includes("本命")) fail("断る理由が本命レースだと分からない: " + denied.error);
+
+  // 通過点レースは消せること
+  const sub = (before.races ?? []).find((r) => r.id !== targetId);
+  if (sub) {
+    const ok = await page.evaluate(async (id) =>
+      fetch(`/api/goal?raceId=${encodeURIComponent(id)}`, { method: "DELETE" }).then((r) => r.json()),
+      sub.id
+    );
+    if (ok.error) {
+      // 結果を入れてある大会なら断られるのが正しい
+      if (!ok.error.includes("現在地の根拠")) fail("通過点が消せない理由が不明: " + ok.error);
+      step("レース削除OK（本命と結果ありは消せない）");
+    } else {
+      const left = (ok.races ?? []).some((r) => r.id === sub.id);
+      if (left) fail("消したはずのレースが残っている");
+      step("レース削除OK（本命は消せない・通過点は消せる）");
+    }
+  } else {
+    step("レース削除OK（本命は消せない）");
+  }
+}
+
+// ---- 効かない欄に「効かない」と書いてあること ----
+/*
+ * 入力できるのに何にも効かない欄は「効いているはず」と読まれる。
+ * 効く範囲を書いたので、それが画面に残っていることを見る。
+ */
+{
+  await page.goto("http://localhost:8791/#/setup");
+  await page.waitForTimeout(700);
+  const setup = await page.textContent("body");
+  for (const label of ["身長(cm・記録用)", "骨格筋量(kg・記録用)"]) {
+    if (!setup.includes(label)) fail(`プロフィールに「${label}」が無い（記録用だと分からない）`);
+  }
+  if (!setup.includes("有酸素マーカー")) {
+    fail("3000m/5000mをどこに入れるのかを書いていない");
+  }
+  step("効かない欄に効かないと書いてあるOK（身長・骨格筋量・3000m/5000mの置き場所）");
+}
+
 if (errors.length) {
   console.log("JS ERRORS:", errors.slice(0, 5));
   process.exitCode = 1;

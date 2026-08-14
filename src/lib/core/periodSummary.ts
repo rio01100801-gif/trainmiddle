@@ -162,13 +162,3 @@ export function formatPeriodRange(s: PeriodSummary): string {
   const short = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
   return `${short(s.from)} - ${short(s.to)}`;
 }
-
-/** 累積の総日数（テストと表示の両方で使う） */
-export function periodLengthDays(kind: PeriodKind): number {
-  return PERIOD_DAYS[kind];
-}
-
-/** diffDays を使う側の取り違えを防ぐための自己検査用 */
-export function isWithin(date: string, from: string, to: string): boolean {
-  return diffDays(from, date) >= 0 && diffDays(date, to) >= 0;
-}

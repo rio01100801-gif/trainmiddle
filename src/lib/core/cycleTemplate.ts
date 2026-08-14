@@ -434,9 +434,3 @@ function cyclicDistance(a: number, b: number, lengthDays: number): number {
   const raw = Math.abs(a - b);
   return Math.min(raw, lengthDays - raw);
 }
-
-/** 周期の中身を1行で説明する（設定画面と処方の根拠に出す） */
-export function describeCycleShape(shape: CycleShape): string {
-  const perWeek = (shape.pointsPerCycle * 7) / shape.lengthDays;
-  return `${shape.lengthDays}日で${shape.pointsPerCycle}本（週換算 ${perWeek.toFixed(1)}本）`;
-}
