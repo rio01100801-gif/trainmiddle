@@ -41,6 +41,13 @@ import {
   slotOf,
 } from "./weekTemplate";
 import {
+  type OffSeasonEmphasis,
+  OFF_SEASON_HORIZON_WEEKS,
+  OFF_SEASON_LABELS,
+  describeOffSeasonBlock,
+  offSeasonEmphasis,
+} from "./offSeason";
+import {
   type CycleShape,
   type CycleShapeInput,
   cycleNumberOf,
@@ -299,14 +306,86 @@ export function categoryCountsPerFourWeeks(phase: Phase): Record<SessionCategory
 }
 
 /**
+ * 冬季・基礎構築モードの週テンプレート（月曜始まり）。
+ *
+ * どれも Base（基礎期）の変形。フェーズを増やしていないのは、
+ * 処方の中身（`RECIPE_CATALOG`）・補強・ペースの土台が全部フェーズで引かれているので、
+ * 新しいフェーズを足すと**そこに載っていないカテゴリが固定文面に落ちる**ため。
+ * 冬にやりたいのは「基礎期の中で重心を移すこと」なので、Baseのままでよい。
+ *
+ * 変えているのは並びだけ。高乳酸は入れない（`speed_base` の隔週だけ残す）——
+ * レースが無い期間に高乳酸を積む理由が無く、積むと春に上げしろが残らない。
+ */
+function offSeasonWeekTemplate(
+  emphasis: OffSeasonEmphasis,
+  weekParity: number
+): (DayTemplate | null)[] {
+  switch (emphasis) {
+    case "aerobic_volume":
+      // 有酸素の土台。ロングランを長くし、質は閾値1本に絞る
+      return [
+        jog(45),
+        hillSprints(8),
+        jog(55),
+        thresholdReps(),
+        jog(40, "回復ジョグ"),
+        strides(6),
+        longRun(80),
+      ];
+    case "strength_hills":
+      // 坂を週2本。接地で押す力を作る期間なので、走る質は閾値1本に留める
+      return [
+        jog(40),
+        hillSprints(10),
+        jog(40, "回復ジョグ"),
+        thresholdReps(),
+        jog(45),
+        hillSprints(8),
+        longRun(70),
+      ];
+    case "aerobic_high":
+      // 閾値とCVを2本。乳酸を処理する側を上げる
+      return [
+        jog(40),
+        thresholdReps(),
+        jog(40, "回復ジョグ"),
+        strides(6),
+        cvReps(),
+        jog(45),
+        longRun(70),
+      ];
+    case "speed_base":
+      /*
+       * スピードの土台。神経系を週2回に増やす。
+       * 高乳酸は隔週で1本だけ入れる（Base期と同じ扱い）。
+       * 量だけを長く積むと速い動きが出なくなるので、冬のうちに戻しておく。
+       */
+      return [
+        jog(40),
+        hillSprints(8),
+        jog(40, "回復ジョグ"),
+        strides(6),
+        weekParity === 1 ? highLactate() : cvReps(),
+        jog(40),
+        longRun(65),
+      ];
+  }
+}
+
+/**
  * フェーズ別の週テンプレート（月曜始まり、index 0 = 月曜）
  * weekParity: 隔週要素の切り替え（0 or 1）
+ *
+ * `emphasis` が入っているのは冬季・基礎構築モードのとき。
+ * そのときフェーズは必ず Base で、並びだけがブロックごとに変わる。
  */
 function weekTemplate(
   phase: Phase,
   weekParity: number,
-  economyWeek: number
+  economyWeek: number,
+  emphasis?: OffSeasonEmphasis
 ): (DayTemplate | null)[] {
+  if (emphasis) return offSeasonWeekTemplate(emphasis, weekParity);
   switch (phase) {
     case "Base":
       // 主軸 aerobic + neural。高乳酸は0〜隔週(パリティ1の週のみ軽く)
@@ -542,7 +621,11 @@ function applySlotPreferences(
  * 表と生成器がずれると、曜日で組んだときと周期で組んだときで中身が変わってしまう
  * （`categoryCountsPerFourWeeks` と同じ理由）。
  */
-function cycleShapeInputFor(phase: Phase, lengthDays: number): CycleShapeInput {
+function cycleShapeInputFor(
+  phase: Phase,
+  lengthDays: number,
+  emphasis?: OffSeasonEmphasis
+): CycleShapeInput {
   let points = 0;
   let demanding = 0;
   let neural = 0;
@@ -550,7 +633,7 @@ function cycleShapeInputFor(phase: Phase, lengthDays: number): CycleShapeInput {
   const demandingStream: SessionCategory[] = [];
   const aerobicHighStream: SessionCategory[] = [];
   for (const parity of [0, 1]) {
-    for (const day of weekTemplate(phase, parity, 0)) {
+    for (const day of weekTemplate(phase, parity, 0, emphasis)) {
       if (!day) continue;
       if (day.category === "neural") neural++;
       if (day.name === "ロングラン") longRuns++;
@@ -685,6 +768,13 @@ export interface GeneratedPlan {
    * 軽くされたのかが分からなくなる）。
    */
   spacingSwaps: { date: string; from: SessionCategory; to: SessionCategory; note: string }[];
+  /**
+   * 冬季・基礎構築モード（目標レースが決まっていない）で組んだか。
+   * true のときはピーキングしていない——テーパーも、目標タイムの混合も無い。
+   */
+  offSeason: boolean;
+  /** 冬季モードのブロック割り（週の頭 → 重心）。何を繰り返しているのかを見せる */
+  offSeasonBlocks: { weekStart: string; emphasis: OffSeasonEmphasis; label: string }[];
 }
 
 function generatedSessionId(date: string, timeOfDay: Session["timeOfDay"]): string {
@@ -700,8 +790,19 @@ function generatedSessionId(date: string, timeOfDay: Session["timeOfDay"]): stri
 export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
   const { athlete, goal, races, cfeSec, aerobicProfile, startDate } = input;
   const targetRace = races.find((r) => r.id === goal.targetRaceId);
-  if (!targetRace) throw new Error("目標レースが見つかりません");
-  const raceDate = targetRace.dateStart;
+  /*
+   * 冬季・基礎構築モード。
+   *
+   * 目標レースが無いときは、以前はここで例外を投げて生成できなかった。
+   * 冬にレースが無いのは普通のことなので、**レースが無いことを異常にしない**。
+   *
+   * `raceDate` はここでは「どこまで作るか」の意味しか持たない。
+   * ピーキング（テーパー・目標タイムの混合・レース前の減量）は下で全部止める。
+   */
+  const offSeason = targetRace === undefined;
+  const raceDate = targetRace
+    ? targetRace.dateStart
+    : addDays(weekStart(startDate), OFF_SEASON_HORIZON_WEEKS * 7 - 1);
 
   const sessions: Session[] = [];
   const strengthSessions: StrengthSession[] = [];
@@ -727,8 +828,13 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
     .filter((w) => w.weight > 1)
     .sort((a, b) => b.weight - a.weight)[0];
 
+  /*
+   * 通過点レース。冬季モードでも記録会には出るので、そのまま効かせる
+   * （当日はセッションを置かない・前3日は軽くする）。
+   * 本命が無いだけで、レースが1つも無いわけではない。
+   */
   const subRaces = races.filter(
-    (r) => r.id !== targetRace.id && (r.priority === "B" || r.priority === "C")
+    (r) => r.id !== targetRace?.id && (r.priority === "B" || r.priority === "C")
   );
   const raceDays = new Set<string>();
   for (const r of races) {
@@ -782,15 +888,25 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
    * 周期を優先すると、レース1週間前に高乳酸が入る周が出てくる。
    */
   const cycle = cycleOf(input.weekTemplate);
-  const cycleShapes = new Map<Phase, CycleShape>();
+  const cycleShapes = new Map<string, CycleShape>();
   const cycleNotes: string[] = [];
-  const shapeFor = (phase: Phase): CycleShape => {
-    const cached = cycleShapes.get(phase);
+  /*
+   * 周期の形はフェーズごとに違う（Base 10日は2本、Specific 10日は3本）。
+   * 冬季モードでは重心（ブロック）でも変わるので、両方を鍵にする。
+   * フェーズだけを鍵にすると、冬季の4ブロックが全部
+   * 最初のブロックの形になる（Baseで1回作って使い回してしまう）。
+   */
+  const shapeFor = (phase: Phase, emphasis?: OffSeasonEmphasis): CycleShape => {
+    const key = `${phase}|${emphasis ?? ""}`;
+    const cached = cycleShapes.get(key);
     if (cached) return cached;
-    const shape = planCycleShape(cycleShapeInputFor(phase, cycle!.lengthDays));
-    cycleShapes.set(phase, shape);
+    const shape = planCycleShape(
+      cycleShapeInputFor(phase, cycle!.lengthDays, emphasis)
+    );
+    cycleShapes.set(key, shape);
+    const where = emphasis ? OFF_SEASON_LABELS[emphasis] : `${PHASE_LABEL[phase]}期`;
     for (const note of shape.adjustments) {
-      const line = `${PHASE_LABEL[phase]}期: ${note}`;
+      const line = `${where}: ${note}`;
       if (!cycleNotes.includes(line)) cycleNotes.push(line);
     }
     return shape;
@@ -799,31 +915,54 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
   const cycleTemplateFor = (
     phase: Phase,
     cycleNumber: number,
-    economy: number
+    economy: number,
+    emphasis?: OffSeasonEmphasis
   ): (DayTemplate | null)[] => {
-    const key = `${phase}|${cycleNumber}|${economy}`;
+    const key = `${phase}|${emphasis ?? ""}|${cycleNumber}|${economy}`;
     const cached = cycleTemplateCache.get(key);
     if (cached) return cached;
-    const built = cycleDayTemplates(cycle!, cycleNumber, shapeFor(phase), economy, phase);
+    const built = cycleDayTemplates(
+      cycle!,
+      cycleNumber,
+      shapeFor(phase, emphasis),
+      economy,
+      phase
+    );
     cycleTemplateCache.set(key, built);
     return built;
   };
+  const offSeasonBlocks: GeneratedPlan["offSeasonBlocks"] = [];
 
   while (w <= raceDate) {
     const midWeek = addDays(w, 3);
-    const phase = phaseForDate(midWeek, raceDate);
+    /*
+     * 冬季モードはフェーズを動かさない。
+     * レース日から数える意味が無い（そのレースが無い）ので、
+     * 週が進むほど Build → Specific と勝手に上がっていくのは間違い。
+     * 期分けは Base のまま、**ブロックで重心だけを移す**。
+     */
+    const emphasis = offSeason ? offSeasonEmphasis(weekIndex) : undefined;
+    const phase = offSeason ? "Base" : phaseForDate(midWeek, raceDate);
     phaseByWeek.push({ weekStart: w, phase });
+    if (emphasis) {
+      offSeasonBlocks.push({
+        weekStart: w,
+        emphasis,
+        label: describeOffSeasonBlock(weekIndex),
+      });
+    }
     const paceBasis = guardedBaseTime(
       cfeSec,
       goal.targetTimeSec,
       phase,
-      Math.max(diffDays(midWeek, raceDate) / 7, 0),
+      // レースが無いときは「あと何週」も無い。ピーキングの猶予判定に使わせない
+      offSeason ? Number.POSITIVE_INFINITY : Math.max(diffDays(midWeek, raceDate) / 7, 0),
       // 処方の土台をPBより速くしない。CFE自体は推定として保持したまま
       athlete.pb800mSec
     );
     const grpBase = paceBasis.timeSec;
     const template = applyWeekPreferences(
-      weekTemplate(phase, weekIndex % 2, economyWeek),
+      weekTemplate(phase, weekIndex % 2, economyWeek, emphasis),
       input.weekTemplate,
       phase,
       economyWeek,
@@ -844,13 +983,24 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
           ? cycleTemplateFor(
               phase,
               cycleNumberOf(cycle.anchorDate, date, cycle.lengthDays),
-              economyWeek
+              economyWeek,
+              emphasis
             )[cyclePosition]
           : template[d];
       if (!tpl) continue;
       const dow = new Date(date + "T00:00:00Z").getUTCDay() as Dow;
 
-      const daysToTarget = diffDays(date, raceDate);
+      /*
+       * 目標レースまでの残り日数。
+       *
+       * 冬季モードでは `raceDate` は「どこまで作るか」の区切りでしかないので、
+       * ここから先のピーキング（最終高乳酸・高負荷の停止・総量の削減）を
+       * **1つも通さない**。通すと、ただの区切りの日に向かって
+       * 勝手にテーパーが始まる（作った期間の終わりが軽くなる）。
+       */
+      const daysToTarget = offSeason
+        ? Number.POSITIVE_INFINITY
+        : diffDays(date, raceDate);
       // テーパー期: レース8日前に最終高乳酸を1回だけ配置（RULE-07対応）
       if (daysToTarget === 8 && phase === "Taper") {
         tpl = {
@@ -1262,7 +1412,7 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
       if (isSpecificCategory(session.category)) demandingDates.push(date);
 
       // 4-8: 補強を高負荷練習日のpmにブロック化
-      const st = strengthForPhase(phase, date, session);
+      const st = strengthForPhase(phase, date, session, offSeason);
       if (st) strengthSessions.push(st);
     }
 
@@ -1281,6 +1431,8 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
     limiterSwaps,
     cycleNotes,
     spacingSwaps,
+    offSeason,
+    offSeasonBlocks,
   };
 }
 
@@ -1388,9 +1540,21 @@ function categoryTemplate(
 function strengthForPhase(
   phase: Phase,
   date: string,
-  session: Session
+  session: Session,
+  offSeason = false
 ): StrengthSession | undefined {
-  const highLoadDay = isHighLoadCategory(session.category);
+  /*
+   * 補強は高負荷の日に寄せる（きつい日はきつく、楽な日は楽に）。
+   *
+   * 冬季モードでは坂ダッシュの日にも置く。
+   * 「筋力・坂」のブロックは走る質が閾値1本しか無いので、
+   * 高負荷の日だけに寄せると週1回しか補強が入らない。
+   * 坂は神経系で解糖系の負債が小さいので、重い補強を同じ日に重ねられる。
+   * **流しの日には置かない**——あそこは動きを出す日で、
+   * 重いものを引いたあとの流しは目的から外れる。
+   */
+  const hillDay = offSeason && /坂/.test(session.name);
+  const highLoadDay = isHighLoadCategory(session.category) || hillDay;
 
   const table: Record<
     Phase,

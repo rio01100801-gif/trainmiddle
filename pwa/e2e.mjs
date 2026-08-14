@@ -4742,6 +4742,106 @@ if ((await fitRebuildCard.count()) === 0) {
   step("周期↔曜日の切り替えで、もう一方の設定を消さないOK");
 }
 
+// ---- 冬季・基礎構築モード（目標レースが決まっていない期間） ----
+/*
+ * いちばん怖いのは、レースが無いのにピーキングしてしまうこと。
+ * 生成の区切りに使っている日付をレース日と取り違えると、
+ * ただの区切りに向かってテーパーが始まり、作った期間の終わりが軽くなる。
+ * 予定は出ているので、画面を見ても気づけない。
+ *
+ * 最後に本命レースを戻して、従来の期分けに帰れることまで見る
+ * （戻せないと、冬に切り替えた時点で春の予定が作れなくなる）。
+ */
+{
+  await page.goto("http://localhost:8791/#/goal");
+  await page.waitForTimeout(800);
+
+  await page.getByRole("button", { name: "レース未定（冬季・基礎構築）" }).click();
+  await page.waitForTimeout(300);
+  const modeText = await page.textContent("body");
+  if (!modeText.includes("ピーキングしません")) {
+    fail("冬季モードにしたのに、ピーキングしないことを出していない");
+  }
+  if (await page.getByText("本命レース（Aレース）").count()) {
+    fail("冬季モードなのに本命レースの入力欄が残っている");
+  }
+
+  await page.getByRole("button", { name: "目標・レースを保存" }).click();
+  await page.waitForTimeout(900);
+  const savedGoal = await page.evaluate(async () =>
+    fetch("/api/goal", { cache: "no-store" }).then((r) => r.json())
+  );
+  if (savedGoal.goal?.targetRaceId !== "") {
+    fail("レース未定が保存されない: " + JSON.stringify(savedGoal.goal));
+  }
+
+  const winter = await page.evaluate(async () =>
+    fetch("/api/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }).then((r) => r.json())
+  );
+  if (winter.error) fail("レース未定で生成できない: " + winter.error);
+  if (winter.offSeason !== true) fail("冬季モードとして生成されていない");
+  const labels = [...new Set((winter.offSeasonBlocks ?? []).map((b) => b.label))];
+  if (labels.length !== 4) {
+    fail(`ブロックが4つ出ていない（${labels.length}個）: ${labels.join(" / ")}`);
+  }
+
+  const winterSessions = await page.evaluate(async () =>
+    fetch("/api/sessions").then((r) => r.json())
+  );
+  /*
+   * これから先の「予定」だけを見る。
+   * 実施済みのセッションは再生成でも消さない（記録なので当然）ので、
+   * 全部を数えると手前のE2Eが作った春向けの予定まで混ざり、
+   * 「冬季なのにSpecificがある」と誤って落ちる。
+   */
+  const wlist = (Array.isArray(winterSessions) ? winterSessions : winterSessions.sessions ?? [])
+    .filter((x) => String(x.id).startsWith("s-plan-") && x.status === "planned");
+  if (wlist.length < 80) fail(`冬季の予定が少なすぎる（${wlist.length}件）`);
+  const phases = [...new Set(wlist.map((x) => x.phase))];
+  if (phases.join(",") !== "Base") {
+    fail(`冬季なのにフェーズが上がっている: ${phases.join(",")}`);
+  }
+  const taperish = wlist.filter((x) => /調整ジョグ|刺激入れ|最終高乳酸/.test(x.name));
+  if (taperish.length) {
+    fail(`レースが無いのにテーパーの内容が出ている: ${taperish.map((x) => x.date + " " + x.name).join(", ")}`);
+  }
+  // 生成した期間の終わりが軽くなっていないこと
+  const wdates = wlist.map((x) => x.date).sort();
+  const lastDate = wdates[wdates.length - 1];
+  const tailFrom = new Date(Date.parse(lastDate) - 13 * 86400000).toISOString().slice(0, 10);
+  const HIGH = ["high_lactate", "race_economy", "modeling", "cv", "threshold"];
+  const tailHigh = wlist.filter((x) => x.date >= tailFrom && HIGH.includes(x.category));
+  if (!tailHigh.length) {
+    fail("生成した期間の最後の2週間に高負荷が無い（区切りに向かってテーパーしている）");
+  }
+  step(`冬季・基礎構築モードOK（${wlist.length}件・Base固定・4ブロック・末尾も落ちない）`);
+
+  // 本命レースを戻すと、従来の期分けに帰れること
+  await page.goto("http://localhost:8791/#/goal");
+  await page.waitForTimeout(800);
+  await page.getByRole("button", { name: "レースから逆算" }).click();
+  await page.waitForTimeout(300);
+  await page.getByRole("button", { name: "目標・レースを保存" }).click();
+  await page.waitForTimeout(900);
+  const backGoal = await page.evaluate(async () =>
+    fetch("/api/goal", { cache: "no-store" }).then((r) => r.json())
+  );
+  if (!backGoal.goal?.targetRaceId) fail("本命レースに戻せない");
+  const back = await page.evaluate(async () =>
+    fetch("/api/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }).then((r) => r.json())
+  );
+  if (back.offSeason !== false) fail("レースを戻したのに冬季モードのままになっている");
+  step("レースを戻すと従来の期分けに帰るOK");
+}
+
 if (errors.length) {
   console.log("JS ERRORS:", errors.slice(0, 5));
   process.exitCode = 1;

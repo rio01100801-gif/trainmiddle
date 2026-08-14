@@ -448,7 +448,16 @@ export function saveGoalAndRaces(
     );
   }
 
-  if (!unique.has(goal.targetRaceId)) {
+  /*
+   * 本命レースが無い保存を許す（冬季・基礎構築モード）。
+   *
+   * 以前はここで必ず例外にしていたので、レースが決まっていない期間は
+   * そもそも目標を保存できなかった。冬にレースが無いのは普通のこと。
+   *
+   * ただし「IDを書いたのにそのレースが無い」は打ち間違いなので弾く。
+   * 未定は `targetRaceId: ""` で表す（レースを1件も渡さない形）。
+   */
+  if (goal.targetRaceId !== "" && !unique.has(goal.targetRaceId)) {
     throw new Error("本命レースが保存対象に含まれていません");
   }
   const normalizedGoal: Goal = {
@@ -540,6 +549,10 @@ export function regeneratePlan(repo: Store, startDate: string): {
   violations: RuleViolation[];
   templateViolations: RuleViolation[];
   customMenusUsed: number;
+  /** 目標レースが無い期間（冬季・基礎構築モード）で組んだか。ピーキングしていない */
+  offSeason: boolean;
+  /** 冬季モードのブロック割り。何を繰り返しているのかを見せる */
+  offSeasonBlocks: { weekStart: string; emphasis: string; label: string }[];
   /** N日周期で組んだときに、週テンプレートの配分から変えた点（理由つき） */
   cycleNotes: string[];
   /** 暦の1週間に高負荷が集中するのを避けて内容を落とした枠。理由つきで見せる */
@@ -564,6 +577,10 @@ function regeneratePlanCore(repo: Store, startDate: string): {
   /** 3-1: 曜日テンプレート自体の問題（生成前に気づけるように別枠で返す） */
   templateViolations: RuleViolation[];
   customMenusUsed: number;
+  /** 目標レースが無い期間（冬季・基礎構築モード）で組んだか。ピーキングしていない */
+  offSeason: boolean;
+  /** 冬季モードのブロック割り。何を繰り返しているのかを見せる */
+  offSeasonBlocks: { weekStart: string; emphasis: string; label: string }[];
   /** N日周期で組んだときに、週テンプレートの配分から変えた点（理由つき） */
   cycleNotes: string[];
   /** 暦の1週間に高負荷が集中するのを避けて内容を落とした枠。理由つきで見せる */
@@ -745,6 +762,8 @@ function regeneratePlanCore(repo: Store, startDate: string): {
      * N日周期で組んだときに、週テンプレートの配分から変えた点。
      * 「10日周期にしたら高乳酸が減った」のを黙って起こさない。
      */
+    offSeason: plan.offSeason,
+    offSeasonBlocks: plan.offSeasonBlocks,
     cycleNotes: plan.cycleNotes,
     spacingSwaps: plan.spacingSwaps,
     limiterSwaps: plan.limiterSwaps,
@@ -818,7 +837,11 @@ export function refreshNearHorizon(repo: Store, fromDate: string): SessionChange
   const cfe = repo.getCfe();
   if (!athlete || !goal || !cfe) return [];
   const races = repo.listRaces();
-  if (!races.some((r) => r.id === goal.targetRaceId)) return [];
+  /*
+   * 目標レースが無くても確定範囲は作り直す（冬季・基礎構築モード）。
+   * 以前はここで諦めていたので、冬は結果を入れてもCFEが予定に反映されなかった。
+   * 冬こそ土台が動く時期なので、ここを止める理由が無い。
+   */
 
   const until = addDays(fromDate, CONFIRM_HORIZON_DAYS);
   const plan = generatePlan({

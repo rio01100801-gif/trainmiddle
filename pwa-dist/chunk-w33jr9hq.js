@@ -1,0 +1,2 @@
+var J=16,v=["aerobic_volume","strength_hills","aerobic_high","speed_base"],D={aerobic_volume:"有酸素の土台",strength_hills:"筋力・坂",aerobic_high:"閾値・CVの量",speed_base:"スピードの土台"};function G(j){let y=(Math.floor(j/4)%v.length+v.length)%v.length;return v[y]}function H(j){return Math.floor(j/4)+1}function M(j){let q=H(j),y=(q-1)*4+1,z=q*4;return`第${q}ブロック ${D[G(j)]}（${y}〜${z}週目）`}
+export{J as ta,v as ua,D as va,G as wa,M as xa};

@@ -2,6 +2,11 @@
 import { useEffect, useState } from "react";
 import { Card, ViolationList } from "../components/ui";
 import { localToday } from "@/lib/core/dates";
+import {
+  OFF_SEASON_BLOCKS,
+  OFF_SEASON_HORIZON_WEEKS,
+  OFF_SEASON_LABELS,
+} from "@/lib/core/offSeason";
 import type {
   AdvancementRule,
   Goal,
@@ -54,6 +59,8 @@ export default function GoalPage() {
   ]);
   const [subRaces, setSubRaces] = useState<SubRaceForm[]>([]);
   const [planStart, setPlanStart] = useState(localToday());
+  /** 目標レースが決まっていない期間（冬季・基礎構築モード） */
+  const [offSeason, setOffSeason] = useState(false);
   const [msg, setMsg] = useState("");
   const [violations, setViolations] = useState<any[]>([]);
 
@@ -64,6 +71,8 @@ export default function GoalPage() {
     setTarget(`${m}:${s}`);
     const byId = new Map(races.map((race) => [race.id, race]));
     const main = byId.get(goal.targetRaceId);
+    // 本命レースが保存されていない＝冬季・基礎構築モードで保存した状態
+    setOffSeason(main === undefined);
     if (main) {
       setTargetRaceId(main.id);
       setRaceName(main.name);
@@ -101,7 +110,7 @@ export default function GoalPage() {
   }, []);
 
   const save = async () => {
-    if (!dateStart) {
+    if (!offSeason && !dateStart) {
       setMsg("本命レースの開催初日は必須です");
       return;
     }
@@ -124,8 +133,16 @@ export default function GoalPage() {
       return;
     }
 
+    /*
+     * 冬季・基礎構築モードでは本命レースを作らない。
+     * 「日付だけ入れない本命レース」を残すと、あとで
+     * 「レースはあるのに日付が無い」という別の壊れ方になる。
+     * 通過点レース（記録会）は冬でも出るのでそのまま残す。
+     */
     const races: Race[] = [
-      {
+      ...(offSeason
+        ? []
+        : [{
         id: targetRaceId,
         name: raceName || "本命レース",
         dateStart,
@@ -143,7 +160,7 @@ export default function GoalPage() {
           .join("＋"),
         borderPlace: advance !== "time" ? borderPlace : undefined,
         borderTimeSec: advance !== "place" ? borderTimeSec : undefined,
-      },
+      } as Race]),
       ...subRaces
         .filter((s) => s.dateStart)
         .map((s, index): Race => ({
@@ -158,8 +175,9 @@ export default function GoalPage() {
     const goal: Goal = {
       targetEvent: "800m",
       targetTimeSec: parseTime(target),
-      targetRaceId,
-      subRaceIds: races.slice(1).map((r) => r.id),
+      // 未定は空文字。IDだけ残すと「あるはずのレースが無い」保存になる
+      targetRaceId: offSeason ? "" : targetRaceId,
+      subRaceIds: races.filter((r) => r.priority !== "A").map((r) => r.id),
     };
     const response = await fetch("/api/goal", {
       method: "POST",
@@ -205,7 +223,17 @@ export default function GoalPage() {
         (d.spacingSwaps?.length
           ? ` ／ 暦の1週間に高負荷が集中する${d.spacingSwaps.length}枠をCVへ落としました`
           : "") +
-        (d.cycleNotes?.length ? `\n周期の調整: ${d.cycleNotes.join(" ")}` : "")
+        (d.cycleNotes?.length ? `\n周期の調整: ${d.cycleNotes.join(" ")}` : "") +
+        /*
+         * 冬季モードで作ったことと、そのブロック割りを出す。
+         * 「レースを設定し忘れているのに気づかない」まま冬のメニューが出るのが
+         * いちばん困るので、モードは必ず名乗る。
+         */
+        (d.offSeason
+          ? `\n冬季・基礎構築モードで作りました（ピーキングなし）。\n${[
+              ...new Set((d.offSeasonBlocks ?? []).map((b: { label: string }) => b.label)),
+            ].join(" / ")}`
+          : "")
     );
     setViolations([...(d.templateViolations ?? []), ...(d.violations ?? [])]);
   };
@@ -222,8 +250,42 @@ export default function GoalPage() {
             placeholder="1:48.9"
           />
         </label>
+        {/*
+          冬季・基礎構築モード。
+          レースが決まっていない期間に「開催初日は必須です」で止まっていたので、
+          冬はそもそも予定を作れなかった。レースが無いのは異常ではない。
+        */}
+        <div className="grid grid-cols-2 gap-1 mt-2" role="group" aria-label="目標の決め方">
+          <button
+            type="button"
+            className={!offSeason ? "btn-volt !py-2" : "btn-ghost !py-2"}
+            aria-pressed={!offSeason}
+            onClick={() => setOffSeason(false)}
+          >
+            レースから逆算
+          </button>
+          <button
+            type="button"
+            className={offSeason ? "btn-volt !py-2" : "btn-ghost !py-2"}
+            aria-pressed={offSeason}
+            onClick={() => setOffSeason(true)}
+          >
+            レース未定（冬季・基礎構築）
+          </button>
+        </div>
+        {offSeason ? (
+          <p className="text-[11px] mt-2 leading-relaxed" style={{ color: "var(--text-2)" }}>
+            ピーキングしません。テーパーを組まず、設定ペースにも目標タイムを混ぜません
+            （土台は今のCFEのまま）。
+            {OFF_SEASON_HORIZON_WEEKS}週ぶんを、
+            {OFF_SEASON_BLOCKS.map((b) => OFF_SEASON_LABELS[b]).join(" → ")}
+            の4週ブロックで作ります。足りなくなったら作り直してください。
+            目標タイムは残します（制限因子の判定とタイプ診断に使います）。
+          </p>
+        ) : null}
       </Card>
 
+      {offSeason ? null : (
       <Card title="本命レース（Aレース）">
         <div className="grid md:grid-cols-2 gap-x-6">
           <label className="block text-sm mb-2">
@@ -309,6 +371,7 @@ export default function GoalPage() {
           + ラウンド追加
         </button>
       </Card>
+      )}
 
       <Card title="通過点レース（B/C）">
         {subRaces.map((s, i) => (
