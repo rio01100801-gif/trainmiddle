@@ -23,7 +23,7 @@ import { avgPaceSecPerKm, buildRepResults, REST_LABELS } from "@/lib/core/workou
 import { evaluateEnvironment, environmentNote, WIND_LABELS } from "@/lib/core/environment";
 import type { FitnessMarkerPurpose, RestType, RuleViolation, SessionCategory } from "@/lib/core/types";
 import type { AerobicProfile } from "@/lib/core/pace";
-import type { PrescriptionStructure } from "@/lib/core/prescription";
+import { describeComposition, type PrescriptionStructure } from "@/lib/core/prescription";
 
 // ---------------------------------------------------------------------------
 
@@ -1689,22 +1689,57 @@ function ResultForm({
         </div>
       ) : mode === "interval" ? (
         <div className="flex flex-col gap-2">
-          <div className="grid grid-cols-3 gap-2">
-            <L label="本数">
-              <input className="w-full" value={reps} onChange={(e) => setReps(e.target.value)} inputMode="numeric" />
-            </L>
-            <L label="距離(m)">
-              <input className="w-full" value={distM} onChange={(e) => setDistM(e.target.value)} inputMode="numeric" />
-            </L>
-            <L label="設定(秒)">
-              <input
-                className="w-full"
-                value={targetSec}
-                onChange={(e) => setTargetSec(e.target.value)}
-                inputMode="decimal"
-              />
-            </L>
-          </div>
+          {structure?.mixed ? (
+            /*
+             * 複合（1000×4＋200×3）では、距離も設定も本ごとに違う。
+             * 1組しか無い欄に何を入れればいいのか決まらないので出さない
+             * （本数に7と入れるしかなく、距離1000mが全部に効いて見える。実際に指摘された）。
+             * 距離と設定は下の「1本目 予定◯m／設定◯秒」が本ごとに持っている。
+             */
+            <div
+              className="rounded-lg p-2.5"
+              style={{ background: "var(--surface-2)" }}
+              data-testid="mixed-composition"
+            >
+              <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
+                予定の構成
+              </span>
+              <b className="text-[13px] num">{describeComposition(structure.slots)}</b>
+              <p className="text-[11px] mt-1.5 leading-relaxed" style={{ color: "var(--text-3)" }}>
+                距離と設定は本ごとに違うので、下の1本ずつの欄に出しています。
+                途中で打ち切った場合だけ合計本数を直してください。
+              </p>
+              <label className="block text-[13px] mt-2" style={{ maxWidth: 140 }}>
+                <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
+                  合計本数
+                </span>
+                <input
+                  className="w-full"
+                  value={reps}
+                  onChange={(e) => setReps(e.target.value)}
+                  inputMode="numeric"
+                  aria-label="合計本数"
+                />
+              </label>
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-2">
+              <L label="本数">
+                <input className="w-full" value={reps} onChange={(e) => setReps(e.target.value)} inputMode="numeric" />
+              </L>
+              <L label="距離(m)">
+                <input className="w-full" value={distM} onChange={(e) => setDistM(e.target.value)} inputMode="numeric" />
+              </L>
+              <L label="設定(秒)">
+                <input
+                  className="w-full"
+                  value={targetSec}
+                  onChange={(e) => setTargetSec(e.target.value)}
+                  inputMode="decimal"
+                />
+              </L>
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-2">
             <L label="レスト内容">
               <select

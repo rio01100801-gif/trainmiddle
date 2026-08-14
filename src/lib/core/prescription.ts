@@ -216,3 +216,33 @@ export function resizeValues<T>(prev: T[], next: number, fill: T): T[] {
   if (next <= prev.length) return prev;
   return [...prev, ...Array.from({ length: next - prev.length }, () => fill)];
 }
+
+/**
+ * 区間の並びを「距離×本数」のかたまりに戻す。
+ *
+ * `1000×4＋200×3` は区間としては7つに展開されるが、人が見るときは
+ * 「1000mを4本と200mを3本」で捉えている。入力欄に本数・距離・設定を
+ * 1組しか出さないと、**何を入れればいいのか決まらない**（7本と入れるしかなく、
+ * 距離1000mが全部に効いているように見える）。実際にそう報告された。
+ *
+ * 連続して同じ距離が並んでいるものをまとめる。並びは変えない
+ * （300→600→300 を 300×2＋600 にまとめると、やる順番が変わってしまう）。
+ */
+export function slotComposition(
+  slots: { distanceM: number }[]
+): { distanceM: number; reps: number }[] {
+  const out: { distanceM: number; reps: number }[] = [];
+  for (const s of slots) {
+    const last = out[out.length - 1];
+    if (last && last.distanceM === s.distanceM) last.reps += 1;
+    else out.push({ distanceM: s.distanceM, reps: 1 });
+  }
+  return out;
+}
+
+/** 「1000m×4 ＋ 200m×3」の形にする。画面にそのまま出す */
+export function describeComposition(slots: { distanceM: number }[]): string {
+  return slotComposition(slots)
+    .map((b) => (b.reps > 1 ? `${b.distanceM}m×${b.reps}` : `${b.distanceM}m`))
+    .join(" ＋ ");
+}

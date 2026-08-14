@@ -4521,6 +4521,37 @@ if ((await fitRebuildCard.count()) === 0) {
     if (repCount < target.distances.length) {
       fail(`複合の欄: 実施タイムの欄が足りない（${repCount} < ${target.distances.length}）`);
     }
+
+    /*
+     * 複合では距離も設定も本ごとに違う。本数・距離・設定の欄を1組しか出さないと、
+     * 合計本数を入れるしかなく、先頭の距離が全部に効いているように見える
+     * （1000×4＋200×3 で「7」と入れるしかない、と指摘された。forge-v85で修正）。
+     */
+    const comp = page.locator('[data-testid="mixed-composition"]');
+    if ((await comp.count()) === 0) {
+      fail("複合の欄: 予定の構成が出ていない（1組の欄のままになっている）");
+    } else {
+      const compText = (await comp.textContent()) ?? "";
+      for (const d of target.distances) {
+        if (!compText.includes(`${d}m`)) {
+          fail(`複合の欄: 構成に ${d}m が無い（${compText.slice(0, 60)}）`);
+        }
+      }
+      if (!compText.includes("合計本数")) fail("複合の欄: 合計本数の欄が無い");
+      // 迷いのもとになる「距離(m)」「設定(秒)」の単独欄を出していないこと
+      const distField = await page.locator('label:has-text("距離(m)") input').count();
+      const targetField = await page.locator('label:has-text("設定(秒)") input').count();
+      if (distField > 0 || targetField > 0) {
+        fail("複合の欄: 本ごとに違うのに距離・設定の欄を1つだけ出している");
+      }
+      // 本ごとの欄に、その本の予定距離が出ていること
+      const formBody = await page.textContent("body");
+      for (const d of target.distances) {
+        if (!formBody.includes(`予定${d}m`)) {
+          fail(`複合の欄: ${d}m の本の予定距離が出ていない`);
+        }
+      }
+    }
     step(
       `複合（モデリング）の欄OK（${target.date} ${target.distances.join("+")}m / 欄${repCount}個）`
     );

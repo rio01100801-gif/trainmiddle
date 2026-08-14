@@ -6,8 +6,10 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  describeComposition,
   MAX_SLOTS,
   parsePrescription,
+  slotComposition,
   resizeValues,
   shapeOf,
 } from "@/lib/core/prescription";
@@ -205,5 +207,56 @@ describe("値の引き継ぎ", () => {
 
   it("減っても捨てない（打ち間違いで消えると入れ直しになる）", () => {
     expect(resizeValues(["41.6", "41.8", "42.0"], 2, "")).toEqual(["41.6", "41.8", "42.0"]);
+  });
+});
+
+/**
+ * 複合の「距離×本数」への戻し。
+ *
+ * 区間は7つに展開されるが、人は「1000mを4本と200mを3本」で捉えている。
+ * 入力欄に本数・距離・設定を1組しか出さないと、何を入れればいいのか決まらない
+ * （7本と入れるしかなく、距離1000mが全部に効いて見える。実際に指摘された）。
+ */
+describe("複合の構成", () => {
+  it("連続する同じ距離をまとめる", () => {
+    expect(
+      slotComposition([
+        { distanceM: 1000 },
+        { distanceM: 1000 },
+        { distanceM: 1000 },
+        { distanceM: 1000 },
+        { distanceM: 200 },
+        { distanceM: 200 },
+        { distanceM: 200 },
+      ])
+    ).toEqual([
+      { distanceM: 1000, reps: 4 },
+      { distanceM: 200, reps: 3 },
+    ]);
+  });
+
+  it("並びは変えない（やる順番が変わってしまう）", () => {
+    expect(
+      slotComposition([{ distanceM: 300 }, { distanceM: 600 }, { distanceM: 300 }])
+    ).toEqual([
+      { distanceM: 300, reps: 1 },
+      { distanceM: 600, reps: 1 },
+      { distanceM: 300, reps: 1 },
+    ]);
+  });
+
+  it("画面に出す形にする", () => {
+    const s = parsePrescription("1000×4＋200×3 r3min-5min-200jog", { grpSecPerM: GRP });
+    expect(describeComposition(s.slots)).toBe("1000m×4 ＋ 200m×3");
+  });
+
+  it("1本だけの区間には×を付けない", () => {
+    const s = parsePrescription("500m(68.7)＋300m(41.2) r1分（walk）", { grpSecPerM: GRP });
+    expect(describeComposition(s.slots)).toBe("500m ＋ 300m");
+  });
+
+  it("単一区間は複合として扱わない（従来の欄のまま）", () => {
+    const s = parsePrescription("300m × 5 @40.9〜41.7秒 r5分", { grpSecPerM: GRP });
+    expect(s.mixed).toBe(false);
   });
 });
