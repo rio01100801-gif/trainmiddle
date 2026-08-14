@@ -558,10 +558,66 @@ export function categoryFromTarget(
   return { category: distanceM <= 1600 ? "cv" : "threshold", ratio };
 }
 
+/**
+ * GRP比だけでは決められない領域か。決められないなら理由を返す。
+ *
+ * ここで断定をやめるのは、**帯の数値をいじるより安全だから**ではなく、
+ * その領域では原理的に決まらないから。
+ *
+ *   ・CVと閾値の設定は GRP ではなく**有酸素プロファイル（実測LT）**から作られる。
+ *     しかも CV = LT + 6〜8秒/km でしかない。GRPとの比は本人の有酸素の状態で動くので、
+ *     比のどこに線を引いてもどちらかを取り違える。
+ *   ・複合（500m＋300m）をレースペースでやるのはモデリングの形だが、
+ *     区間ごとのペースだけ見れば高乳酸と同じ。構造の意図までは読めない。
+ *
+ * 候補は今までどおり返す（画面の初期値に使う）。断定だけをやめて本人に選ばせる。
+ * 表記辞書に登録された語があれば、そちらが先に効くのでここまで来ない。
+ */
+export function categoryAmbiguity(
+  ratio: number,
+  segments: { distanceM: number }[]
+): string | undefined {
+  if (ratio > 1.12) {
+    return "CVと閾値は設定の出どころが違う（有酸素プロファイル）ため、設定タイムだけでは区別できません。どちらか選んでください";
+  }
+  /*
+   * モデリングの形は「レース距離を2つに割って1本ずつ」（500＋300 / 600＋200）。
+   * この形をレースペースでやったときだけ、高乳酸との区別が意図の問題になる。
+   *
+   * 複合というだけで未確定にはしない。`300(42)＋600(1:26)＋600(1:26)` のような
+   * 3区間・合計1500mは分割ではなく反復なので、これまでどおり断定してよい。
+   * 広く未確定にすると、実際の日誌を貼るたびに選ばせることになる。
+   */
+  if (ratio <= 1.02 && looksLikeRaceSplit(segments)) {
+    return "レース距離を2つに割った形（モデリング）に見えますが、高乳酸としても成立します。意図で選んでください";
+  }
+  return undefined;
+}
+
+/** 800mを2区間に割った形か（500＋300 / 600＋200 など） */
+function looksLikeRaceSplit(segments: { distanceM: number }[]): boolean {
+  if (segments.length !== 2) return false;
+  if (segments[0].distanceM === segments[1].distanceM) return false;
+  const total = segments[0].distanceM + segments[1].distanceM;
+  return total >= 700 && total <= 900;
+}
+
 export function inferCategory(
   rawContent: string,
-  opts: BulkParseOptions & { targetSec?: number; distanceM?: number } = {}
-): { kind: PastEntryKind; category?: SessionCategory; certain: boolean; basis?: string } {
+  opts: BulkParseOptions & {
+    targetSec?: number;
+    distanceM?: number;
+    /** 括弧付きで書かれた区間。モデリング（レース距離の分割）の判別に使う */
+    segments?: { distanceM: number }[];
+  } = {}
+): {
+  kind: PastEntryKind;
+  category?: SessionCategory;
+  certain: boolean;
+  basis?: string;
+  /** 断定しなかった理由。画面にそのまま出す */
+  ambiguity?: string;
+} {
   const content = stripRestSpec(rawContent);
   const rep = parseRepSpec(content);
 
@@ -591,11 +647,14 @@ export function inferCategory(
 
   if (distanceM && targetSec && opts.grpSecPerM) {
     const { category, ratio } = categoryFromTarget(distanceM, targetSec, opts.grpSecPerM);
+    const ambiguity = categoryAmbiguity(ratio, opts.segments ?? []);
     return {
       kind: "interval",
       category,
-      certain: true,
+      // 決められない領域では候補だけ返し、断定はしない
+      certain: ambiguity === undefined,
       basis: `設定 ${targetSec.toFixed(1)}秒/${distanceM}m はGRPの${(ratio * 100).toFixed(0)}%`,
+      ambiguity,
     };
   }
 
@@ -751,6 +810,7 @@ export function parseRow(
   const atTarget = rep ? parseAtTarget(content) : undefined;
   const cat = inferCategory(content, {
     ...opts,
+    segments,
     distanceM: rep?.distanceM ?? repDist,
     targetSec:
       rep?.targetSec ?? segments.find((x) => x.distanceM === repDist)?.targetSec ?? atTarget,
@@ -902,6 +962,8 @@ export function parseRow(
       );
     }
     if (cat.basis) row.issues.push(`カテゴリの根拠: ${cat.basis}`);
+    // 断定しなかったときは理由を出す。空欄の理由が分からないと本人が直せない
+    if (cat.ambiguity) row.issues.push(`カテゴリを選んでください: ${cat.ambiguity}`);
     row.ready = computeReady(row);
     return row;
   }

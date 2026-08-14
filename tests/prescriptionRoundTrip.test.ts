@@ -47,11 +47,10 @@ describe("生成した処方をパーサが同じ意味に読む", () => {
    * **書かれていないものは判定できない**（流しは設定が無いので certain=false になる。
    * これは正しい振る舞いなので、確信していないものは対象外にする）。
    *
-   * 残る食い違いは既知の1件だけ。ここは「文面が読めない」ではなく
-   * **パーサの帯と生成器の意図がズレている**（下の別テストで固定してある）。
-   * 新しい食い違いが増えたらここが落ちる。
+   * 決められない領域（CVと閾値の帯・レース距離の分割）は certain=false にしてあるので、
+   * **断定したものはすべて一致する**はず。新しい食い違いが増えたらここが落ちる。
    */
-  it("設定が書かれている処方は、パーサも同じカテゴリに読む（既知の1件を除く）", () => {
+  it("設定が書かれている処方は、パーサも同じカテゴリに読む", () => {
     const { repo, grpSecPerM } = planned();
     const targets = repo
       .listSessions()
@@ -68,15 +67,11 @@ describe("生成した処方をパーサが同じ意味に読む", () => {
       }
     }
     /*
-     * 既知の2件。どちらも「文面が読めない」ではなく、
-     * **設定ペースだけからは元のカテゴリを復元できない**という性質の話。
-     *   threshold→cv       … 閾値の設定がパーサのCV帯（GRPの160%）に入る
-     *   modeling→high_lactate … モデリングは「レースの形を再現する」構造で決まる種目で、
-     *                            区間ペースの比率からは高乳酸と区別がつかない
+     * forge-v84 で、決められない領域は断定をやめた（certain=false）ので、
+     * **断定したものはすべて一致する**ようになった。
+     * 既知の食い違いはもう無い。ここが落ちたら本当の食い違いが増えたということ。
      */
-    expect([...new Set(mismatched)].sort()).toEqual(
-      ["modeling→high_lactate", "threshold→cv"].sort()
-    );
+    expect([...new Set(mismatched)]).toEqual([]);
   });
 
   it("設定タイムが処方の幅の中に入る（距離を設定として読まない）", () => {
@@ -144,7 +139,7 @@ describe("生成した処方をパーサが同じ意味に読む", () => {
     for (const s of repo.listSessions()) {
       if (!s.prescription || !/[rR]\d/.test(s.prescription)) continue;
       const p = parsePrescription(s.prescription, { grpSecPerM });
-      // 複合（500m + 300m）は別テストで固定している既知の穴
+      // 旧形式が残っている場合だけ interval にならない。別テストで固定してある
       if (p.kind !== "interval") continue;
       if (p.restSec === undefined && p.restDistanceM === undefined) {
         odd.push(`${s.date} レストを読めない（${s.prescription}）`);
@@ -160,19 +155,35 @@ describe("生成した処方をパーサが同じ意味に読む", () => {
 });
 
 /**
- * 見つけたが今回直していない食い違い。
+ * 決められない領域では断定しない（forge-v84）。
  *
- * 直さなかったのは、どちらも**今回報告された不具合とは別の判断が要る**ため。
- * 黙って落とすと忘れるので、現状をここで固定しておく。
- * 直したときはこのテストが落ちるので、そのとき消すこと。
+ * 候補は出す（画面の初期値になる）が、断定はやめて本人に選ばせる。
+ * 「読めなかったものを推測で埋めない」を、カテゴリ判定にも適用したもの。
+ * 広げすぎると貼るたびに選ばせることになるので、**本当に決まらない形だけ**に限る。
  */
-describe("既知の食い違い（未修正・現状を固定する）", () => {
-  it("閾値の設定がパーサのCV帯に入る（帯の再調整が要る。競技的な判断を含む）", () => {
+describe("決められない領域では断定しない", () => {
+  it("CVと閾値の帯では断定せず、理由を添えて選ばせる", () => {
     const p = parsePrescription("1000m × 4 @1000m 222.0〜227.0秒 r75秒（jog）", {
       grpSecPerM: 111 / 800,
     });
+    // 候補は出す（画面の初期値になる）が、断定はしない
     expect(p.category).toBe("cv");
+    expect(p.categoryCertain).toBe(false);
     expect(p.basis).toContain("160%");
+  });
+
+  it("レース距離を2つに割った形も断定しない（モデリングか高乳酸かは意図）", () => {
+    const p = parsePrescription("500m(68.7〜69.4)＋300m(41.2〜41.6) r1分（walk）", {
+      grpSecPerM: 111 / 800,
+    });
+    expect(p.categoryCertain).toBe(false);
+  });
+
+  it("分割ではない複合（300＋600＋600）は断定する", () => {
+    const p = parsePrescription("300m(42)＋600m(1:26)＋600m(1:26) r15分", {
+      grpSecPerM: 111 / 800,
+    });
+    expect(p.categoryCertain).toBe(true);
   });
 
   /*

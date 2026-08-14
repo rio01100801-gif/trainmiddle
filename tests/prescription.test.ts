@@ -31,8 +31,13 @@ describe("インターバル", () => {
     expect(s.slots).toHaveLength(4);
     expect(s.slots[0].distanceM).toBe(1000);
     expect(s.slots[0].targetSec).toBeCloseTo(195, 0);
-    expect(s.categoryCertain).toBe(true);
     expect(s.basis).toContain("GRP");
+    /*
+     * GRPの137%はCVと閾値のどちらもありうる帯なので断定しない（forge-v84）。
+     * 候補（cv）は出すが、選ぶのは本人。根拠と理由は両方出す。
+     */
+    expect(s.categoryCertain).toBe(false);
+    expect(s.category).toBe("cv");
   });
 
   it("複合は区間ごとに欄を出す", () => {

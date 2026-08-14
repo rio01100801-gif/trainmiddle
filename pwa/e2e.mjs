@@ -1183,14 +1183,58 @@ let bulkText = await page.textContent("body");
 if (!bulkText.includes("7行を解釈しました")) {
   fail("継続行がまとまっていない（F-2）: " + (/\d+行を解釈しました/.exec(bulkText)?.[0] ?? "表示なし"));
 }
-// 全行が登録可能になること（実データで未確定ゼロ）
-if (!bulkText.includes("登録できる行: 7")) {
+/*
+ * 実データで人が選ぶのは1行だけ（7/18 の 1000m、GRPの137%）。
+ *
+ * CVと閾値は設定の出どころが違う（実測LT由来）ので、設定タイムだけでは決まらない。
+ * 以前は距離だけで「CV」と断定していたが、それは間違いだった（forge-v84）。
+ * ここで見るのは
+ *   ・選ばせる行が**1行だけ**であること（広げすぎると貼るたびに選ぶ羽目になる）
+ *   ・なぜ選ぶ必要があるのか理由が画面に出ていること
+ *   ・選べば登録できるようになること
+ */
+if (!bulkText.includes("登録できる行: 6")) {
   fail(
-    "実際の日誌が全行そのまま登録できない（F-2）: " +
+    "実際の日誌の解釈が想定と違う（F-2）: " +
       (/登録できる行[^）\n]*/.exec(bulkText)?.[0] ?? "表示なし")
   );
+} else if (!bulkText.includes("CVと閾値")) {
+  fail("F-2: 選ばせる理由が画面に出ていない（空欄の理由が分からない）");
 } else {
-  step("実際の日誌の解釈OK（7行すべて登録可能・未確定ゼロ）");
+  // 未確定の行でカテゴリを選ぶと、登録できる行が7になること
+  // 行の器は past/page.tsx の className="rounded-lg border p-2.5"
+  const uncertainRow = page
+    .locator("div.rounded-lg.border")
+    .filter({ hasText: "CVと閾値" })
+    .first();
+  const catSelect = uncertainRow.locator("select").nth(1);
+  if ((await catSelect.count()) === 0) {
+    fail("F-2: 未確定の行にカテゴリの選択肢が出ていない");
+  } else {
+    await catSelect.selectOption("threshold");
+    await page.waitForTimeout(500);
+    /*
+     * 選択のチェックは「解釈した時点で登録できた行」にだけ最初から入る。
+     * あとから直した行は自分でチェックする（黙って選択済みにはしない）。
+     * どの行かをDOMから当てにいかず、押せるチェックを全部入れる（本人の操作と同じ）。
+     */
+    const boxes = page.locator('input[type="checkbox"]:not([disabled])');
+    for (let i = 0; i < (await boxes.count()); i++) {
+      const box = boxes.nth(i);
+      if (!(await box.isChecked())) await box.check();
+    }
+    await page.waitForTimeout(300);
+    const after = await page.textContent("body");
+    if (!after.includes("登録できる行: 7")) {
+      fail(
+        "F-2: カテゴリを選んでも登録できるようにならない: " +
+          (/登録できる行[^）\n]*/.exec(after)?.[0] ?? "表示なし")
+      );
+    } else {
+      step("実際の日誌の解釈OK（選ぶのは1行だけ・理由つき・選べば登録できる）");
+    }
+  }
+  bulkText = await page.textContent("body");
 }
 // 実施タイムに距離や心拍が紛れていないこと
 if (!bulkText.includes("41.6 / 41.8 / 40 / 41.8")) {
