@@ -1004,15 +1004,38 @@ export function describeSpec(
   restType: RestType,
   paces: TargetPace[]
 ): string {
-  const body =
-    blocks.length === 1
-      ? `${blocks[0].distanceM}m × ${blocks[0].reps}`
-      : blocks.map((b) => `${b.distanceM}m`).join(" + ");
+  const rest = restSec % 60 === 0 ? `${restSec / 60}分` : `${restSec}秒`;
+  const estimateNote = paces.some((p) => p.isEstimated) ? " ※推定値" : "";
+
+  /*
+   * 複合（500m＋300m）は区間ごとに設定が違う。
+   *
+   * 以前は `500m + 300m @500m 68.7〜69.4秒 / 300m 41.2〜41.6秒` と書いていたが、
+   * これを一括入力のパーサは**持続走として読んでいた**（区間に割れず、
+   * モデリングの日に結果入力の欄が組み上がらなかった）。
+   *
+   * 本人が日誌に書く形（`300(42)＋600(1:26)＋600(1:26)`）に揃える。
+   * この形はパーサが元から読めるうえ、距離と設定が並んでいて人にも読みやすい。
+   * 本数ぶんは繰り返して書く（`×2` はパーサが本数として数えないため、
+   * 1つにまとめると区間が減って伝わらない）。
+   */
+  if (blocks.length > 1) {
+    const body = blocks
+      .flatMap((b) => {
+        const p = paces.find((x) => x.distanceM === b.distanceM);
+        const label = p
+          ? `${b.distanceM}m(${p.targetSecFast.toFixed(1)}〜${p.targetSecSlow.toFixed(1)})`
+          : `${b.distanceM}m`;
+        return Array.from({ length: Math.max(1, b.reps) }, () => label);
+      })
+      .join("＋");
+    return `${body} r${rest}（${REST_JP[restType]}）${estimateNote}`;
+  }
+
+  const body = `${blocks[0].distanceM}m × ${blocks[0].reps}`;
   const pace = paces
     .map((p) => `${p.distanceM}m ${p.targetSecFast.toFixed(1)}〜${p.targetSecSlow.toFixed(1)}秒`)
     .join(" / ");
-  const rest = restSec % 60 === 0 ? `${restSec / 60}分` : `${restSec}秒`;
-  const estimateNote = paces.some((p) => p.isEstimated) ? " ※推定値" : "";
   return `${body} @${pace} r${rest}（${REST_JP[restType]}）${estimateNote}`;
 }
 

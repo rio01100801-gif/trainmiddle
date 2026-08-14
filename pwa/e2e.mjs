@@ -4405,6 +4405,84 @@ if ((await fitRebuildCard.count()) === 0) {
   }
 }
 
+// ---- 複合（モデリング）の日に結果入力の欄が組み上がること ----
+/*
+ * 以前は複合の処方を持続走として読んでいたので、モデリングの日を開いても
+ * 距離・設定の欄が出なかった（forge-v83で修正）。
+ * 生成された複合の処方をそのまま開いて、区間の欄が出ることを見る。
+ */
+{
+  const target = await page.evaluate(async () => {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const d = await fetch("/api/sessions").then((r) => r.json());
+    const s = (d.sessions ?? [])
+      .filter(
+        (x) =>
+          x.category === "modeling" &&
+          x.status !== "completed" &&
+          x.date >= today &&
+          (x.targetPaces?.length ?? 0) > 1
+      )
+      .sort((a, b) => a.date.localeCompare(b.date))[0];
+    return s
+      ? { date: s.date, prescription: s.prescription, distances: s.targetPaces.map((p) => p.distanceM) }
+      : null;
+  });
+
+  if (!target) {
+    fail("複合の欄: モデリングの予定が無い（生成の形が変わった？）");
+  } else {
+    // 処方そのものが区間の形になっていること（500m(68.7〜69.4)＋300m(...)）
+    if (!/\d+m\([\d.〜]+\)＋/.test(target.prescription)) {
+      fail(`複合の欄: 処方が区間の形になっていない（${target.prescription}）`);
+    }
+
+    const parsed = await page.evaluate(async (text) => {
+      const d = await fetch("/api/prescription", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+      }).then((r) => r.json());
+      return { kind: d.kind, slots: (d.slots ?? []).map((s) => s.distanceM), restSec: d.restSec };
+    }, target.prescription);
+
+    if (parsed.kind !== "interval") {
+      fail(`複合の欄: 持続走として読まれている（kind=${parsed.kind} / ${target.prescription}）`);
+    }
+    if (parsed.slots.join(",") !== target.distances.join(",")) {
+      fail(
+        `複合の欄: 区間が処方と合わない（${parsed.slots.join(",")} ≠ ${target.distances.join(",")}）`
+      );
+    }
+
+    await page.goto(`http://localhost:8791/#/results?date=${target.date}`);
+    await page.reload();
+    await page.waitForFunction(() => !document.getElementById("splash"), { timeout: 15000 });
+    await page.waitForTimeout(900);
+    await page.getByRole("button", { name: /練習結果/ }).first().click();
+    await page.waitForTimeout(400);
+    const modelingBtn = page.locator('button:has-text("モデリング")').first();
+    if (await modelingBtn.count()) {
+      await modelingBtn.click();
+      await page.waitForTimeout(300);
+    }
+    const intervalBtn = page.getByRole("button", { name: "インターバル", exact: true });
+    if (await intervalBtn.count()) await intervalBtn.click();
+    await page.waitForTimeout(1500);
+
+    // 区間ぶんの実施タイム欄が出ること（欄が組み上がっている証拠）
+    const repCount = await page.locator('input[aria-label*="実施タイム"]').count();
+    if (repCount < target.distances.length) {
+      fail(`複合の欄: 実施タイムの欄が足りない（${repCount} < ${target.distances.length}）`);
+    }
+    step(
+      `複合（モデリング）の欄OK（${target.date} ${target.distances.join("+")}m / 欄${repCount}個）`
+    );
+  }
+}
+
 if (errors.length) {
   console.log("JS ERRORS:", errors.slice(0, 5));
   process.exitCode = 1;

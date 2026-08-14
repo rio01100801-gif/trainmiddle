@@ -67,8 +67,16 @@ describe("生成した処方をパーサが同じ意味に読む", () => {
         mismatched.push(`${s.category}→${p.category}`);
       }
     }
-    // 既知: 閾値の設定がパーサのCV帯（GRPの160%）に入る
-    expect([...new Set(mismatched)]).toEqual(["threshold→cv"]);
+    /*
+     * 既知の2件。どちらも「文面が読めない」ではなく、
+     * **設定ペースだけからは元のカテゴリを復元できない**という性質の話。
+     *   threshold→cv       … 閾値の設定がパーサのCV帯（GRPの160%）に入る
+     *   modeling→high_lactate … モデリングは「レースの形を再現する」構造で決まる種目で、
+     *                            区間ペースの比率からは高乳酸と区別がつかない
+     */
+    expect([...new Set(mismatched)].sort()).toEqual(
+      ["modeling→high_lactate", "threshold→cv"].sort()
+    );
   });
 
   it("設定タイムが処方の幅の中に入る（距離を設定として読まない）", () => {
@@ -100,6 +108,34 @@ describe("生成した処方をパーサが同じ意味に読む", () => {
       }
     }
     expect(off).toEqual([]);
+  });
+
+  /**
+   * 複合（モデリング）が区間に割れること。
+   *
+   * ここが割れないと、モデリングの日に結果入力の欄が組み上がらない
+   * （持続走として読まれ、距離と設定の欄が出ない）。
+   */
+  it("複合の処方が区間に割れる（モデリングの日に欄が出る）", () => {
+    const { repo, grpSecPerM } = planned();
+    const compounds = repo
+      .listSessions()
+      .filter((s) => s.category === "modeling" && s.prescription);
+    expect(compounds.length).toBeGreaterThan(0);
+
+    for (const s of compounds) {
+      const p = parsePrescription(s.prescription, { grpSecPerM });
+      expect(p.kind, s.prescription).toBe("interval");
+      // 区間数が targetPaces の数と合っていること
+      expect(p.slots.length, s.prescription).toBe(s.targetPaces.length);
+      for (const pace of s.targetPaces) {
+        const slot = p.slots.find((x) => x.distanceM === pace.distanceM);
+        expect(slot, `${pace.distanceM}m が区間に無い（${s.prescription}）`).toBeDefined();
+        expect(slot!.targetSec).toBeCloseTo(pace.targetSecFast, 1);
+      }
+      // レストも読めること
+      expect(p.restSec ?? p.restDistanceM, s.prescription).toBeDefined();
+    }
   });
 
   it("単一区間のレストは読み取れて、端数になっていない", () => {
@@ -139,12 +175,17 @@ describe("既知の食い違い（未修正・現状を固定する）", () => {
     expect(p.basis).toContain("160%");
   });
 
-  it("複合（500m + 300m）の処方を持続走として読む＝欄が組み上がらない", () => {
+  /*
+   * forge-v83 で直したぶん。
+   * 旧形式（`500m + 300m @500m ... / 300m ...`）は今も読めないままだが、
+   * 生成器がその形を出さなくなったので実害は無い。
+   * **すでに端末に入っている旧形式の予定は読めない**ので、それが分かる形で残す。
+   */
+  it("旧形式の複合はいまも持続走として読む（生成器はもう出さない）", () => {
     const p = parsePrescription(
       "500m + 300m @500m 68.7〜69.4秒 / 300m 41.2〜41.6秒 r1分（walk）",
       { grpSecPerM: 111 / 800 }
     );
-    // 本来は interval で2区間に割れてほしい
     expect(p.kind).toBe("continuous");
     expect(p.slots).toEqual([]);
   });
