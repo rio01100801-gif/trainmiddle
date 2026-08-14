@@ -405,7 +405,19 @@ export function parseRepSpec(
  * 幅表記は速い側（先頭）を採る。
  */
 export function parseAtTarget(content: string): number | undefined {
-  const m = /[@＠]\s*(\d{1,2}:\d{2}(?:\.\d+)?|\d{1,3}(?:\.\d+)?)/.exec(content);
+  /*
+   * `@` のあとに距離のラベルが入ることがある（`@300m 38.7〜39.5秒`）。
+   * これを飛ばさないと **距離を設定タイムとして読む**。
+   *
+   * 実際にそうなっていた。生成した処方が `@300m 38.7〜39.5秒` なので、
+   * 設定300秒/300m と読まれ、GRPの721%＝CVと誤判定していた。
+   * 自分が出したメニューを自分で読み違える状態で、
+   * 「処方の文面は一括入力が読み取れる書き方に揃える」が成立していなかった。
+   *
+   * 数字の直後が m（メートル）ならラベルとみなして飛ばす。
+   * `@300`（mが無い）は従来どおり300秒として読む。
+   */
+  const m = /[@＠]\s*(?:\d{1,4}\s*m\s+)?(\d{1,2}:\d{2}(?:\.\d+)?|\d{1,3}(?:\.\d+)?)/.exec(content);
   return m ? timeTokenToSec(m[1]) : undefined;
 }
 
@@ -847,8 +859,14 @@ export function parseRow(
      * 代表を採ったことは本文で伝える（黙って1つに丸めない）。
      */
     const REST_UNIT = String.raw`\d+\s*(?:min|分|秒|m)?\s*(?:jog|walk|ジョグ|ウォーク)?`;
+    /*
+     * レストの種類が括弧で後置されることがある（このアプリの処方は `r207秒（jog）` と書く）。
+     * 括弧まで見ないと種類が読めず、生成した処方を読み直したときに
+     * 「完全休息」が jog として扱われる。自分の出した内容を自分で読み違える形になる。
+     */
     const rest = new RegExp(
-      String.raw`[rR]\s*(${REST_UNIT}(?:\s*[-−ー〜~]\s*${REST_UNIT})*)`
+      String.raw`[rR]\s*(${REST_UNIT}(?:\s*[-−ー〜~]\s*${REST_UNIT})*)` +
+        String.raw`\s*(?:[（(]\s*(jog|walk|ジョグ|ウォーク|完全休息)\s*[）)])?`
     ).exec(content);
     if (followsNextDistance) {
       row.restNote = "r次の距離walk";
@@ -859,6 +877,14 @@ export function parseRow(
       row.restNote = `r${whole}`;
       const parts = whole.split(/\s*[-−ー〜~]\s*/).filter(Boolean);
       Object.assign(row, parseRest(parts[0]));
+      // 括弧の種類は parseRest のあとに入れる（assignがundefinedで上書きするため）
+      if (rest[2]) {
+        row.restType = /walk|ウォーク/i.test(rest[2])
+          ? "walk"
+          : /完全休息/.test(rest[2])
+            ? "full"
+            : "jog";
+      }
       if (parts.length > 1) {
         row.issues.push(
           `レストが${parts.length}種類あります（${parts.join(" / ")}）。` +

@@ -4305,6 +4305,106 @@ if ((await fitRebuildCard.count()) === 0) {
   step("カレンダーの編集シートでも写真転記OK（本文に入るだけ・保存前は予定を変えない）");
 }
 
+// ---- 処方と結果入力の欄が一致していること ----
+/*
+ * 画面に「r205秒」と出ているのに欄が300秒、処方が高乳酸なのに設定300秒——
+ * という食い違いが実際に出ていた（forge-v82で修正）。
+ * 生成された処方をそのまま結果入力で開き、**文面と欄が同じ値**であることを見る。
+ */
+{
+  const target = await page.evaluate(async () => {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const d = await fetch("/api/sessions").then((r) => r.json());
+    const s = (d.sessions ?? [])
+      .filter(
+        (x) =>
+          x.status !== "completed" &&
+          x.date >= today &&
+          x.targetPaces?.length === 1 &&
+          /^\d+m × \d+ @/.test(x.prescription ?? "") &&
+          /[rR]\d+(?:秒|分)/.test(x.prescription ?? "")
+      )
+      .sort((a, b) => a.date.localeCompare(b.date))[0];
+    return s ? { date: s.date, prescription: s.prescription, category: s.category } : null;
+  });
+
+  if (!target) {
+    fail("処方と欄の一致: 対象にできる予定が無い（生成の形が変わった？）");
+  } else {
+    // 丸めた結果ちょうど分になることが多いので、どちらの表記も受ける
+    const restMatch = /[rR](\d+)(秒|分)/.exec(target.prescription);
+    const restInText = Number(restMatch[1]) * (restMatch[2] === "分" ? 60 : 1);
+    const targetInText = Number(/@(?:\d+m\s+)?(\d+\.\d)/.exec(target.prescription)[1]);
+
+    await page.goto(`http://localhost:8791/#/results?date=${target.date}`);
+    await page.reload();
+    await page.waitForFunction(() => !document.getElementById("splash"), { timeout: 15000 });
+    await page.waitForTimeout(900);
+    // 入力フォームはボタンを踏まないと開かない（他のE2Eと同じ手順）
+    await page.getByRole("button", { name: /練習結果/ }).first().click();
+    await page.waitForTimeout(400);
+    const catBtn = page
+      .locator(
+        'button:has-text("高乳酸"), button:has-text("閾値"), button:has-text("経済走"), button:has-text("CV"), button:has-text("モデリング")'
+      )
+      .first();
+    if (await catBtn.count()) {
+      await catBtn.click();
+      await page.waitForTimeout(300);
+    }
+    const intervalBtn = page.getByRole("button", { name: "インターバル", exact: true });
+    if (await intervalBtn.count()) {
+      await intervalBtn.click();
+    }
+    // 本文の解釈（デバウンス300ms）が欄へ反映されるのを待つ
+    await page.waitForTimeout(1500);
+
+    const fields = await page.evaluate(() => {
+      const pick = (label) => {
+        for (const el of document.querySelectorAll("label")) {
+          if ((el.textContent ?? "").startsWith(label)) {
+            const input = el.querySelector("input, select");
+            if (input) return input.value;
+          }
+        }
+        return null;
+      };
+      return {
+        target: pick("設定(秒)"),
+        rest: pick("レスト(秒)"),
+        restType: pick("レスト内容"),
+      };
+    });
+
+    if (fields.target === null || fields.rest === null) {
+      const labels = await page.evaluate(() =>
+        [...document.querySelectorAll("label")].map((e) => (e.textContent ?? "").slice(0, 12)).slice(0, 25)
+      );
+      fail(
+        `処方と欄の一致: 欄を読めない（${JSON.stringify(fields)} ラベル=${JSON.stringify(labels)}）`
+      );
+    } else {
+      // 設定は距離ではなく設定タイム（幅の速い側〜遅い側）であること
+      if (Math.abs(Number(fields.target) - targetInText) > 1.5) {
+        fail(
+          `処方と欄の一致: 設定が違う（文面 ${targetInText}秒 → 欄 ${fields.target}）。距離を設定として読んでいないか`
+        );
+      }
+      if (Number(fields.rest) !== restInText) {
+        fail(`処方と欄の一致: レストが違う（文面 ${restInText}秒 → 欄 ${fields.rest}）`);
+      }
+      if (restInText % 5 !== 0) {
+        fail(`処方と欄の一致: レストが5秒刻みでない（${restInText}秒）`);
+      }
+    }
+    step(
+      `処方と結果入力の欄が一致OK（${target.date} 設定${targetInText}秒 / レスト${restInText}秒）`
+    );
+  }
+}
+
 if (errors.length) {
   console.log("JS ERRORS:", errors.slice(0, 5));
   process.exitCode = 1;

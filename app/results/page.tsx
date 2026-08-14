@@ -1202,6 +1202,22 @@ function ResultForm({
           if (!next.mixed && next.slots[0].targetSec !== undefined) {
             setTargetSec(String(next.slots[0].targetSec));
           }
+          /*
+           * レストも処方から入れる。
+           *
+           * これまでは既定値の300秒に落ちていたので、処方が「r207秒」でも
+           * 欄には300秒と出ていた。**画面に出ている2つの数字が食い違う**状態で、
+           * どちらが今日やる内容なのか本人に判断できなかった。
+           * 読み取れなかったときだけ、これまでどおり既定値のままにする。
+           */
+          if (next.restDistanceM !== undefined) {
+            setRestMode("distance");
+            setRestValue(String(next.restDistanceM));
+          } else if (next.restSec !== undefined) {
+            setRestMode("time");
+            setRestValue(String(next.restSec));
+          }
+          if (next.restType) setRestType(next.restType);
         }
       })
       .catch(() => setStructure(null));

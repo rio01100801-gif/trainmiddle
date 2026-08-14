@@ -912,7 +912,7 @@ export function buildSessionSpec(input: BuildSpecInput): SessionSpec | undefined
       reasons.push("形式を変更した週なので、本数・速度・レストは同時に進めない");
     } else {
       if (!protectSpecificVolume) blocks = bumpReps(blocks, 1);
-      restSec = Math.max(minimumRestSec, Math.round(restSec * (1 - DENSITY_STEP)));
+      restSec = roundRestSec(Math.max(minimumRestSec, restSec * (1 - DENSITY_STEP)));
       reasons.push(
         `${input.phase}期の3週目。量は保ったままレストを${Math.round(DENSITY_STEP * 100)}%詰めます`
       );
@@ -982,6 +982,20 @@ function bumpReps(blocks: RepBlock[], delta: number): RepBlock[] {
 }
 
 const REST_JP: Record<RestType, string> = { jog: "jog", walk: "walk", full: "完全休息" };
+
+/**
+ * レストを5秒刻みに丸める。
+ *
+ * 漸進で 0.8 倍などを掛けると 207秒 のような端数が出る。
+ * トラックで秒単位に測って刻む値ではないので、**そこまでの精度に意味が無い**うえ、
+ * 「なぜ207なのか」を本人が読み解けない数字が処方に出る（実際に指摘された）。
+ *
+ * **丸めるのは表示ではなく値そのもの。** 表示だけ丸めると、
+ * 文面の210秒と保存された207秒が食い違い、どちらが本当か分からなくなる。
+ */
+export function roundRestSec(sec: number): number {
+  return Math.max(5, Math.round(sec / 5) * 5);
+}
 
 /** 処方の文面。一括入力が読み取れる書き方に揃える（同じ解釈を通すため） */
 export function describeSpec(
@@ -1058,7 +1072,7 @@ export function sessionVariants(
     const b = clone(
       base,
       base.blocks,
-      Math.round(base.restSec * 1.25),
+      roundRestSec(base.restSec * 1.25),
       [...base.reasons, "本数は保ち、レストを25%伸ばして設定を守る"]
     );
     return [
@@ -1086,7 +1100,7 @@ export function sessionVariants(
         ? "高乳酸・中距離特異的の本数は増やさず、次の2週の有酸素量で積み上げる"
         : "余裕があるので1本増やす",
     ]);
-    const b = clone(base, base.blocks, Math.max(MIN_REST_SEC, Math.round(base.restSec * 0.85)), [
+    const b = clone(base, base.blocks, roundRestSec(Math.max(MIN_REST_SEC, base.restSec * 0.85)), [
       ...base.reasons,
       "本数は保ち、レストを15%詰めて密度を上げる",
     ]);
@@ -1118,7 +1132,7 @@ export function sessionVariants(
       ? "高乳酸・中距離特異的の本数は据え置き、次の2週の有酸素量で積み上げる"
       : "量を1本ぶん増やす",
   ]);
-  const b = clone(base, base.blocks, Math.max(MIN_REST_SEC, Math.round(base.restSec * (1 - DENSITY_STEP))), [
+  const b = clone(base, base.blocks, roundRestSec(Math.max(MIN_REST_SEC, base.restSec * (1 - DENSITY_STEP))), [
     ...base.reasons,
     `レストを${Math.round(DENSITY_STEP * 100)}%詰める`,
   ]);

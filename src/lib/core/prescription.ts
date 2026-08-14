@@ -40,6 +40,13 @@ export interface PrescriptionStructure {
   reps?: number;
   repDistanceM?: number;
   restNote?: string;
+  /**
+   * レストの実体。文面（restNote）だけだと画面が数値として使えず、
+   * 結果入力の欄が処方を見ずに既定値へ落ちていた（実際に処方207秒に対して欄が300秒だった）。
+   */
+  restSec?: number;
+  restDistanceM?: number;
+  restType?: RestType;
   /** 距離の違う区間が混ざっているか */
   mixed: boolean;
 
@@ -101,6 +108,9 @@ export function parsePrescription(
     reps: row.reps ?? (slots.length > 0 ? slots.length : undefined),
     repDistanceM: row.repDistanceM,
     restNote: row.restNote,
+    restSec: row.restSec,
+    restDistanceM: row.restDistanceM,
+    restType: row.restType,
     mixed,
     // 8.333… のような割り算の結果をそのまま入力欄に出さない
     distanceKm:
