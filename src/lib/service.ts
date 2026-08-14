@@ -4027,6 +4027,25 @@ export function exportBackup(repo: Store, now: string): BackupFile {
   };
 }
 
+/**
+ * いま何期か。
+ *
+ * フェーズ別の表（補強の内容など）を画面に出すときに、
+ * **「今はここ」が無いとただの資料**になって読まれない。
+ * 判定そのものは生成と同じ関数を通す（別の判定を書くと表と実物がずれる）。
+ */
+export function currentPhase(
+  repo: Store,
+  today: string
+): { phase: Phase; offSeason: boolean } {
+  const goal = repo.getGoal();
+  const races = repo.listRaces();
+  const target = goal ? races.find((r) => r.id === goal.targetRaceId) : undefined;
+  // 目標レースが無い期間は基礎期のまま動かさない（冬季・基礎構築モードと同じ扱い）
+  if (!target) return { phase: "Base", offSeason: true };
+  return { phase: phaseForDate(today, target.dateStart), offSeason: false };
+}
+
 export function backupStatus(repo: Store, today: string) {
   const last = repo.getKv<string>(BACKUP_META_KEY);
   return { ...shouldRemindBackup(last, today, diffDays), lastExportedAt: last };

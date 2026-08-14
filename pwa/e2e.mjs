@@ -4842,6 +4842,78 @@ if ((await fitRebuildCard.count()) === 0) {
   step("レースを戻すと従来の期分けに帰るOK");
 }
 
+// ---- フェーズ別の補強が画面に出る（出どころは1つ） ----
+/*
+ * この表はコアに前からあったが、出している画面が無かった。
+ * しかも同じ知識が生成側にも別の文言で書かれていて、片方だけ古くなる状態だった。
+ *
+ * ここで見るのは2つ。
+ *   ・画面に出ていること
+ *   ・**画面の内容と、実際に生成された補強が一致していること**
+ * 一致を見ないと、また表と実物がずれても気づけない。
+ */
+{
+  await page.goto("http://localhost:8791/#/plan-settings");
+  await page.waitForTimeout(900);
+
+  const body = await page.textContent("body");
+  if (!body.includes("補強はフェーズでこう変わる")) {
+    fail("フェーズ別の補強の表が画面に出ていない");
+  }
+  for (const label of ["基礎期", "準備期", "専門期", "試合期", "調整期"]) {
+    if (!body.includes(label)) fail(`補強の表に「${label}」が無い`);
+  }
+  if (!body.includes("ポイント練習の日の午後にだけ")) {
+    fail("補強をいつ置くのかを書いていない（回復日を汚さない原則）");
+  }
+
+  const settings = await page.evaluate(async () =>
+    fetch("/api/plan-settings").then((r) => r.json())
+  );
+  if (!settings.strengthTable || !settings.currentPhase) {
+    fail("補強の表と現在の期がAPIから返らない（シムに対で足していない可能性）");
+  }
+  const nowPhase = settings.currentPhase.phase;
+  const spec = settings.strengthTable[nowPhase];
+  if (!spec) fail("現在の期の補強が表に無い: " + nowPhase);
+
+  // 画面には「いまの期に出る種目」が実物として出ていること
+  for (const ex of spec.exercises) {
+    if (!body.includes(ex)) fail(`いまの期(${nowPhase})の種目「${ex}」が画面に出ていない`);
+  }
+
+  // 生成された補強と表が一致すること（表と実物がずれない）
+  // 予定と補強は同じルートから返る（/api/analysis は補強を素で返さない）
+  const sessions = await page.evaluate(async () =>
+    fetch("/api/sessions").then((r) => r.json())
+  );
+  const list = Array.isArray(sessions) ? sessions : sessions.sessions ?? [];
+  const byDate = new Map(list.filter((x) => x.timeOfDay !== "am").map((x) => [x.date, x]));
+  /*
+   * 自動生成した補強だけを見る（id が st-plan- で始まるもの）。
+   * 手で入れた補強（一括入力の「7/20 体幹30分」など）は本人の記録なので、
+   * 表と一致する必要が無い。混ぜると必ず落ちる。
+   */
+  const strengths = (sessions.strengthSessions ?? []).filter((x) =>
+    String(x.id).startsWith("st-plan-")
+  );
+  if (!strengths.length) fail("自動生成の補強が1件も無い（照合が空振りする）");
+  let checked = 0;
+  for (const st of strengths) {
+    const day = byDate.get(st.date);
+    if (!day || !day.phase) continue;
+    const want = settings.strengthTable[day.phase];
+    if (!want) continue;
+    if (st.loadLevel !== want.load || st.type !== want.type) {
+      fail(
+        `${st.date}(${day.phase}) の補強が表と違う: 実物 ${st.loadLevel}/${st.type} vs 表 ${want.load}/${want.type}`
+      );
+    }
+    checked++;
+  }
+  step(`フェーズ別の補強OK（画面に5期・いまは${nowPhase}・実物と表が一致 ${checked}件）`);
+}
+
 if (errors.length) {
   console.log("JS ERRORS:", errors.slice(0, 5));
   process.exitCode = 1;

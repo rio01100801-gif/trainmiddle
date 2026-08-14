@@ -43,20 +43,21 @@ import {
   trainingLoadClass,
 } from "./trainingClassification";
 
-/** @deprecated 互換用。新規コードは HIGH_LOAD_CATEGORIES を使う。 */
-export const QUALITY_CATEGORIES: SessionCategory[] = [...HIGH_LOAD_CATEGORIES];
-export const SPECIFIC_CATEGORIES: SessionCategory[] = HIGH_LOAD_CATEGORIES.filter(isSpecificCategory);
-export const AEROBIC_HIGH_CATEGORIES: SessionCategory[] = HIGH_LOAD_CATEGORIES.filter(
+/*
+ * 負荷の分類は trainingClassification.ts が唯一の出どころ。
+ *
+ * ここには同じ判定の別名（QUALITY_CATEGORIES / isQuality / isSpecific / isHlEquiv）が
+ * @deprecated 付きで置いてあったが、rules.ts の中では現役で使われ続けていた。
+ * 「非推奨」と書いてあるものを使い続けると、どちらが正なのか毎回確かめることになる。
+ * 中身は同じ関数を呼んでいるだけだったので、名前を1つに寄せて消した。
+ *
+ * これだけ残しているのは、有酸素高強度そのものを表す名前が
+ * trainingClassification 側に無いため（`trainingLoadClass` の戻り値で判定する形）。
+ * rules.ts の中でしか使わないので export しない。
+ */
+const AEROBIC_HIGH_CATEGORIES: SessionCategory[] = HIGH_LOAD_CATEGORIES.filter(
   (category) => trainingLoadClass(category) === "aerobic_high"
 );
-export const HL_EQUIV_CATEGORIES: SessionCategory[] = HIGH_LOAD_CATEGORIES.filter(
-  hasDeepGlycolyticCostCategory
-);
-
-/** @deprecated 互換用。新しい判定では Session を受け取る isHighLoadSession を使う。 */
-export const isQuality = (c: SessionCategory) => isHighLoadCategory(c);
-export const isSpecific = (c: SessionCategory) => isSpecificCategory(c);
-export const isHlEquiv = (c: SessionCategory) => hasDeepGlycolyticCostCategory(c);
 
 export interface RuleContext {
   sessions: Session[];
@@ -241,7 +242,7 @@ function isHotDay(ctx: RuleContext, date: string): boolean {
  */
 function rule01(ctx: RuleContext): RuleViolation[] {
   const out: RuleViolation[] = [];
-  const hl = sorted(ctx.sessions.filter((s) => active(s) && isHlEquiv(s.category)));
+  const hl = sorted(ctx.sessions.filter((s) => active(s) && hasDeepGlycolyticCostCategory(s.category)));
 
   for (let i = 1; i < hl.length; i++) {
     const prev = hl[i - 1];
@@ -520,7 +521,7 @@ function rule05(ctx: RuleContext): RuleViolation[] {
   const q = ctx.sessions.filter((s) => active(s));
   for (const [w, list] of groupByWeek(q)) {
     const aq = list.filter((s) => AEROBIC_HIGH_CATEGORIES.includes(s.category));
-    const sp = list.filter((s) => isSpecific(s.category));
+    const sp = list.filter((s) => isSpecificCategory(s.category));
     if (aq.length >= 2 && sp.length <= 1) {
       out.push(
         finalize(
@@ -589,7 +590,7 @@ function rule07(ctx: RuleContext): RuleViolation[] {
     const rd = raceDateOf(race);
     const inWindow = sorted(
       ctx.sessions.filter((s) => {
-        if (!active(s) || !isHlEquiv(s.category)) return false;
+        if (!active(s) || !hasDeepGlycolyticCostCategory(s.category)) return false;
         const d = diffDays(s.date, rd);
         return d > 0 && d <= 14;
       })
@@ -724,7 +725,7 @@ function rule10(ctx: RuleContext): RuleViolation[] {
   const targets = ctx.sessions.filter(
     (s) =>
       active(s) &&
-      (isSpecific(s.category) || s.category === "threshold") &&
+      (isSpecificCategory(s.category) || s.category === "threshold") &&
       s.status === "planned" &&
       isHotDay(ctx, s.date)
   );
@@ -1115,7 +1116,7 @@ function rule22(ctx: RuleContext): RuleViolation[] {
     const bad = ctx.sessions.filter(
       (s) =>
         active(s) &&
-        isHlEquiv(s.category) &&
+        hasDeepGlycolyticCostCategory(s.category) &&
         s.date >= block.startDate &&
         s.date <= block.endDate
     );

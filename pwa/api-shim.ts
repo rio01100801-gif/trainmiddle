@@ -57,6 +57,7 @@ import {
   rejectTaperPlan,
   limiterAssessment,
   splitAnalysis,
+  currentPhase,
   contactTimeStatus,
   listContactSamples,
   importContactSamples,
@@ -89,6 +90,7 @@ import { buildTimeline } from "../src/lib/core/timeline";
 import { addDays, localToday, weekStart } from "../src/lib/core/dates";
 import { CONFIRM_HORIZON_DAYS } from "../src/lib/core/horizon";
 import { amSlotAdvice } from "../src/lib/core/amSlotAdvice";
+import { STRENGTH_PHASE_TABLE } from "../src/lib/core/strength";
 import {
   assessHeatBlock,
   HEAT_BLOCK_CONTENT,
@@ -379,6 +381,9 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
           weekTemplate,
           repo.getGoal()?.targetTimeSec
         ),
+        // フェーズ別の補強。表だけ出しても読まれないので「今はここ」も返す
+        currentPhase: currentPhase(repo, localToday()),
+        strengthTable: STRENGTH_PHASE_TABLE,
       };
     },
     POST: (repo, body) => {

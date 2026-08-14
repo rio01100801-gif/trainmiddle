@@ -35,7 +35,8 @@ import {
   clampCycleLength,
 } from "@/lib/core/cycleTemplate";
 import { addDays } from "@/lib/core/dates";
-import type { SessionCategory } from "@/lib/core/types";
+import type { Phase, SessionCategory } from "@/lib/core/types";
+import type { StrengthPhaseSpec } from "@/lib/core/strength";
 
 const DOWS: Dow[] = [1, 2, 3, 4, 5, 6, 0]; // 月〜日で表示
 const SLOT_OPTIONS: WeekdaySlot[] = [
@@ -223,8 +224,115 @@ export default function PlanSettingsPage() {
   return (
     <div className="plan-settings-screen flex flex-col gap-3">
       <WeekTemplateCard />
+      <StrengthPhaseCard />
       <CustomMenuCard />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 4-8-2. フェーズ別の補強
+// ---------------------------------------------------------------------------
+
+const PHASE_ORDER: Phase[] = ["Base", "Build", "Specific", "Modeling", "Taper"];
+const PHASE_JP: Record<Phase, string> = {
+  Base: "基礎期",
+  Build: "準備期",
+  Specific: "専門期",
+  Modeling: "試合期",
+  Taper: "調整期",
+};
+
+/**
+ * 補強がフェーズでどう変わるかの一覧。
+ *
+ * この表は前からコアにあったが、**出している画面が無かった**（`STRENGTH_PHASE_TABLE`）。
+ * しかも同じ知識が生成側にも別の文言で書かれていて、片方だけ古くなる状態だった。
+ * 出どころを1つに寄せたので、ここに出しているのは**実際に生成されるものそのもの**。
+ *
+ * 「今はここ」を出さないとただの資料になって読まれないので、現在の期を強調する。
+ */
+function StrengthPhaseCard() {
+  const [table, setTable] = useState<Record<string, StrengthPhaseSpec> | null>(null);
+  const [now, setNow] = useState<{ phase: Phase; offSeason: boolean } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/plan-settings")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.strengthTable) setTable(d.strengthTable);
+        if (d.currentPhase) setNow(d.currentPhase);
+      })
+      .catch(() => {
+        /* 補強の一覧は参考情報。取れなくても設定の操作は止めない */
+      });
+  }, []);
+
+  if (!table) return null;
+
+  return (
+    <Card title="補強はフェーズでこう変わる">
+      <p className="text-[11px] mb-2 leading-relaxed" style={{ color: "var(--text-2)" }}>
+        自動生成される補強の中身です。<strong>ポイント練習の日の午後にだけ</strong>置きます
+        （回復日を汚さないため）。
+        {now
+          ? now.offSeason
+            ? "いまは目標レース未定（冬季・基礎構築）なので基礎期の内容で、坂ダッシュの日にも付きます。"
+            : `いまは${PHASE_JP[now.phase]}です。`
+          : ""}
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12px]" style={{ borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              {["期", "筋力", "プライオ", "頻度"].map((h) => (
+                <th
+                  key={h}
+                  className="metric-label text-left py-1 pr-2"
+                  style={{ borderBottom: "1px solid var(--border)" }}
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {PHASE_ORDER.map((phase) => {
+              const spec = table[phase];
+              if (!spec) return null;
+              const here = now?.phase === phase;
+              return (
+                <tr
+                  key={phase}
+                  style={{
+                    background: here ? "var(--surface-2)" : "transparent",
+                    borderBottom: "1px solid var(--border)",
+                  }}
+                >
+                  <td className="py-1.5 pr-2 whitespace-nowrap">
+                    <span style={{ color: here ? "var(--forge)" : "var(--text)" }}>
+                      {here ? "▶ " : ""}
+                      {PHASE_JP[phase]}
+                    </span>
+                  </td>
+                  <td className="py-1.5 pr-2">{spec.strength}</td>
+                  <td className="py-1.5 pr-2">{spec.plyometrics}</td>
+                  <td className="py-1.5 whitespace-nowrap">{spec.frequency}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {now && table[now.phase] ? (
+        <div className="mt-2 rounded-lg p-2.5" style={{ background: "var(--surface-2)" }}>
+          <p className="metric-label mb-1">いまの期に出る種目</p>
+          <p className="text-[12px] leading-relaxed">
+            {table[now.phase].exercises.join(" ／ ")}
+          </p>
+        </div>
+      ) : null}
+    </Card>
   );
 }
 

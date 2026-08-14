@@ -22,6 +22,7 @@ import { AerobicProfile, specificPace } from "./pace";
 import { rationaleFor } from "./rationale";
 import { buildSessionSpec, type TemplateHistoryEntry } from "./progression";
 import { isHighLoadCategory, isSpecificCategory } from "./trainingClassification";
+import { STRENGTH_PHASE_TABLE } from "./strength";
 import type { TrendVerdict } from "./adaptive";
 import {
   type CustomMenu,
@@ -1556,34 +1557,11 @@ function strengthForPhase(
   const hillDay = offSeason && /坂/.test(session.name);
   const highLoadDay = isHighLoadCategory(session.category) || hillDay;
 
-  const table: Record<
-    Phase,
-    { load: "light" | "moderate" | "heavy"; type: "strength" | "core"; exercises: string[] } | null
-  > = {
-    Base: {
-      load: "heavy",
-      type: "strength",
-      exercises: ["スクワット 5×5", "デッドリフト 3×5", "低強度ホッピング 3×20m"],
-    },
-    Build: {
-      load: "moderate",
-      type: "strength",
-      exercises: ["スクワット(速度重視) 4×4", "ルーマニアンDL 3×6", "ボックスジャンプ 3×5"],
-    },
-    Specific: {
-      load: "moderate",
-      type: "strength",
-      exercises: ["スクワット(速度重視) 3×3", "バウンディング 3×30m", "MBスロー 3×5"],
-    },
-    Modeling: {
-      load: "light",
-      type: "strength",
-      exercises: ["自重スクワット 2×10", "低強度ホップ 2×15m（維持のみ）"],
-    },
-    Taper: { load: "light", type: "core", exercises: ["体幹サーキット 2周（coreのみ）"] },
-  };
-
-  const spec = table[phase];
+  /*
+   * フェーズ別の内容は `strength.ts` が唯一の出どころ。
+   * ここに同じ表を持っていたので、片方を直しても、もう片方は静かに古いままだった。
+   */
+  const spec = STRENGTH_PHASE_TABLE[phase];
   if (!spec || !highLoadDay) return undefined;
 
   return {

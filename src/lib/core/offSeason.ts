@@ -23,9 +23,17 @@
  * 「重心が変わる週」が別々に来て、何が効いたのか分からなくなる。
  */
 import type { Goal, Race } from "./types";
+import { LOAD_CYCLE_WEEKS } from "./progression";
 
-/** 1ブロックの週数。`progression.ts` の `LOAD_CYCLE_WEEKS` と同じにそろえる */
-export const OFF_SEASON_BLOCK_WEEKS = 4;
+/**
+ * 1ブロックの週数。
+ *
+ * 負荷サイクル（入り口 → 量 → 密度 → 回復）と**同じ値でなければならない**ので、
+ * 数字を書かずにそちらを参照する。別々に持っていたときは
+ * 「そろえる前提」とコメントに書いてあるだけで、片方を変えると静かにずれた。
+ * ずれると「量を増やす週」と「重心が変わる週」が別々に来て、何が効いたのか分からなくなる。
+ */
+export const OFF_SEASON_BLOCK_WEEKS = LOAD_CYCLE_WEEKS;
 
 /**
  * 一度に作る週数。4ブロックぶん。

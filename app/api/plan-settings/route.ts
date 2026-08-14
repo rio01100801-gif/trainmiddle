@@ -6,6 +6,9 @@ import {
   type CustomMenu,
 } from "@/lib/core/weekTemplate";
 import { amSlotAdvice } from "@/lib/core/amSlotAdvice";
+import { currentPhase } from "@/lib/service";
+import { localToday } from "@/lib/core/dates";
+import { STRENGTH_PHASE_TABLE } from "@/lib/core/strength";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +21,9 @@ export async function GET() {
     templateViolations: weekTemplate ? validateWeekTemplate(weekTemplate) : [],
     // 2部の午前枠についての助言。自動では変えない（本人が決める）
     amAdvice: amSlotAdvice(repo.getAthlete(), weekTemplate, repo.getGoal()?.targetTimeSec),
+    // フェーズ別の補強。表だけ出しても読まれないので「今はここ」も返す
+    currentPhase: currentPhase(repo, localToday()),
+    strengthTable: STRENGTH_PHASE_TABLE,
   });
 }
 
