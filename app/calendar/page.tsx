@@ -10,7 +10,12 @@ import {
   usePrescriptionFields,
 } from "../components/prescription-fields";
 import { SessionEditSheet } from "../components/session-edit-sheet";
-import { loadViewPref, saveViewPref } from "../components/view-pref";
+import {
+  loadCalendarAnchor,
+  loadViewPref,
+  saveCalendarAnchor,
+  saveViewPref,
+} from "../components/view-pref";
 import { localToday } from "@/lib/core/dates";
 import type { CoverageReview } from "@/lib/core/coverage";
 import type { Race, Session, SessionResult } from "@/lib/core/types";
@@ -187,7 +192,23 @@ export default function CalendarPage() {
   useEffect(() => {
     setMode(loadViewPref("calendar.mode", CALENDAR_MODES, "week"));
     setWeeks(loadViewPref("calendar.weeks.v2", CALENDAR_WEEKS, 1));
-  }, []);
+    /*
+     * 見ていた週へ戻す。
+     * 先の週を見て日付をタップ → メニューを見て戻ると、画面が作り直されて
+     * 今週に戻っていた。予定を組んでいる最中だと、毎回そこまで送り直すことになる。
+     */
+    const remembered = loadCalendarAnchor(todayStr);
+    if (remembered) setAnchor(remembered);
+  }, [todayStr]);
+
+  /*
+   * 見ている週を覚える。
+   * setAnchor を呼ぶ場所ごとに保存を書くと、経路が増えたときに書き忘れて
+   * 「送った週が戻る」がまた起きる。変化を1か所で拾う。
+   */
+  useEffect(() => {
+    saveCalendarAnchor(anchor);
+  }, [anchor]);
 
   const changeMode = (next: "week" | "month") => {
     setMode(next);
@@ -343,6 +364,11 @@ export default function CalendarPage() {
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  /*
+   * 起点を動かすのはここだけにする。
+   * setAnchor を直に呼ぶ場所が増えると、覚えるのを書き忘れて
+   * 「送った週が戻る」が別の経路でまた起きる。
+   */
   const shift = (dir: number) =>
     setAnchor((a) => (mode === "week" ? addDays(a, dir * 7) : addMonths(a, dir)));
 

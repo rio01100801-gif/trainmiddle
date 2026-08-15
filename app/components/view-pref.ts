@@ -45,3 +45,43 @@ export function saveViewPref(key: string, value: string | number): void {
     /* プライベートモード等。表示期間が覚えられないだけで機能は落ちない */
   }
 }
+
+/**
+ * 見ていた週（カレンダーの起点）を覚える。
+ *
+ * 表示期間（週/月・何週間）と違って **localStorage には入れない**。
+ * 来月の予定を見たまま閉じて、翌日開いたら来月が出るのは困る。
+ * sessionStorage なら、アプリを開いているあいだだけ覚えて、閉じれば今週に戻る。
+ *
+ * 直したかったこと: 先の週を見て日付をタップ → メニューを見て戻ると、
+ * 画面が作り直されて今週に戻っていた。予定を組んでいる最中にこれが起きると、
+ * 毎回そこまで送り直すことになる。
+ */
+const ANCHOR_KEY = PREFIX + "calendar.anchor";
+
+/** 覚えている起点。無い・壊れている・今日から1年以上離れていれば undefined */
+export function loadCalendarAnchor(today: string): string | undefined {
+  try {
+    if (typeof sessionStorage === "undefined") return undefined;
+    const raw = sessionStorage.getItem(ANCHOR_KEY);
+    if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return undefined;
+    /*
+     * 極端に離れた値は壊れているとみなして捨てる。
+     * 推測で近い日付に寄せない（想定外なら既定に戻す、というこのファイルの方針）。
+     */
+    const days = Math.abs(
+      (Date.parse(raw + "T00:00:00Z") - Date.parse(today + "T00:00:00Z")) / 86400000
+    );
+    return Number.isFinite(days) && days <= 366 ? raw : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function saveCalendarAnchor(anchor: string): void {
+  try {
+    if (typeof sessionStorage !== "undefined") sessionStorage.setItem(ANCHOR_KEY, anchor);
+  } catch {
+    /* 覚えられないだけ。毎回今週で開く */
+  }
+}

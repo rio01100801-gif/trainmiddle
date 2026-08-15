@@ -2335,6 +2335,12 @@ step("カレンダー: 日付タップで記録画面へ行くOK");
   // 週表示に戻して、スワイプ判定を見る
   await controls.getByRole("button", { name: "週", exact: true }).click();
   await page.waitForTimeout(700);
+  /*
+   * 送った先を覚えるようになったので、ここで今日に戻しておく。
+   * 戻さないと、このあとの「その日の予定を見る」検証が3か月先を開く。
+   */
+  await controls.getByRole("button", { name: "今日", exact: true }).click();
+  await page.waitForTimeout(500);
   await page.evaluate(() => window.scrollTo({ top: 0 }));
   const swipe = (x0, y0, x1, y1) =>
     page.evaluate(
@@ -2372,6 +2378,13 @@ step("カレンダー: 日付タップで記録画面へ行くOK");
     fail(`横スワイプの送り幅が1週間でない（${w0} → ${w1}）`);
   }
   step("カレンダー: スワイプ判定OK（縦スクロールでは動かず、横スワイプでは1週間送る）");
+  /*
+   * 送った先を覚えるようになったので、この検証の最後に今日へ戻す。
+   * 戻さないと、このあとの「今週の予定を見る」検証が別の週を開く。
+   * （スワイプの検証そのものが1週間送るので、上の月送りだけ戻しても足りない）
+   */
+  await controls.getByRole("button", { name: "今日", exact: true }).click();
+  await page.waitForTimeout(500);
 }
 
 // ＋ を押したら追加シートが開き、画面の上に出ること
@@ -5237,6 +5250,59 @@ if ((await fitRebuildCard.count()) === 0) {
   if (!box || box.height < 44) fail(`主観のチップが小さい（${box ? box.height : 0}px）`);
 
   step("RPEスライダーOK（説明→10→1刻み→キーボード→44pt）");
+}
+
+// ---- 送った週が、戻ってきても戻らない ----
+/*
+ * 先の週を見て日付をタップ → メニューを見て戻ると、画面が作り直されて今週に戻っていた。
+ * 予定を組んでいる最中だと、毎回そこまで送り直すことになる。
+ *
+ * 表示期間（週/月）と違って localStorage には入れない——
+ * 来月を見たまま閉じて、翌日開いたら来月が出るのは困る。
+ * アプリを開いているあいだだけ覚える。
+ */
+{
+  await page.goto("http://localhost:8791/#/calendar");
+  await page.waitForTimeout(900);
+
+  const shown = async () => {
+    const t = (await page.textContent(".calendar-controls")) ?? "";
+    return t.replace(/\s+/g, " ").trim();
+  };
+
+  const atToday = await shown();
+  // 3週先まで送る
+  for (let i = 0; i < 3; i++) {
+    await page.getByRole("button", { name: "次の期間" }).click();
+    await page.waitForTimeout(350);
+  }
+  const moved = await shown();
+  if (moved === atToday) fail("カレンダーを送っても表示が変わらない");
+
+  // 別の画面へ行って戻る（日付をタップしてメニューを見に行く経路と同じ）
+  await page.goto("http://localhost:8791/#/results");
+  await page.waitForTimeout(700);
+  await page.goto("http://localhost:8791/#/calendar");
+  await page.waitForTimeout(900);
+
+  const back = await shown();
+  if (back !== moved) {
+    fail(`カレンダー: 戻ると送った週が失われる（送った先「${moved}」→ 戻り「${back}」）`);
+  }
+
+  // 「今日」を押せば今週に戻れること（覚えたまま出られなくならない）
+  await page.getByRole("button", { name: "今日", exact: true }).click();
+  await page.waitForTimeout(400);
+  if ((await shown()) !== atToday) fail("カレンダー: 「今日」で今週に戻らない");
+
+  // 戻したことも覚えていること
+  await page.goto("http://localhost:8791/#/results");
+  await page.waitForTimeout(600);
+  await page.goto("http://localhost:8791/#/calendar");
+  await page.waitForTimeout(900);
+  if ((await shown()) !== atToday) fail("カレンダー: 「今日」に戻したのに別の週で開く");
+
+  step("カレンダーの週が戻らないOK（送る→離れる→戻る→同じ週／今日で戻せる）");
 }
 
 if (errors.length) {
