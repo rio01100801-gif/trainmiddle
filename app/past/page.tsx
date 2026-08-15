@@ -12,6 +12,8 @@ import { localToday } from "@/lib/core/dates";
 import { computeReady } from "@/lib/core/bulkImport";
 import type { RestType, SessionCategory } from "@/lib/core/types";
 import { askAssistant, getApiKey, getConsent } from "../components/assistant";
+import { SnapSlider, describeRpe } from "../components/inputs";
+import { RPE_MAX, RPE_MIN, isValidRpe } from "@/lib/core/rpe";
 import { PhotoTranscribe } from "../components/photo-transcribe";
 import {
   buildPhraseSuggestionRequest,
@@ -606,16 +608,24 @@ function PastEntryForm({
           </>
         )}
 
-        <label className="flex flex-col gap-1 text-[11.5px]">
-          RPE（任意）
-          <input
-            type="number" inputMode="decimal"
-            min={1}
-            max={10}
-            value={rpe}
-            onChange={(e) => setRpe(e.target.value)}
+        {/*
+          過去の遡り入力でもRPEはスライダーにする。
+          ここだけ数値入力のままにすると、同じRPEなのに画面によって
+          入れ方が違うことになる（打ち間違いの risk も残る）。
+          任意なので、未入力のままでも保存できる。
+        */}
+        <div className="col-span-2">
+          <SnapSlider
+            label="RPE（任意）"
+            value={isValidRpe(Number(rpe)) ? Number(rpe) : undefined}
+            onChange={(v) => setRpe(String(v))}
+            min={RPE_MIN}
+            max={RPE_MAX}
+            describe={describeRpe}
+            emptyHint="入れなくても保存できます。入れると推定に使うかの判定（RPE6未満は除外）に効きます。"
+            testId="past-rpe-slider"
           />
-        </label>
+        </div>
         <label className="flex flex-col gap-1 text-[11.5px]">
           気温(℃)
           <input type="number" inputMode="decimal" value={tempC} onChange={(e) => setTempC(e.target.value)} />

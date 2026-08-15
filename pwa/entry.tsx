@@ -6,6 +6,8 @@ import * as React from "react";
 import { createRoot } from "react-dom/client";
 import { AppShell } from "../app/components/app-shell";
 import { CATEGORY_LABELS, Card, ConfirmButton, StatusText } from "../app/components/ui";
+import { SnapSlider, describeRpe } from "../app/components/inputs";
+import { RPE_MAX, RPE_MIN, isValidRpe } from "../src/lib/core/rpe";
 
 import Dashboard from "../app/page";
 
@@ -388,19 +390,21 @@ function FitResultConfirmationForm({
                 ))}
               </select>
             </label>
-            <label className="text-[11px]" style={{ color: "var(--text-2)" }}>
-              RPE（1〜10）
-              <input
-                className="w-full min-h-[44px] mt-1"
-                inputMode="decimal"
-                type="number"
-                min="1"
-                max="10"
-                step="0.5"
-                value={rpe}
-                onChange={(event) => setRpe(event.target.value)}
-              />
-            </label>
+            {/*
+              ここもスライダーにそろえる。
+              以前は step="0.5" で 7.5 のような値が入れられたが、
+              RPEは整数の段階として定義してあるので、半端な値は意味を持たない。
+            */}
+            <SnapSlider
+              label="RPE"
+              value={isValidRpe(Number(rpe)) ? Number(rpe) : undefined}
+              onChange={(v) => setRpe(String(v))}
+              min={RPE_MIN}
+              max={RPE_MAX}
+              describe={describeRpe}
+              emptyHint="本人が確認するまで能力の評価には使いません。"
+              testId="fit-rpe-slider"
+            />
             <label className="text-[11px]" style={{ color: "var(--text-2)" }}>
               達成状態
               <select

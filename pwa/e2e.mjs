@@ -34,6 +34,24 @@ const ctx = await b.newContext({
   hasTouch: true,
 });
 const page = await ctx.newPage();
+/**
+ * 目盛りスライダーを動かす。
+ *
+ * range 要素は fill() では動かないので、value を入れて input と change を投げる。
+ * React の onChange は input イベントで拾われるので、これで実際の操作と同じ経路になる。
+ */
+async function setSlider(locator, value) {
+  await locator.evaluate((el, v) => {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    ).set;
+    setter.call(el, String(v));
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }, value);
+}
+
 const errors = [];
 page.on("pageerror", (e) => errors.push("pageerror: " + e));
 page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
@@ -431,7 +449,7 @@ await page.locator('label:has-text("日付") input').fill("2026-07-15");
 await page.locator('label:has-text("1本の距離") input').fill("300");
 await page.locator('label:has-text("各本のタイム") input').fill("46.5 47.0 47.4 48.2");
 await page.locator('label:has-text("レスト(分)") input').fill("4");
-await page.locator('label:has-text("RPE") input').fill("9");
+await setSlider(page.getByTestId("past-rpe-slider"), 9);
 await page.locator('label:has-text("気温") input').fill("34");
 await page.getByRole("button", { name: "この記録を登録" }).click();
 await page.waitForTimeout(600);
@@ -556,7 +574,9 @@ await page.getByRole("button", { name: "故障", exact: true }).click();
 await page.waitForTimeout(400);
 await page.getByRole("button", { name: "+ 記録する" }).click();
 await page.waitForTimeout(200);
-await page.locator('label:has-text("部位") input').fill("右アキレス腱");
+// 部位はチップになった（自由記述で表記ゆれが溜まるのをやめた）
+await page.getByRole("button", { name: "部位 右アキレス腱" }).click();
+await setSlider(page.getByTestId("pain-slider"), 4);
 await page.getByRole("button", { name: "故障を記録する" }).click();
 await page.waitForTimeout(200);
 await page.getByRole("button", { name: "実行する" }).click();
@@ -594,8 +614,9 @@ await page.waitForTimeout(300);
 await page.getByRole("button", { name: "インターバル", exact: true }).click();
 await page.waitForTimeout(200);
 await page.getByRole("textbox", { name: "本数", exact: true }).fill("5");
-await page.locator('label:has-text("レスト内容") select').selectOption("jog");
-await page.locator('label:has-text("レスト指定") select').selectOption("time");
+// レストの種類・指定はチップになった（selectは開く→選ぶ→閉じるで3タップかかる）
+await page.getByRole("button", { name: "レスト内容 ジョグ" }).click();
+await page.getByRole("button", { name: "レスト指定 時間(秒)" }).click();
 // N-2: メニューの構造に合わせて1本ずつの欄が出る
 const repInputs = page.locator('input[aria-label*="実施タイム"]');
 const repCount = await repInputs.count();
@@ -720,10 +741,12 @@ step(`S-4 本ごとのレストOK（既定は非表示 / 最小幅 ${Math.round(
  * そのまま保存され、こちらが決めた値が能力の推定に混ざる。
  * ここは新規入力なので、空欄で出ていなければならない。
  */
-const rpeField = page.locator('label:has-text("RPE") input').first();
-const rpeInitial = await rpeField.inputValue();
-if (rpeInitial !== "") {
-  fail(`RPE: 新規入力なのに既定値が入っている（"${rpeInitial}"）`);
+const rpeShown = (await page.getByTestId("rpe-slider-value").textContent()) ?? "";
+if (rpeShown.trim() !== "—") {
+  fail(`RPE: 新規入力なのに値が入っている（"${rpeShown}"）`);
+}
+if (!(await page.textContent("body")).includes("未入力")) {
+  fail("RPE: 未入力だと分かる表示が出ていない");
 }
 {
   // 空のまま保存しようとしたら止まること（Number("")が0として混ざらない）
@@ -754,8 +777,8 @@ if (rpeInitial !== "") {
   }
 }
 
-await rpeField.fill("10");
-await page.locator('label:has-text("主観") select').selectOption("very_hard");
+await setSlider(page.getByTestId("rpe-slider"), 10);
+await page.getByRole("button", { name: "主観 非常に" }).click();
 // 2-1: 環境条件（折りたたみを開く）
 await page.getByText("環境条件（気温・湿度・風・雨）").click();
 await page.waitForTimeout(200);
@@ -1055,7 +1078,7 @@ if (!registerText.includes("本人確認待ちのFIT（1件）")) {
   fail("再読み込み後にFITの本人確認待ち状態が復元されない: " + registerText.slice(0, 400));
 }
 // FITだけでは分からない値は空欄であり、本人が明示入力する。
-await page.getByLabel("RPE（1〜10）").fill("8");
+await setSlider(page.getByTestId("fit-rpe-slider"), 8);
 await page.getByLabel("達成状態").selectOption("achieved");
 await page.getByLabel("主観強度").selectOption("hard");
 await page.getByRole("button", { name: "本人確認して記録へ反映する" }).click();
@@ -1148,7 +1171,7 @@ let linkedText = await page.textContent("body");
 if (!linkedText.includes("本人確認待ち")) {
   fail("Phase6: 紐付け後に本人確認待ちにならない: " + linkedText.slice(0, 300));
 }
-await page.getByLabel("RPE（1〜10）").fill("8");
+await setSlider(page.getByTestId("fit-rpe-slider"), 8);
 await page.getByLabel("達成状態").selectOption("achieved");
 await page.getByLabel("主観強度").selectOption("hard");
 await page.getByRole("button", { name: "本人確認して記録へ反映する" }).click();
@@ -2138,7 +2161,12 @@ const focusTarget = page
 if ((await focusTarget.count()) > 0) {
   await focusTarget.click();
   await page.waitForTimeout(600);
-  const rpe = page.locator('label:has-text("RPE") input').first();
+  /*
+   * RPEはスライダーになったので、文字を打つ欄で見張る。
+   * 見ているのは「1文字打つたびに入力欄が作り直されないか」なので、
+   * 対象はテキスト入力ならどれでもよい。同じフォーム上の「設定(秒)」を使う。
+   */
+  const rpe = page.getByRole("textbox", { name: "設定(秒)" }).first();
   await rpe.fill("");
   await rpe.click();
   for (const ch of ["8", ".", "5"]) {
@@ -4448,7 +4476,16 @@ if ((await fitRebuildCard.count()) === 0) {
     await page.waitForTimeout(1500);
 
     const fields = await page.evaluate(() => {
+      /*
+       * 読み上げ名（aria-label）で引く。
+       * ラベルの中に input が入っている形と、htmlFor で結ぶ形の両方があるので、
+       * DOMの入れ子ではなく「その欄の名前」で探すほうが壊れにくい。
+       */
       const pick = (label) => {
+        const byAria = document.querySelector(
+          `input[aria-label="${label}"], select[aria-label="${label}"]`
+        );
+        if (byAria) return byAria.value;
         for (const el of document.querySelectorAll("label")) {
           if ((el.textContent ?? "").startsWith(label)) {
             const input = el.querySelector("input, select");
@@ -4457,10 +4494,12 @@ if ((await fitRebuildCard.count()) === 0) {
         }
         return null;
       };
+      // レスト内容はチップになったので、押されているものを読む
+      const pressed = document.querySelector('[role="group"][aria-label="レスト内容"] button[aria-pressed="true"]');
       return {
         target: pick("設定(秒)"),
         rest: pick("レスト(秒)"),
-        restType: pick("レスト内容"),
+        restType: pressed ? (pressed.textContent ?? "").trim() : null,
       };
     });
 
@@ -5099,6 +5138,105 @@ if ((await fitRebuildCard.count()) === 0) {
     fail("3000m/5000mをどこに入れるのかを書いていない");
   }
   step("効かない欄に効かないと書いてあるOK（身長・骨格筋量・3000m/5000mの置き場所）");
+}
+
+// ---- RPEのスライダー ----
+/*
+ * 数値入力をやめた理由は、`77` のような打ち間違いがそのまま入り、
+ * RPEは設定ペースの補正に直接効くから。段階しか選べない形なら起きない。
+ *
+ * ここで見るのは、指定された振る舞いが全部そろっているか。
+ *   ・未入力が未入力として見える（既定値を置いていない）
+ *   ::・動かすと数値と説明がその場で変わる
+ *   ・1目盛りずつ止まる
+ *   ・色だけに頼っていない（帯の呼び名と説明が文字で出る）
+ *   ・キーボードで動く
+ */
+{
+  /*
+   * まだ結果を入れていない日を選ぶ。
+   * 記録済みの日を開くと保存した値が出る——それは正しい振る舞いなので、
+   * 「既定値を置いていない」ことの確認には使えない。
+   */
+  const target = await page.evaluate(async () => {
+    const [d, results] = await Promise.all([
+      fetch("/api/sessions").then((r) => r.json()),
+      fetch("/api/results").then((r) => r.json()),
+    ]);
+    const done = new Set((results.results ?? results ?? []).map((r) => r.sessionId));
+    const s = (d.sessions ?? [])
+      .filter((x) => x.category !== "off" && x.status === "planned" && !done.has(x.id))
+      .sort((a, b) => a.date.localeCompare(b.date))[0];
+    return s ? s.date : null;
+  });
+  if (!target) fail("RPEスライダーを確認できる予定が無い");
+
+  await page.goto(`http://localhost:8791/#/results?date=${target}`);
+  await page.waitForTimeout(900);
+  // 結果入力のタブを開く（既定は別のタブ）
+  await page.getByRole("button", { name: /練習結果/ }).click();
+  await page.waitForTimeout(600);
+  const qBtn = page
+    .locator('button:has-text("高乳酸"), button:has-text("経済走"), button:has-text("CV"), button:has-text("閾値"), button:has-text("ジョグ")')
+    .first();
+  if (await qBtn.count()) {
+    await qBtn.click();
+    await page.waitForTimeout(500);
+  }
+
+  const slider = page.getByTestId("rpe-slider");
+  if (!(await slider.count())) fail("RPEがスライダーになっていない");
+
+  // 未入力の確認は手前のブロック（記録の無い日で開く）が見ている。ここでは重ねない。
+
+  // 2) 動かすと数値と説明がその場で変わる（色だけに頼らない）
+  await setSlider(slider, 7);
+  await page.waitForTimeout(150);
+  if (((await page.getByTestId("rpe-slider-value").textContent()) ?? "").trim() !== "7") {
+    fail("RPE: 動かしても数値が変わらない");
+  }
+  const d7 = (await page.getByTestId("rpe-slider-description").textContent()) ?? "";
+  if (!d7.includes("きつい") || !d7.includes("余力は少ない")) {
+    fail("RPE: 7の説明が出ていない: " + d7);
+  }
+  if (!(await page.textContent("body")).includes("きつい")) {
+    fail("RPE: 帯の呼び名が文字で出ていない（色だけに頼っている）");
+  }
+
+  // 3) 10 の説明と、読み上げ用の文言
+  await setSlider(slider, 10);
+  await page.waitForTimeout(150);
+  const d10 = (await page.getByTestId("rpe-slider-description").textContent()) ?? "";
+  if (!d10.includes("最大努力")) fail("RPE: 10の説明が出ていない: " + d10);
+  const valueText = await slider.getAttribute("aria-valuetext");
+  if (!valueText || !valueText.includes("10") || !valueText.includes("最大")) {
+    fail("RPE: 読み上げ用の文言に数値と言葉が入っていない: " + valueText);
+  }
+
+  // 4) 1目盛りずつ止まる（小数を入れても整数になる）
+  // step() を隠さない名前にする（隠すと最後の step(...) が数値になって落ちる）
+  const stepAttr = await slider.getAttribute("step");
+  if (stepAttr !== "1") fail(`RPE: 目盛りが1刻みでない（step=${stepAttr}）`);
+
+  // 5) キーボードで動く
+  await slider.focus();
+  await page.keyboard.press("ArrowLeft");
+  await page.waitForTimeout(150);
+  if (((await page.getByTestId("rpe-slider-value").textContent()) ?? "").trim() !== "9") {
+    fail("RPE: キーボード（←）で値が変わらない");
+  }
+  await page.keyboard.press("Home");
+  await page.waitForTimeout(150);
+  if (((await page.getByTestId("rpe-slider-value").textContent()) ?? "").trim() !== "1") {
+    fail("RPE: キーボード（Home）で下限に行かない");
+  }
+
+  // 6) 押せるものが片手で押せる大きさか
+  const chip = page.getByRole("button", { name: "主観 きつい" });
+  const box = await chip.boundingBox();
+  if (!box || box.height < 44) fail(`主観のチップが小さい（${box ? box.height : 0}px）`);
+
+  step("RPEスライダーOK（説明→10→1刻み→キーボード→44pt）");
 }
 
 if (errors.length) {

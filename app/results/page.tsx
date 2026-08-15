@@ -21,7 +21,32 @@ import { completeRunTriple, formatTimeInput } from "@/lib/core/inputFormat";
 import { parseRest } from "@/lib/core/bulkImport";
 import { avgPaceSecPerKm, buildRepResults, REST_LABELS } from "@/lib/core/workoutLog";
 import { evaluateEnvironment, environmentNote, WIND_LABELS } from "@/lib/core/environment";
-import type { FitnessMarkerPurpose, RestType, RuleViolation, SessionCategory } from "@/lib/core/types";
+import {
+  BODY_PARTS,
+  BODY_PART_OPTIONS,
+  ChipGroup,
+  INJURY_STATUS_OPTIONS,
+  LEGS_OPTIONS,
+  REST_MODE_OPTIONS,
+  REST_TYPE_OPTIONS,
+  SKIP_OPTIONS,
+  SUBJECTIVE_OPTIONS,
+  SnapSlider,
+  Stepper,
+  WIND_OPTIONS,
+  describePain,
+  describeRpe,
+} from "../components/inputs";
+import { PAIN_MAX, PAIN_MIN, RPE_MAX, RPE_MIN, isValidRpe } from "@/lib/core/rpe";
+import type {
+  FitnessMarkerPurpose,
+  NextDayLegs,
+  RestType,
+  RuleViolation,
+  SessionCategory,
+  SkipReason,
+  Subjective,
+} from "@/lib/core/types";
 import type { AerobicProfile } from "@/lib/core/pace";
 import { describeComposition, type PrescriptionStructure } from "@/lib/core/prescription";
 
@@ -635,43 +660,49 @@ function InjuryCard({ sessions, date }: { sessions: any[]; date: string }) {
       {errorMessage ? <StatusText kind="error">{errorMessage}</StatusText> : null}
       {open ? (
         <div className="flex flex-col gap-2 mb-3 pb-3 border-b" style={{ borderColor: "var(--border)" }}>
-          <div className="flex gap-2 flex-wrap items-end">
-            <label className="text-[13px] flex-1 min-w-[130px]">
-              <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
-                部位
-              </span>
-              <input
-                className="w-full"
-                value={bodyPart}
-                onChange={(e) => setBodyPart(e.target.value)}
-                placeholder="例: 右アキレス腱"
-              />
-            </label>
-            <label className="text-[13px]">
-              <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
-                状態
-              </span>
-              <select value={status} onChange={(e) => setStatus(e.target.value)}>
-                <option value="onset">発生</option>
-                <option value="ongoing">継続</option>
-                <option value="recovered">回復</option>
-              </select>
-            </label>
-          </div>
-          <div>
-            <div className="text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
-              痛みの程度: <b style={{ color: "var(--text)" }}>{painLevel}</b> / 10
-            </div>
+          {/*
+            部位はチップで選ぶ。自由記述だと「右アキレス」「右アキレス腱」「Rアキレス」が
+            別物として溜まり、同じ場所を繰り返し痛めているのかが後から分からない。
+            一覧に無い場所のために自由記述も残す（消すと入れられない場所が出る）。
+          */}
+          <ChipGroup
+            label="部位"
+            value={BODY_PARTS.includes(bodyPart) ? bodyPart : undefined}
+            onChange={(v) => setBodyPart(v ?? "")}
+            options={BODY_PART_OPTIONS}
+            columns={3}
+            allowEmpty
+            emptyLabel="未選択"
+            testId="bodypart-chips"
+          />
+          <label className="text-[13px]">
+            <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
+              一覧に無い場所（自由記述）
+            </span>
             <input
-              type="range"
-              min={0}
-              max={10}
-              value={painLevel}
-              onChange={(e) => setPain(e.target.value)}
-              className="w-full !p-0 !border-0 !bg-transparent"
-              style={{ accentColor: "var(--volt)", minHeight: 44 }}
+              className="w-full min-h-[44px]"
+              value={BODY_PARTS.includes(bodyPart) ? "" : bodyPart}
+              onChange={(e) => setBodyPart(e.target.value)}
+              placeholder="例: 右第2中足骨"
             />
-          </div>
+          </label>
+          <ChipGroup
+            label="状態"
+            value={status as "onset" | "ongoing" | "recovered"}
+            onChange={(v) => setStatus(v ?? "onset")}
+            options={INJURY_STATUS_OPTIONS}
+            columns={3}
+          />
+          <SnapSlider
+            label="痛みの強さ"
+            value={Number(painLevel)}
+            onChange={(v) => setPain(String(v))}
+            min={PAIN_MIN}
+            max={PAIN_MAX}
+            describe={describePain}
+            emptyHint="0は痛みなしです。"
+            testId="pain-slider"
+          />
           <label className="text-[13px]">
             <span className="block text-[10.5px] mb-1" style={{ color: "var(--text-3)" }}>
               発生したセッション（任意）
@@ -1097,9 +1128,18 @@ function ResultForm({
 
   // 共通
   // RPEはこちらで埋めない（本人にしか分からず、CFEの補正に効くため）。登録済みならその値を出す
-  const [rpe, setRpe] = useState(existing ? String(existing.rpe ?? "") : "");
-  const [subjective, setSubjective] = useState(existing?.subjective ?? "moderate");
-  const [legs, setLegs] = useState(existing?.nextDayLegs ?? "");
+  /*
+   * RPEも主観もこちらで埋めない（本人にしか分からず、CFEの補正に効く）。
+   * 未入力は undefined で持つ——空文字だと Number("") が 0 になって
+   * 「0点として記録に混ざる」経路がまた開く。
+   */
+  const [rpe, setRpe] = useState<number | undefined>(
+    existing && isValidRpe(existing.rpe) ? existing.rpe : undefined
+  );
+  const [subjective, setSubjective] = useState<Subjective | undefined>(
+    existing?.subjective
+  );
+  const [legs, setLegs] = useState<NextDayLegs | undefined>(existing?.nextDayLegs);
 
   // 1-1 ジョグ
   const [distanceKm, setDistanceKm] = useState(num(existing?.continuous?.distanceKm));
@@ -1298,7 +1338,8 @@ function ResultForm({
       setDistanceKm(String(r.continuous.distanceKm ?? ""));
       setDurationMin(String(r.continuous.durationMin ?? ""));
     }
-    if (r.rpe !== undefined) setRpe(String(r.rpe));
+    // 前回の記録から引き継ぐ。範囲外の旧データは持ち込まない
+    if (isValidRpe(r.rpe)) setRpe(r.rpe);
     if (r.subjective) setSubjective(r.subjective);
     setLoadedFrom(prev.label);
   };
@@ -1396,10 +1437,16 @@ function ResultForm({
        * こちらが置いた既定値が能力の推定に混ざることになる。
        * 空欄にして、入っていなければ保存させない（推測で埋めない・黙って混ぜない）。
        */
-      const rpeValue = Number(rpe);
-      if (!rpe.trim() || !isFinite(rpeValue) || rpeValue < 1 || rpeValue > 10) {
+      // スライダーは範囲外を作れないが、旧データの読み込み経路もあるので確かめる
+      if (!isValidRpe(rpe)) {
         setBusy(false);
-        alert("RPE（1〜10）を入れてください。きつさの感じ方は本人にしか分からないので、こちらでは埋めません。");
+        alert("RPEを選んでください。きつさの感じ方は本人にしか分からないので、こちらでは埋めません。");
+        return;
+      }
+      const rpeValue = rpe;
+      if (subjective === undefined) {
+        setBusy(false);
+        alert("主観を選んでください。");
         return;
       }
 
@@ -1436,7 +1483,7 @@ function ResultForm({
           },
           achievement: "achieved",
           rpe: rpeValue,
-          subjective,
+          subjective: subjective!,
           nextDayLegs: legs || undefined,
           durationMin: min,
           ...envPayload,
@@ -1510,7 +1557,7 @@ function ResultForm({
           lapDistancesM: builtResults.map((result) => result.distanceM),
           achievement: "achieved", // サービス層が実測から上書きする
           rpe: rpeValue,
-          subjective,
+          subjective: subjective!,
           nextDayLegs: legs || undefined,
           ...envPayload,
         };
@@ -1740,15 +1787,17 @@ function ResultForm({
             </div>
           ) : (
             <div className="grid grid-cols-3 gap-2">
-              <L label="本数">
-                <input className="w-full" value={reps} onChange={(e) => setReps(e.target.value)} inputMode="numeric" />
-              </L>
+              {/*
+                本数とレストは「だいたい決まっていて1つ足す・引く」が多いのでステッパー。
+                距離と設定は値の幅が広く、押して合わせると回数がかさむのでテンキーのまま。
+              */}
+              <Stepper label="本数" value={reps} onChange={setReps} min={1} max={40} />
               <L label="距離(m)">
-                <input className="w-full" value={distM} onChange={(e) => setDistM(e.target.value)} inputMode="numeric" />
+                <input className="w-full min-h-[44px]" value={distM} onChange={(e) => setDistM(e.target.value)} inputMode="numeric" />
               </L>
               <L label="設定(秒)">
                 <input
-                  className="w-full"
+                  className="w-full min-h-[44px]"
                   value={targetSec}
                   onChange={(e) => setTargetSec(e.target.value)}
                   inputMode="decimal"
@@ -1756,38 +1805,32 @@ function ResultForm({
               </L>
             </div>
           )}
-          <div className="grid grid-cols-3 gap-2">
-            <L label="レスト内容">
-              <select
-                className="w-full"
-                value={restType}
-                onChange={(e) => setRestType(e.target.value as RestType)}
-              >
-                {(["jog", "walk", "full"] as RestType[]).map((r) => (
-                  <option key={r} value={r}>
-                    {REST_LABELS[r]}
-                  </option>
-                ))}
-              </select>
-            </L>
-            <L label="レスト指定">
-              <select
-                className="w-full"
+          <div className="flex flex-col gap-2">
+            <ChipGroup
+              label="レスト内容"
+              value={restType}
+              onChange={(v) => setRestType((v ?? "jog") as RestType)}
+              options={REST_TYPE_OPTIONS}
+              columns={3}
+            />
+            <div className="grid grid-cols-2 gap-2 items-end">
+              <ChipGroup
+                label="レスト指定"
                 value={restMode}
-                onChange={(e) => setRestMode(e.target.value as "time" | "distance")}
-              >
-                <option value="time">時間(秒)</option>
-                <option value="distance">距離(m)</option>
-              </select>
-            </L>
-            <L label={restMode === "time" ? "レスト(秒)" : "レスト(m)"}>
-              <input
-                className="w-full"
-                value={restValue}
-                onChange={(e) => setRestValue(e.target.value)}
-                inputMode="numeric"
+                onChange={(v) => setRestMode((v ?? "time") as "time" | "distance")}
+                options={REST_MODE_OPTIONS}
+                columns={2}
               />
-            </L>
+              {/* 秒は5刻み・距離は50刻み。実際に使う刻みでないと押す回数が減らない */}
+              <Stepper
+                label={restMode === "time" ? "レスト(秒)" : "レスト(m)"}
+                value={restValue}
+                onChange={setRestValue}
+                min={0}
+                max={restMode === "time" ? 1800 : 3000}
+                step={restMode === "time" ? 5 : 50}
+              />
+            </div>
           </div>
           {/* N-2: メニューの構造に合わせて1本ずつの欄を出す。
               貼り付けたい場合のために、まとめて入れる方式も残す */}
@@ -1980,48 +2023,46 @@ function ResultForm({
           </p>
         </div>
       ) : (
-        <L label="スキップ理由">
-          <select
-            className="w-full"
-            value={skipReason}
-            onChange={(e) => setSkipReason(e.target.value)}
-          >
-            <option value="fatigue">疲労</option>
-            <option value="red_signal">赤信号</option>
-            <option value="injury">故障</option>
-            <option value="schedule">予定</option>
-            <option value="weather">天候</option>
-            <option value="other">その他</option>
-          </select>
-        </L>
+        <ChipGroup
+          label="スキップ理由"
+          value={skipReason as SkipReason}
+          onChange={(v) => setSkipReason(v ?? "fatigue")}
+          options={SKIP_OPTIONS}
+          columns={3}
+          testId="skip-chips"
+        />
       )}
 
       {mode !== "skip" ? (
         <>
-          <div className="grid grid-cols-3 gap-2 mt-2">
-            <L label="RPE(1-10)">
-              <input className="w-full" value={rpe} onChange={(e) => setRpe(e.target.value)} inputMode="numeric" />
-            </L>
-            <L label="主観">
-              <select
-                className="w-full"
-                value={subjective}
-                onChange={(e) => setSubjective(e.target.value)}
-              >
-                <option value="easy">余裕</option>
-                <option value="moderate">普通</option>
-                <option value="hard">きつい</option>
-                <option value="very_hard">非常にきつい</option>
-              </select>
-            </L>
-            <L label="翌日の脚">
-              <select className="w-full" value={legs} onChange={(e) => setLegs(e.target.value)}>
-                <option value="">-</option>
-                <option value="fresh">軽い</option>
-                <option value="normal">普通</option>
-                <option value="heavy">重い</option>
-              </select>
-            </L>
+          <div className="flex flex-col gap-3 mt-3">
+            <SnapSlider
+              label="RPE（きつさ）"
+              value={rpe}
+              onChange={setRpe}
+              min={RPE_MIN}
+              max={RPE_MAX}
+              describe={describeRpe}
+              emptyHint="スライダーを動かして選んでください。きつさの感じ方は本人にしか分からないので、こちらでは埋めません。"
+              testId="rpe-slider"
+            />
+            <ChipGroup
+              label="主観"
+              value={subjective}
+              onChange={setSubjective}
+              options={SUBJECTIVE_OPTIONS}
+              allowEmpty
+              testId="subjective-chips"
+            />
+            <ChipGroup
+              label="翌日の脚"
+              value={legs}
+              onChange={setLegs}
+              options={LEGS_OPTIONS}
+              allowEmpty
+              emptyLabel="未入力（任意）"
+              testId="legs-chips"
+            />
           </div>
 
           {/* 2-1 環境条件（任意項目なので折りたたみ） */}
@@ -2048,16 +2089,16 @@ function ResultForm({
                   inputMode="numeric"
                 />
               </L>
-              <L label="風（記録用）">
-                <select className="w-full" value={wind} onChange={(e) => setWind(e.target.value)}>
-                  <option value="">-</option>
-                  {Object.entries(WIND_LABELS).map(([k, v]) => (
-                    <option key={k} value={k}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-              </L>
+              <div className="col-span-2">
+                <ChipGroup
+                  label="風（記録用）"
+                  value={wind as "calm" | "light" | "strong"}
+                  onChange={(v) => setWind(v ?? "")}
+                  options={WIND_OPTIONS}
+                  allowEmpty
+                  columns={3}
+                />
+              </div>
               <label className="text-[13px] flex items-end gap-2 pb-2">
                 <input
                   type="checkbox"

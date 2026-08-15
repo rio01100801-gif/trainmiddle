@@ -1,4 +1,12 @@
 "use client";
+import {
+  ChipGroup,
+  SUBJECTIVE_OPTIONS,
+  SnapSlider,
+  describeRpe,
+} from "../components/inputs";
+import { RPE_MAX, RPE_MIN, isValidRpe } from "@/lib/core/rpe";
+import type { Subjective } from "@/lib/core/types";
 import { useCallback, useEffect, useState } from "react";
 import { Card, ConfirmButton } from "../components/ui";
 import { useQueryParam, withQuery } from "../components/route-query";
@@ -41,8 +49,8 @@ export default function RunPage() {
   const [session, setSession] = useState<any | null>(null);
   const [input, setInput] = useState("");
   // RPEはこちらで埋めない（本人にしか分からず、CFEの補正に効く）。結果入力の欄と同じ扱い
-  const [rpe, setRpe] = useState("");
-  const [subjective, setSubjective] = useState("hard");
+  const [rpe, setRpe] = useState<number | undefined>(undefined);
+  const [subjective, setSubjective] = useState<Subjective | undefined>(undefined);
   const [out, setOut] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -109,9 +117,13 @@ export default function RunPage() {
 
   const finish = async (aborted: boolean) => {
     // 空のまま終えると Number("") が0になり、RPE0としてCFEの補正に入ってしまう
-    const rpeValue = Number(rpe);
-    if (!rpe.trim() || !isFinite(rpeValue) || rpeValue < 1 || rpeValue > 10) {
-      alert("RPE（1〜10）を入れてください。きつさの感じ方は本人にしか分からないので、こちらでは埋めません。");
+    if (!isValidRpe(rpe)) {
+      alert("RPEを選んでください。きつさの感じ方は本人にしか分からないので、こちらでは埋めません。");
+      return;
+    }
+    const rpeValue = rpe;
+    if (subjective === undefined) {
+      alert("主観を選んでください。");
       return;
     }
     setBusy(true);
@@ -123,7 +135,7 @@ export default function RunPage() {
           action: "finish",
           sessionId,
           rpe: rpeValue,
-          subjective,
+          subjective: subjective!,
           aborted,
           today: localToday(),
         }),
@@ -276,20 +288,24 @@ export default function RunPage() {
 
       {reps.length > 0 && !out ? (
         <Card title="終える">
-          <div className="grid grid-cols-2 gap-2 mb-2.5">
-            <label className="text-[11px]" style={{ color: "var(--text-3)" }}>
-              <span className="block mb-1">RPE（1〜10）</span>
-              <input value={rpe} onChange={(e) => setRpe(e.target.value)} inputMode="decimal" />
-            </label>
-            <label className="text-[11px]" style={{ color: "var(--text-3)" }}>
-              <span className="block mb-1">主観</span>
-              <select value={subjective} onChange={(e) => setSubjective(e.target.value)}>
-                <option value="easy">楽</option>
-                <option value="moderate">ふつう</option>
-                <option value="hard">きつい</option>
-                <option value="very_hard">かなりきつい</option>
-              </select>
-            </label>
+          <div className="flex flex-col gap-3 mb-2.5">
+            <SnapSlider
+              label="RPE（きつさ）"
+              value={rpe}
+              onChange={setRpe}
+              min={RPE_MIN}
+              max={RPE_MAX}
+              describe={describeRpe}
+              emptyHint="スライダーを動かして選んでください。"
+              testId="run-rpe-slider"
+            />
+            <ChipGroup
+              label="主観"
+              value={subjective}
+              onChange={setSubjective}
+              options={SUBJECTIVE_OPTIONS}
+              allowEmpty
+            />
           </div>
           <ConfirmButton
             label={stop ? "ここで打ち切って記録する" : "終えて記録する"}
