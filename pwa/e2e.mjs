@@ -5635,6 +5635,126 @@ if ((await fitRebuildCard.count()) === 0) {
   step("打ち切り理由OK（設定どおりでも聞く・未入力では保存させない・扱いを出す）");
 }
 
+// ---- 記録画面の不変条件（分割の前に固定する） ----
+/*
+ * `app/results/page.tsx` は2400行・useStateが73個ある。
+ * これから責務ごとに分けるが、**分けると壊れるのはここ**という2点を先に固定する。
+ * 固定してから動かさないと、壊れたことに気づけない。
+ *
+ *   1. 隠れているモードの値が保存に混ざらない
+ *      （インターバルを入れてからジョグに切り替えて保存 → interval が付いてこない）
+ *   2. 切り替えても入力は消えない
+ *      （押し間違いで戻したときに、打ち直しにならない）
+ *
+ * **この2つは逆向きの要求で、同時に満たす必要がある。**
+ * 「混ぜない」を state を消して実現すると2が壊れ、
+ * 「消さない」を保存にも渡して実現すると1が壊れる。
+ * 片方だけ見る検査だと、もう片方を壊す直し方が通ってしまう。
+ *
+ * 再編集で値が戻ることはここでは見ない（同じ日に同名のジョグが複数あって
+ * どれを開いたか固定できない）。それは「天候・路面・シューズ」と
+ * 「M-1 記録の保持」が見ている。
+ */
+{
+  const formTarget = await page.evaluate(async () => {
+    const d = await fetch("/api/sessions").then((r) => r.json());
+    const done = new Set(
+      ((await fetch("/api/results").then((r) => r.json())).results ?? []).map((r) => r.sessionId)
+    );
+    // まだ記録の無い予定を選ぶ。既存の記録があると初期値がそれで埋まり、
+    // 「隠れた値が混ざらない」を見ているつもりで別のものを見ることになる
+    const s = (d.sessions ?? [])
+      .filter((x) => x.status === "planned" && x.category === "aerobic" && !done.has(x.id))
+      .sort((a, b) => a.date.localeCompare(b.date))[0];
+    return s ? { date: s.date, id: s.id, name: s.name } : null;
+  });
+  if (!formTarget) fail("記録画面の不変条件: 対象の予定が無い");
+
+  await page.goto(`http://localhost:8791/#/results?date=${formTarget.date}`);
+  await page.waitForTimeout(900);
+  await page.getByRole("button", { name: /練習結果/ }).first().click();
+  await page.waitForTimeout(700);
+  const formPick = page.locator(`button:has-text("${formTarget.name}")`).first();
+  if (await formPick.count()) {
+    await formPick.click();
+    await page.waitForTimeout(700);
+  }
+
+  const jogKmField = () => page.locator('label:has-text("距離(km)") input').first();
+  const repsField = () => page.getByLabel("本数", { exact: true });
+  const toInterval = async () => {
+    await page.locator('button:has-text("インターバル")').first().click();
+    await page.waitForTimeout(500);
+  };
+  const toJog = async () => {
+    // 「ジョグ」だけだとレスト内容のチップにも当たる。モードのボタンは「ジョグ・持続走」
+    await page.getByRole("button", { name: "ジョグ・持続走", exact: true }).first().click();
+    await page.waitForTimeout(500);
+  };
+
+  // インターバルとして入れる
+  await toInterval();
+  if (!(await repsField().count())) fail("記録画面の不変条件: インターバルの欄が出ていない");
+  await repsField().fill("3");
+  await page.locator('label:has-text("距離(m)") input').first().fill("400");
+  await page.waitForTimeout(300);
+
+  // ジョグへ切り替えて、そちらを埋める
+  await toJog();
+  await jogKmField().fill("8");
+  await page.locator('label:has-text("時間(分)") input').first().fill("40");
+  await page.waitForTimeout(300);
+
+  // 不変条件2: 行き来しても両方の入力が残っている（保存の**前**に見る）
+  await toInterval();
+  const keptReps = await repsField().inputValue();
+  if (keptReps !== "3") fail(`記録画面の不変条件: 切り替えたら本数が消えた（${keptReps}）`);
+  await toJog();
+  const keptKm = await jogKmField().inputValue();
+  if (keptKm !== "8") fail(`記録画面の不変条件: 切り替えたらジョグの距離が消えた（${keptKm}）`);
+
+  // ジョグとして保存する
+  await setSlider(page.getByTestId("rpe-slider"), 4);
+  await page.getByRole("button", { name: "主観 余裕" }).click();
+  await page.waitForTimeout(300);
+  // 既に記録があると「上書きして保存する」に変わる
+  await page.getByRole("button", { name: /登録して補正を実行|上書きして保存する/ }).click();
+  await page.waitForTimeout(300);
+  await page.getByRole("button", { name: "実行する" }).click();
+  await page.waitForTimeout(1400);
+
+  /*
+   * 同じ日に同名のジョグが複数あるので sessionId では引かない
+   * （一覧の何番目を押したかで id が変わる）。いま入れた値そのもので探す。
+   */
+  const saved = await page.evaluate(async (date) => {
+    const d = await fetch("/api/results").then((r) => r.json());
+    return (
+      (d.results ?? []).find(
+        (r) => r.date === date && r.continuous && r.continuous.distanceKm === 8
+      ) ?? null
+    );
+  }, formTarget.date);
+  if (!saved) fail("記録画面の不変条件: ジョグとして保存されていない");
+
+  // 不変条件1: 隠れていたインターバルの値が混ざっていない
+  if (saved.interval !== undefined) {
+    fail(
+      "記録画面の不変条件: ジョグとして保存したのにインターバルの値が付いている（" +
+        JSON.stringify(saved.interval) +
+        "）"
+    );
+  }
+  if ((saved.actualLapsSec ?? []).length > 0) {
+    fail(
+      `記録画面の不変条件: ジョグなのにラップが入っている（${JSON.stringify(saved.actualLapsSec)}）`
+    );
+  }
+
+  step("記録画面の不変条件OK（隠れた値は保存に混ざらない・切り替えても入力が消えない）");
+}
+
+
 if (errors.length) {
   console.log("JS ERRORS:", errors.slice(0, 5));
   process.exitCode = 1;
