@@ -55,10 +55,15 @@ jobs:
       - name: Repo-wide checks (secrets / forbidden patterns / API-shim parity)
         run: npm run ci:checks
 
-      # unit test（CFE・coverage・golden cases・property/boundary・backup往復・
-      # migration(mergeベース)・apiAuth・VERSION整合性 等、既存574件超を含む）
-      - name: Unit tests
-        run: npm test
+      # unit test（CFE・golden cases・property/boundary・backup往復・
+      # migration(mergeベース)・apiAuth・VERSION整合性 など）。
+      # 件数はここに書かない——文書と同じで、書いた瞬間から古くなる。
+      #
+      # カバレッジ付きで走らせる。閾値は scripts/ci/coverage-thresholds.json に
+      # 測定時の現在値が入っていて、**下がったら落ちる**。
+      # line だけでなく branch と function も見る（if の片側しか踏んでいないのを隠さない）。
+      - name: Unit tests with coverage
+        run: npm run test:coverage
 
       # PWAビルド（アトミック: 失敗時はpwa-dist/に一切影響しない）
       - name: Build PWA (atomic)

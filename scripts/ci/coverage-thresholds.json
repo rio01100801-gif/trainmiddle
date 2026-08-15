@@ -1,0 +1,49 @@
+{
+  "_comment": "測った現在値をそのまま下限にしてある。下げるときは差分に必ず出る。根拠なく高い値を置かない（通らない閾値は無視されるようになり、結局なにも守らなくなる）。上げるのは、未検証の分岐を実際に埋めたとき。npm run coverage:report が「どこが空白か」を出す。",
+  "lines": 92.6,
+  "branches": 83.7,
+  "functions": 91.9,
+  "statements": 90.5,
+  "src/lib/core/cfe.ts": {
+    "lines": 100,
+    "branches": 96.7,
+    "functions": 100,
+    "statements": 100
+  },
+  "src/lib/core/rules.ts": {
+    "lines": 99.4,
+    "branches": 91.1,
+    "functions": 98.3,
+    "statements": 98
+  },
+  "src/lib/core/progression.ts": {
+    "lines": 98.1,
+    "branches": 92.3,
+    "functions": 100,
+    "statements": 95.7
+  },
+  "src/lib/core/adaptive.ts": {
+    "lines": 97.1,
+    "branches": 88.2,
+    "functions": 98,
+    "statements": 96.7
+  },
+  "src/lib/core/pace.ts": {
+    "lines": 98.4,
+    "branches": 90.7,
+    "functions": 90.9,
+    "statements": 93.7
+  },
+  "src/lib/core/periodization.ts": {
+    "lines": 96,
+    "branches": 90,
+    "functions": 96.9,
+    "statements": 94.3
+  },
+  "src/lib/service.ts": {
+    "lines": 85.8,
+    "branches": 73.9,
+    "functions": 82,
+    "statements": 82.9
+  }
+}

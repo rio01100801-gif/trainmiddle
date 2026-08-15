@@ -20,3 +20,7 @@ visual/diff/
 .claude/settings.local.json
 /.pwa-dist-staging/
 /.pwa-dist-backup/
+
+# カバレッジの出力。閾値は scripts/ci/coverage-thresholds.json に置いてあり、
+# レポート自体は毎回作り直せるのでコミットしない。
+coverage/

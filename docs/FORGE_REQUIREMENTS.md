@@ -6,7 +6,7 @@
 着手するときに、その節へ要件・完了条件・テストを書いてから実装する。
 
 - 現在地と引継ぎ → `../HANDOFF.md`
-- 進める順番 → `FORGE_BACKLOG.md`
+- 進める順番 → `../BACKLOG.md`
 - 設計判断の記録 → `../README.md`
 - 作業の約束事 → `../AGENTS.md`
 
@@ -164,7 +164,7 @@
   `importBackup` 経路の1件も別途赤を確認してから修正。
   E2E は**UI検証を壊すと落ちること**を確認してから復元した（T-4）。
 - **完了条件（達成済み）**: `npm run verify` が修正前・修正後とも緑
-  （783件 51ファイル / `ALL E2E PASS` / `UPDATE E2E PASS`）。
+  （`ALL E2E PASS` / `UPDATE E2E PASS`。当時の件数は CHANGELOG.md を見る）。
   SQLite / IndexedDB の両方で往復。Next.js / PWA の両経路が同じ `saveGoalAndRaces` を通る。
   `exportBackup` 往復で残る。旧 Race JSON が読める。VERSION は `forge-v32` のまま。
 - **残り**: 実機 `forge-v32` で元の症状が再現するかの確認。
@@ -218,7 +218,7 @@ Supabase プロジェクトは実在し、URL・Publishable Key とも正しい�
 - **追加したテスト**: `tests/sync.test.ts` に3件（先に赤を確認）。`pwa/e2e.mjs` に
   「`?sync=1` が欠けた復帰でも同期画面へ戻る」経路を追加し、判定を元に戻すと
   タイムアウトで落ちることを確認して復元（T-4）。
-- **完了条件（達成済み）**: `npm run verify` 緑（804件 52ファイル /
+- **完了条件（達成済み）**: `npm run verify` 緑（/
   `ALL E2E PASS` / `UPDATE E2E PASS`）。VERSION は `forge-v32` のまま。
 - **症状2（iPhone「サーバに接続できません」）**: `forge-v33` 配信後、本人が実機で
   再現しないことを確認した（2026-07-30）。**ただし根本原因は未確定。** 症状1の

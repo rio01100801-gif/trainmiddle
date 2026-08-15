@@ -27,13 +27,16 @@
     "ci:forbidden": "node scripts/ci/check-forbidden-patterns.mjs",
     "ci:api-parity": "node scripts/ci/check-api-shim-parity.mjs",
     "ci:perf-budget": "node scripts/ci/check-perf-budget.mjs",
-    "ci:checks": "npm run ci:secrets && npm run ci:forbidden && npm run ci:api-parity",
+    "ci:checks": "npm run ci:secrets && npm run ci:forbidden && npm run ci:api-parity && npm run ci:docs",
     "release:check": "node scripts/release-check.mjs",
     "smoke": "node scripts/smoke-test.mjs",
     "visual": "node pwa/visual.mjs --all-widths --check",
     "visual:shots": "node pwa/visual.mjs",
     "visual:update": "node pwa/visual.mjs --all-widths --update",
-    "build:splash": "node scripts/build-splash-screens.mjs"
+    "build:splash": "node scripts/build-splash-screens.mjs",
+    "test:coverage": "vitest run --coverage --maxWorkers=1",
+    "coverage:report": "node scripts/ci/coverage-report.mjs",
+    "ci:docs": "node scripts/ci/check-doc-numbers.mjs"
   },
   "dependencies": {
     "fit-file-parser": "^4.1.0",
@@ -45,6 +48,7 @@
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "autoprefixer": "^10.4.19",
     "playwright": "^1.47.0",
     "postcss": "8.5.25",
