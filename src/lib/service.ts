@@ -112,6 +112,8 @@ import {
   type SyncRecord,
 } from "./core/healthImport";
 import { analyzeRace, RaceAnalysisOutput } from "./core/raceAnalysis";
+import { conditionSplits, type ConditionSplit } from "./core/conditions";
+import { shoeUsage, type Shoe, type ShoeUsage } from "./core/shoes";
 import { buildFourWeekBalance, type FourWeekBalance } from "./core/trainingBalance";
 import { cycleOf, cyclePositionFor, validateWeekTemplate } from "./core/weekTemplate";
 import {
@@ -3941,6 +3943,75 @@ export function splitAnalysis(repo: Store): SplitTrend {
     return true;
   });
   return splitTrend(unique, target);
+}
+
+/**
+ * シューズ。
+ *
+ * 一覧は kv に置く。専用のテーブルを作らないのは、
+ * 数が十数足で、検索の条件にもならないため。kv は書き出し・復元の両方に乗っている。
+ *
+ * **使用距離は持たない。** 結果から毎回足し上げる（`shoeUsage`）。
+ * カウンタを持つと、記録を消したり直したりしたときにずれて、
+ * しかもずれたことに気づけない。
+ */
+const SHOES_KEY = "shoes:list";
+
+export function listShoes(repo: Store): Shoe[] {
+  return repo.getKv<Shoe[]>(SHOES_KEY) ?? [];
+}
+
+export function saveShoe(repo: Store, shoe: Shoe): Shoe[] {
+  const name = shoe.name.trim();
+  if (!name) throw new Error("シューズの名前を入れてください");
+  const list = listShoes(repo);
+  const index = list.findIndex((x) => x.id === shoe.id);
+  const next = { ...shoe, name };
+  if (index >= 0) list[index] = next;
+  else list.push(next);
+  repo.saveKv(SHOES_KEY, list);
+  return list;
+}
+
+/**
+ * 消す。
+ *
+ * **使った記録がある靴は消さない。** 消すと過去の記録が指す先が無くなり、
+ * 「何を履いていたか」が分からなくなる。使い終わったものは「引退」にする
+ * （選択肢からは消えるが、履歴は残る）。
+ */
+export function deleteShoe(
+  repo: Store,
+  shoeId: string
+): { deleted: boolean; reason?: string } {
+  const used = repo.listResults().some((r) => r.shoeId === shoeId);
+  if (used) {
+    return {
+      deleted: false,
+      reason:
+        "使った記録があるシューズは消せません。履歴が指す先が無くなるためです。使い終わったものは「引退」にしてください（選択肢から外れ、記録は残ります）。",
+    };
+  }
+  repo.saveKv(
+    SHOES_KEY,
+    listShoes(repo).filter((x) => x.id !== shoeId)
+  );
+  return { deleted: true };
+}
+
+/** 靴ごとの使用距離。結果から毎回足し上げる */
+export function shoeUsageList(repo: Store): ShoeUsage[] {
+  return shoeUsage(listShoes(repo), trustedResults(repo), repo.listSessions());
+}
+
+/**
+ * 同じ処方を条件タグで分けたときのRPEの差。
+ *
+ * 「設定は同じでも雨でRPEが上がった」を数字にする。
+ * **これで設定は動かさない。** 見て本人が判断する材料。
+ */
+export function conditionComparison(repo: Store): ConditionSplit[] {
+  return conditionSplits(trustedResults(repo));
 }
 
 /** M-10: 接地時間 */

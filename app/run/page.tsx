@@ -304,7 +304,11 @@ export default function RunPage() {
               value={subjective}
               onChange={setSubjective}
               options={SUBJECTIVE_OPTIONS}
-              allowEmpty
+              /*
+                主観は必須なので、選んだあとに外せるようにしない。
+                allowEmpty を付けていたら、選んだチップをもう一度押したときに
+                未入力へ戻り、保存が止まる。任意の欄（翌日の脚）とは扱いを分ける。
+              */
             />
           </div>
           <ConfirmButton

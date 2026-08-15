@@ -408,6 +408,16 @@ export interface SessionResult {
   rain?: boolean;
   /** 2-1: WBGT等から自動判定される暑熱条件フラグ。true は能力推定から除外 */
   heatFlagged?: boolean;
+  /**
+   * その日の条件（天候・路面）のタグ。 の一覧を指す。
+   *
+   * 「設定は同じなのにRPEが上がった」の理由を、あとから見分けるための記録。
+   * **判定には使わない**——暑熱条件フラグは今までどおり気温と湿度から決める。
+   * タグを判定に混ぜると、付け忘れが能力の変化として現れる。
+   */
+  conditions?: string[];
+  /** 履いた靴（）。製品ごとの使用距離はここから足し上げる */
+  shoeId?: string;
   skipReason?: SkipReason;
   note?: string;
   durationMin?: number;

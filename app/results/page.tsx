@@ -25,6 +25,7 @@ import {
   BODY_PARTS,
   BODY_PART_OPTIONS,
   ChipGroup,
+  ChipMultiGroup,
   INJURY_STATUS_OPTIONS,
   LEGS_OPTIONS,
   REST_MODE_OPTIONS,
@@ -34,9 +35,15 @@ import {
   SnapSlider,
   Stepper,
   WIND_OPTIONS,
+  SURFACE_OPTIONS,
+  SURFACE_TAGS,
+  WEATHER_OPTIONS,
+  WEATHER_TAGS,
   describePain,
   describeRpe,
 } from "../components/inputs";
+import { normalizeConditions } from "@/lib/core/conditions";
+import { shoeChoices, type ShoeUsage } from "@/lib/core/shoes";
 import { PAIN_MAX, PAIN_MIN, RPE_MAX, RPE_MIN, isValidRpe } from "@/lib/core/rpe";
 import type {
   FitnessMarkerPurpose,
@@ -1288,6 +1295,16 @@ function ResultForm({
   const [tempC, setTempC] = useState(num(existing?.weatherTempC));
   const [humidity, setHumidity] = useState(num(existing?.humidityPct));
   const [wind, setWind] = useState(existing?.wind ?? "");
+  /*
+   * 天候・路面のタグと、履いた靴。
+   * 「設定は同じなのにRPEが上がった」の理由を、あとから見分けるための記録。
+   * 判定には使わない（暑熱条件は今までどおり気温と湿度のWBGTだけ）。
+   */
+  const [conditions, setConditions] = useState<string[]>(
+    normalizeConditions(existing?.conditions)
+  );
+  const [shoeId, setShoeId] = useState<string | undefined>(existing?.shoeId);
+  const [shoes, setShoes] = useState<ShoeUsage[]>([]);
   const [rain, setRain] = useState(!!existing?.rain);
 
   // スキップ
@@ -1399,6 +1416,16 @@ function ResultForm({
     tempC: tempC ? Number(tempC) : undefined,
     humidityPct: humidity ? Number(humidity) : undefined,
   });
+  // 登録済みのシューズ。最後に使ったものが先頭に来る（毎回同じ靴なら1タップ）
+  useEffect(() => {
+    fetch("/api/shoes")
+      .then((r) => r.json())
+      .then((d) => setShoes(shoeChoices(d.usage ?? [])))
+      .catch(() => {
+        /* 靴は任意。取れなくても記録は入れられる */
+      });
+  }, []);
+
   const envNotes = environmentNote({
     tempC: tempC ? Number(tempC) : undefined,
     humidityPct: humidity ? Number(humidity) : undefined,
@@ -1455,6 +1482,8 @@ function ResultForm({
         humidityPct: humidity ? Number(humidity) : undefined,
         wind: wind || undefined,
         rain: rain || undefined,
+        conditions: conditions.length > 0 ? conditions : undefined,
+        shoeId: shoeId || undefined,
       };
 
       let payload: any;
@@ -2051,7 +2080,11 @@ function ResultForm({
               value={subjective}
               onChange={setSubjective}
               options={SUBJECTIVE_OPTIONS}
-              allowEmpty
+              /*
+                主観は必須なので、選んだあとに外せるようにしない。
+                allowEmpty を付けていたら、選んだチップをもう一度押したときに
+                未入力へ戻り、保存が止まる。任意の欄（翌日の脚）とは扱いを分ける。
+              */
               testId="subjective-chips"
             />
             <ChipGroup
@@ -2063,6 +2096,55 @@ function ResultForm({
               emptyLabel="未入力（任意）"
               testId="legs-chips"
             />
+            {/*
+              その日の条件。複数選べる（雨で、かつトラックが濡れていた、など）。
+              あとで「同じ設定なのにRPEが上がった」の理由を見分けるための記録で、
+              **設定の判定には使わない**。
+            */}
+            <ChipMultiGroup
+              label="天候"
+              values={conditions.filter((c) => WEATHER_TAGS.includes(c))}
+              onChange={(next) =>
+                setConditions(
+                  normalizeConditions([
+                    ...next,
+                    ...conditions.filter((c) => !WEATHER_TAGS.includes(c)),
+                  ])
+                )
+              }
+              options={WEATHER_OPTIONS}
+              testId="weather-chips"
+            />
+            <ChipMultiGroup
+              label="路面"
+              values={conditions.filter((c) => SURFACE_TAGS.includes(c))}
+              onChange={(next) =>
+                setConditions(
+                  normalizeConditions([
+                    ...next,
+                    ...conditions.filter((c) => !SURFACE_TAGS.includes(c)),
+                  ])
+                )
+              }
+              options={SURFACE_OPTIONS}
+              hint="同じ設定でもRPEが上がった理由を、あとで見分けるための記録です。設定の判定には使いません。"
+              testId="surface-chips"
+            />
+            {shoes.length > 0 ? (
+              <ChipGroup
+                label="シューズ"
+                value={shoeId}
+                onChange={setShoeId}
+                options={shoes.map((u) => ({
+                  value: u.shoe.id,
+                  label: `${u.shoe.name}${u.totalKm > 0 ? ` ${u.totalKm}km` : ""}`,
+                }))}
+                allowEmpty
+                emptyLabel="未選択（任意）"
+                columns={2}
+                testId="shoe-chips"
+              />
+            ) : null}
           </div>
 
           {/* 2-1 環境条件（任意項目なので折りたたみ） */}

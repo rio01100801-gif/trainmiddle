@@ -5305,6 +5305,122 @@ if ((await fitRebuildCard.count()) === 0) {
   step("カレンダーの週が戻らないOK（送る→離れる→戻る→同じ週／今日で戻せる）");
 }
 
+// ---- 天候・路面のタグとシューズ ----
+/*
+ * 狙いは「設定は同じなのにRPEが上がった」の理由を見分けられるようにすること。
+ * ここで見るのは、記録されること・**再編集で戻ってくること**・
+ * そして**判定に混ざっていないこと**（暑熱条件フラグが変わらない）。
+ */
+{
+  // 1) シューズを登録する
+  await page.goto("http://localhost:8791/#/settings");
+  await page.waitForTimeout(800);
+  await page.getByLabel("製品名").fill("E2Eスパイク");
+  await page.getByRole("button", { name: "種類 スパイク" }).click();
+  await page.getByRole("button", { name: "登録する" }).click();
+  await page.waitForTimeout(700);
+  const settingsText = await page.textContent("body");
+  if (!settingsText.includes("E2Eスパイク")) fail("シューズを登録しても一覧に出ない");
+  if (!settingsText.includes("0km")) fail("使用距離の初期値が出ていない");
+
+  const shoes = await page.evaluate(async () => fetch("/api/shoes").then((r) => r.json()));
+  const shoeId = (shoes.shoes ?? []).find((x) => x.name === "E2Eスパイク")?.id;
+  if (!shoeId) fail("シューズがAPIから返らない（シムに対で足していない可能性）");
+
+  // 2) 記録に条件と靴を付ける
+  const target = await page.evaluate(async () => {
+    const d = await fetch("/api/sessions").then((r) => r.json());
+    const s = (d.sessions ?? [])
+      .filter((x) => x.category === "aerobic" && x.status === "planned")
+      .sort((a, b) => a.date.localeCompare(b.date))[0];
+    return s ? { date: s.date, id: s.id } : null;
+  });
+  if (!target) fail("条件タグを付けられる予定が無い");
+
+  await page.goto(`http://localhost:8791/#/results?date=${target.date}`);
+  await page.waitForTimeout(900);
+  await page.getByRole("button", { name: /練習結果/ }).click();
+  await page.waitForTimeout(600);
+  // その日のセッションを選んでから、記録の形を選ぶ
+  await page.locator('button:has-text("有酸素")').first().click();
+  await page.waitForTimeout(400);
+  await page.getByRole("button", { name: "ジョグ・持続走", exact: true }).click();
+  await page.waitForTimeout(400);
+
+  if (!(await page.getByTestId("weather-chips").count())) fail("天候のチップが出ていない");
+  if (!(await page.getByTestId("surface-chips").count())) fail("路面のチップが出ていない");
+
+  await page.getByRole("button", { name: "天候 雨" }).click();
+  await page.getByRole("button", { name: "路面 トラック濡れ" }).click();
+  await page.waitForTimeout(200);
+  // 複数選べること（1つ押しても前のが外れない）
+  const weatherPressed = await page
+    .locator('[role="group"][aria-label="天候"] button[aria-pressed="true"]')
+    .count();
+  if (weatherPressed !== 1) fail(`天候の選択がおかしい（${weatherPressed}個）`);
+  await page.getByRole("button", { name: "天候 強風" }).click();
+  await page.waitForTimeout(200);
+  if (
+    (await page.locator('[role="group"][aria-label="天候"] button[aria-pressed="true"]').count()) !== 2
+  ) {
+    fail("天候が複数選べない（単一選択になっている）");
+  }
+
+  if (!(await page.getByTestId("shoe-chips").count())) fail("シューズの選択が出ていない");
+  await page.getByRole("button", { name: /シューズ E2Eスパイク/ }).click();
+  await page.waitForTimeout(200);
+
+  await setSlider(page.getByTestId("rpe-slider"), 8);
+  await page.getByRole("button", { name: "主観 きつい" }).click();
+  await page.getByPlaceholder("11.2").fill("10");
+  await page.getByPlaceholder("50", { exact: true }).fill("50");
+  await page.waitForTimeout(300);
+  await page
+    .getByRole("button", { name: /登録して補正を実行|上書きして保存する/ })
+    .first()
+    .click();
+  await page.waitForTimeout(300);
+  await page.getByRole("button", { name: "実行する" }).click();
+  await page.waitForTimeout(1200);
+
+  // 3) 保存されていること
+  const saved = await page.evaluate(async (date) => {
+    const d = await fetch("/api/results").then((r) => r.json());
+    const list = d.results ?? d ?? [];
+    return list.find((r) => r.date === date && (r.conditions ?? []).length > 0) ?? null;
+  }, target.date);
+  if (!saved) fail("条件つきの記録が保存されていない");
+  if (!(saved.conditions ?? []).includes("rain")) {
+    fail("天候タグが保存されていない: " + JSON.stringify(saved.conditions));
+  }
+  if (!(saved.conditions ?? []).includes("track_wet")) fail("路面タグが保存されていない");
+  if (saved.shoeId !== shoeId) fail(`シューズが保存されていない（${saved.shoeId}）`);
+
+  // 4) 使用距離が積まれること（合計は毎回足し上げる）
+  const after = await page.evaluate(async () => fetch("/api/shoes").then((r) => r.json()));
+  const usage = (after.usage ?? []).find((u) => u.shoe.name === "E2Eスパイク");
+  if (!usage || usage.totalKm <= 0) {
+    fail(`シューズの使用距離が積まれていない（${JSON.stringify(usage)}）`);
+  }
+
+  // 5) 開き直したときに選択が戻ること
+  await page.goto("http://localhost:8791/#/");
+  await page.waitForTimeout(500);
+  await page.goto(`http://localhost:8791/#/results?date=${target.date}`);
+  await page.waitForTimeout(900);
+  await page.getByRole("button", { name: /練習結果/ }).click();
+  await page.waitForTimeout(500);
+  // その日のセッションを選ばないとフォームが出ない
+  await page.locator('button:has-text("有酸素")').first().click();
+  await page.waitForTimeout(700);
+  const rePressed = await page
+    .locator('[role="group"][aria-label="天候"] button[aria-pressed="true"]')
+    .count();
+  if (rePressed < 1) fail("再編集で天候タグが戻らない");
+
+  step(`天候・路面・シューズOK（複数選択・保存・再編集・使用距離${usage.totalKm}km）`);
+}
+
 if (errors.length) {
   console.log("JS ERRORS:", errors.slice(0, 5));
   process.exitCode = 1;

@@ -57,8 +57,13 @@ import {
   rejectTaperPlan,
   limiterAssessment,
   splitAnalysis,
+  conditionComparison,
   currentPhase,
   deleteRace,
+  deleteShoe,
+  listShoes,
+  saveShoe,
+  shoeUsageList,
   contactTimeStatus,
   trainingBalance,
   listContactSamples,
@@ -127,6 +132,36 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
       const out = deleteRace(repo, raceId);
       if (!out.deleted) return { error: out.reason };
       return { ok: true, races: repo.listRaces() };
+    },
+  },
+
+  // シューズの登録と使用距離。app/api/shoes と対
+  "/api/shoes": {
+    GET: (repo) => ({
+      shoes: listShoes(repo),
+      usage: shoeUsageList(repo),
+      conditionSplits: conditionComparison(repo),
+    }),
+    POST: (repo, body) => {
+      const shoe = {
+        id: body.id ?? `shoe-${Date.now()}`,
+        name: body.name ?? "",
+        kind: body.kind ?? "trainer",
+        note: body.note,
+        retired: body.retired,
+      };
+      try {
+        return { ok: true, shoes: saveShoe(repo, shoe), usage: shoeUsageList(repo) };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : String(error) };
+      }
+    },
+    DELETE: (repo, _b, params) => {
+      const shoeId = params.get("shoeId");
+      if (!shoeId) return { error: "shoeId が必要です" };
+      const out = deleteShoe(repo, shoeId);
+      if (!out.deleted) return { error: out.reason };
+      return { ok: true, shoes: listShoes(repo), usage: shoeUsageList(repo) };
     },
   },
 

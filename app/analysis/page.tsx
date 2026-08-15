@@ -165,6 +165,7 @@ export default function AnalysisPage() {
       <div className={seg === "trend" ? "flex flex-col gap-3" : "hidden"}>
         <PerformancePanel periods={data.performance ?? []} />
         <BalanceCard balance={data.balance} />
+        <ConditionCard />
         <TimelineCard days={data.timeline ?? []} />
       </div>
 
@@ -352,6 +353,71 @@ interface BalanceView {
   weeks: BalanceWeekView[];
   adherencePct?: number;
   signals: { code: string; level: string; message: string; action: string }[];
+}
+
+
+/**
+ * 同じ練習を、条件で分けて見る。
+ *
+ * 「設定は同じでも雨でRPEが上がった」を数字にするためのもの。
+ * **これで設定は動かさない**——見て本人が判断する材料。
+ * 自動で補正すると、タグの付け忘れが能力の変化として現れる。
+ */
+function ConditionCard() {
+  const [splits, setSplits] = useState<any[]>([]);
+  useEffect(() => {
+    fetch("/api/shoes")
+      .then((r) => r.json())
+      .then((d) => setSplits(d.conditionSplits ?? []))
+      .catch(() => {
+        /* 参考情報。取れなくても分析の他は出る */
+      });
+  }, []);
+  if (splits.length === 0) return null;
+  return (
+    <Card title="条件でRPEがどれだけ変わるか">
+      <p className="text-[11px] mb-2 leading-relaxed" style={{ color: "var(--text-2)" }}>
+        記録に付けた天候・路面のタグで分けた平均RPEです。
+        <strong>設定はこれで動かしません</strong>——「きつかったのは条件のせいか、能力が落ちたのか」を
+        見分けるための材料です。両方が2回以上たまったタグだけ出します。
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12px]" style={{ borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              {["条件", "あり", "なし", "差"].map((h) => (
+                <th key={h} className="metric-label text-left py-1 pr-2" style={{ borderBottom: "1px solid var(--border)" }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {splits.map((s) => (
+              <tr key={s.tag} style={{ borderBottom: "1px solid var(--border)" }}>
+                <td className="py-1.5 pr-2 whitespace-nowrap">{s.label}</td>
+                <td className="py-1.5 pr-2 num whitespace-nowrap">
+                  {s.withRpe.toFixed(1)}
+                  <small style={{ color: "var(--text-3)" }}> ({s.withCount})</small>
+                </td>
+                <td className="py-1.5 pr-2 num whitespace-nowrap">
+                  {s.withoutRpe.toFixed(1)}
+                  <small style={{ color: "var(--text-3)" }}> ({s.withoutCount})</small>
+                </td>
+                <td
+                  className="py-1.5 num whitespace-nowrap font-bold"
+                  style={{ color: s.deltaRpe > 0 ? "var(--amber)" : "var(--forge)" }}
+                >
+                  {s.deltaRpe > 0 ? "+" : ""}
+                  {s.deltaRpe.toFixed(1)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
 }
 
 function BalanceCard({ balance }: { balance?: BalanceView | null }) {

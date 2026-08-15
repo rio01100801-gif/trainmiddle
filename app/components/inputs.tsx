@@ -8,6 +8,7 @@ import {
   painDescription,
   rpeLevel,
 } from "@/lib/core/rpe";
+import { CONDITION_TAGS } from "@/lib/core/conditions";
 
 /**
  * 入力の部品。
@@ -383,3 +384,93 @@ export const REST_MODE_OPTIONS: { value: "time" | "distance"; label: string }[] 
   { value: "time", label: "時間(秒)" },
   { value: "distance", label: "距離(m)" },
 ];
+
+// ---------------------------------------------------------------------------
+// 複数選べるチップ
+// ---------------------------------------------------------------------------
+
+/**
+ * 複数選択のチップ。天候・路面のように「同時にいくつも当てはまる」ものに使う。
+ *
+ * 単一選択（`ChipGroup`）と分けているのは、押したときの意味が違うから。
+ * こちらは押すたびに入る・外れる。選んでいる数を出して、
+ * 「何も選んでいない」と「選び忘れ」を見分けられるようにする。
+ */
+export function ChipMultiGroup({
+  label,
+  values,
+  onChange,
+  options,
+  columns,
+  hint,
+  testId,
+}: {
+  label: string;
+  values: string[];
+  onChange: (next: string[]) => void;
+  options: { value: string; label: string }[];
+  columns?: number;
+  hint?: string;
+  testId?: string;
+}) {
+  const cols = columns ?? 3;
+  const toggle = (v: string) =>
+    onChange(values.includes(v) ? values.filter((x) => x !== v) : [...values, v]);
+  return (
+    <div className="w-full" data-testid={testId}>
+      <div className="flex items-baseline justify-between gap-2 mb-1">
+        <span className="metric-label">{label}</span>
+        <span className="text-[11px]" style={{ color: "var(--text-3)" }}>
+          {values.length > 0 ? `${values.length}個` : "なし"}
+        </span>
+      </div>
+      <div
+        role="group"
+        aria-label={label}
+        className="grid gap-1.5"
+        style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+      >
+        {options.map((o) => {
+          const on = values.includes(o.value);
+          return (
+            <button
+              key={o.value}
+              type="button"
+              aria-pressed={on}
+              aria-label={`${label} ${o.label}`}
+              onClick={() => toggle(o.value)}
+              className="rounded-lg border text-[12px] font-semibold min-h-[44px] px-1"
+              style={{
+                background: on ? "var(--volt)" : "var(--surface-2)",
+                borderColor: on ? "transparent" : "var(--border-2)",
+                color: on ? "var(--volt-ink)" : "var(--text-2)",
+              }}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+      {hint ? (
+        <p className="text-[10.5px] mt-1 leading-relaxed" style={{ color: "var(--text-3)" }}>
+          {hint}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * 天候・路面のタグ。core の一覧から画面用に組み替えるだけで、語彙は増やさない。
+ * IDは過去の記録が指しているので、ここで別名を作らない。
+ */
+export const WEATHER_TAGS = CONDITION_TAGS.filter((t) => t.group === "weather").map((t) => t.id);
+export const SURFACE_TAGS = CONDITION_TAGS.filter((t) => t.group === "surface").map((t) => t.id);
+export const WEATHER_OPTIONS = CONDITION_TAGS.filter((t) => t.group === "weather").map((t) => ({
+  value: t.id,
+  label: t.label,
+}));
+export const SURFACE_OPTIONS = CONDITION_TAGS.filter((t) => t.group === "surface").map((t) => ({
+  value: t.id,
+  label: t.label,
+}));
