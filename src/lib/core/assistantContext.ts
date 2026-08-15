@@ -63,6 +63,8 @@ export interface AssistantResultInput {
   completedReps?: number;
   prescribedReps?: number;
   aborted?: boolean;
+  /** 途中でやめた理由。何が起きたかだけでなく、なぜ止めたかを相談相手に渡す */
+  abortCauseLabel?: string;
 }
 
 export interface AssistantContextInput {
@@ -145,7 +147,11 @@ function resultLine(r: AssistantResultInput): string {
     r.completedReps !== undefined && r.prescribedReps !== undefined && r.completedReps !== r.prescribedReps
       ? ` 実施${r.completedReps}/${r.prescribedReps}本`
       : "";
-  const aborted = r.aborted ? " ※中止基準で打ち切り" : "";
+  const aborted = r.aborted
+    ? r.abortCauseLabel
+      ? ` ※打ち切り（${r.abortCauseLabel}）`
+      : " ※中止基準で打ち切り"
+    : "";
   return `${r.date} ${r.sessionName}［${r.category}］ ${dists}${laps} RPE${r.rpe} ${r.achievement}${reps}${aborted}`;
 }
 

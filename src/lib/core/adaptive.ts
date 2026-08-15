@@ -30,6 +30,7 @@ import type {
 } from "./types";
 import { diffDays } from "./dates";
 import { equivalentRepSec } from "./workoutLog";
+import { countsTowardPaceEase, type AbortCause } from "./abortCause";
 
 // ---------------------------------------------------------------------------
 // 閾値
@@ -63,6 +64,8 @@ export interface ExecutionSample {
   deviationSec: number;
   ratio: number;
   aborted: boolean;
+  /** 途中でやめた理由。未入力のままのこともある（旧データ・本数を減らしただけの記録） */
+  abortCause?: AbortCause;
   heatFlagged: boolean;
   achievement: SessionResult["achievement"];
   rpe: number;
@@ -137,6 +140,7 @@ export function executionSamples(
         (r.completedReps !== undefined &&
           r.prescribedReps !== undefined &&
           r.completedReps < r.prescribedReps),
+      abortCause: r.abortCause,
       heatFlagged: !!r.heatFlagged,
       achievement: r.achievement,
       rpe: r.rpe,
@@ -154,7 +158,14 @@ export interface ExecutionTrend {
   samples: ExecutionSample[];
   meanDeviationSec: number;
   meanRatio: number;
+  /** 打ち切った回数（理由を問わない）。表示用 */
   abortCount: number;
+  /**
+   * そのうち「設定が高すぎた」の材料に数える回数（設定・疲労のみ）。
+   * 緩めるかどうかはこちらで決める。天候・時間で止めた回数で設定を下げると、
+   * 実力は落ちていないのに設定だけが下がり続ける。
+   */
+  paceAbortCount: number;
   underachievedCount: number;
   highStrainCount: number;
   verdict: TrendVerdict;
@@ -170,6 +181,7 @@ export function executionTrend(samples: ExecutionSample[]): ExecutionTrend {
       meanDeviationSec: 0,
       meanRatio: 1,
       abortCount: 0,
+      paceAbortCount: 0,
       underachievedCount: 0,
       highStrainCount: 0,
       verdict: "hold",
@@ -181,6 +193,14 @@ export function executionTrend(samples: ExecutionSample[]): ExecutionTrend {
     samples.reduce((a, s) => a + s.deviationSec, 0) / samples.length;
   const meanRatio = samples.reduce((a, s) => a + s.ratio, 0) / samples.length;
   const abortCount = samples.filter((s) => s.aborted).length;
+  /*
+   * 設定を緩める材料に数えるのは、設定・疲労で止めたぶんだけ。
+   * 雨で止めた・時間切れで止めたのは「今日出せる値」の証拠ではない。
+   * 未入力は数える（理由を選べるようにする前の打ち切りは中止基準そのもの）。
+   */
+  const paceAbortCount = samples.filter(
+    (s) => s.aborted && countsTowardPaceEase(s.abortCause)
+  ).length;
   const underachievedCount = samples.filter(
     (sample) => sample.achievement === "partial" || sample.achievement === "failed"
   ).length;
@@ -189,18 +209,24 @@ export function executionTrend(samples: ExecutionSample[]): ExecutionTrend {
   ).length;
 
   // 打ち切りが2回続いたら、設定が高すぎると判断する（M-3 と対）
-  if (abortCount >= 2) {
+  if (paceAbortCount >= 2) {
     const factor = 1 + Math.min(MAX_EASE_PCT, Math.max(0.01, meanRatio - 1));
     return {
       samples,
       meanDeviationSec,
       meanRatio,
       abortCount,
+      paceAbortCount,
       underachievedCount,
       highStrainCount,
       verdict: "ease",
       factor,
-      reason: `直近${samples.length}回のうち${abortCount}回で打ち切りになっています。設定が高すぎます`,
+      reason:
+        `直近${samples.length}回のうち${paceAbortCount}回が、設定・疲労を理由とする打ち切りです。設定が高すぎます` +
+        // 数えなかったぶんも書く。黙って外すと、設定が動いた根拠を追えなくなる
+        (abortCount > paceAbortCount
+          ? `（ほかに${abortCount - paceAbortCount}回の打ち切りがありますが、走りと関係ない理由なので数えていません）`
+          : ""),
     };
   }
 
@@ -211,6 +237,7 @@ export function executionTrend(samples: ExecutionSample[]): ExecutionTrend {
       meanDeviationSec,
       meanRatio,
       abortCount,
+      paceAbortCount,
       underachievedCount,
       highStrainCount,
       verdict: "ease",
@@ -226,6 +253,7 @@ export function executionTrend(samples: ExecutionSample[]): ExecutionTrend {
       meanDeviationSec,
       meanRatio,
       abortCount,
+      paceAbortCount,
       underachievedCount,
       highStrainCount,
       verdict: "ease",
@@ -250,6 +278,7 @@ export function executionTrend(samples: ExecutionSample[]): ExecutionTrend {
       meanDeviationSec,
       meanRatio,
       abortCount,
+      paceAbortCount,
       underachievedCount,
       highStrainCount,
       verdict: "tighten",
@@ -263,6 +292,7 @@ export function executionTrend(samples: ExecutionSample[]): ExecutionTrend {
     meanDeviationSec,
     meanRatio,
     abortCount,
+    paceAbortCount,
     underachievedCount,
     highStrainCount,
     verdict: "hold",

@@ -1,10 +1,13 @@
 "use client";
 import {
+  ABORT_CAUSE_OPTIONS,
   ChipGroup,
   SUBJECTIVE_OPTIONS,
   SnapSlider,
+  abortCauseHint,
   describeRpe,
 } from "../components/inputs";
+import { abortCauseLabel, needsInjuryLog, type AbortCause } from "@/lib/core/abortCause";
 import { RPE_MAX, RPE_MIN, isValidRpe } from "@/lib/core/rpe";
 import type { Subjective } from "@/lib/core/types";
 import { useCallback, useEffect, useState } from "react";
@@ -51,6 +54,9 @@ export default function RunPage() {
   // RPEはこちらで埋めない（本人にしか分からず、CFEの補正に効く）。結果入力の欄と同じ扱い
   const [rpe, setRpe] = useState<number | undefined>(undefined);
   const [subjective, setSubjective] = useState<Subjective | undefined>(undefined);
+  /* なぜ止めたかは本人にしか分からない。既定値を置かない */
+  const [cause, setCause] = useState<AbortCause | undefined>(undefined);
+  const [causeNote, setCauseNote] = useState("");
   const [out, setOut] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -116,6 +122,11 @@ export default function RunPage() {
   };
 
   const finish = async (aborted: boolean) => {
+    // 理由を推測で埋めない。空のまま送ると「設定が高すぎた」として数えられてしまう
+    if (aborted && cause === undefined) {
+      alert("途中でやめた理由を選んでください。理由によって設定ペースの扱いが変わります。");
+      return;
+    }
     // 空のまま終えると Number("") が0になり、RPE0としてCFEの補正に入ってしまう
     if (!isValidRpe(rpe)) {
       alert("RPEを選んでください。きつさの感じ方は本人にしか分からないので、こちらでは埋めません。");
@@ -137,6 +148,8 @@ export default function RunPage() {
           rpe: rpeValue,
           subjective: subjective!,
           aborted,
+          abortCause: aborted ? cause : undefined,
+          abortNote: aborted && cause === "other" ? causeNote : undefined,
           today: localToday(),
         }),
       });
@@ -147,6 +160,12 @@ export default function RunPage() {
     }
   };
 
+  /*
+   * 予定より少ない本数で終えるなら、理由に関わらず「途中でやめた」。
+   * 以前は evaluation.verdict === "stop"（設定から外れた）だけを打ち切りにしていたので、
+   * 痛くて止めたときは設定どおりに走れているぶん完走として残っていた。
+   */
+  const short = reps.length < progress.plannedReps;
   const stop = evaluation.verdict === "stop";
   const done = evaluation.verdict === "done";
   const color = stop ? "var(--red)" : done ? "var(--forge)" : "var(--text)";
@@ -310,19 +329,60 @@ export default function RunPage() {
                 未入力へ戻り、保存が止まる。任意の欄（翌日の脚）とは扱いを分ける。
               */
             />
+            {/*
+              予定より少ない本数で終えるときだけ理由を聞く。
+              以前は中止基準に引っかかったときしか打ち切り扱いにならず、
+              痛みや時間で止めた場合は「完走」として記録されていた。
+            */}
+            {short ? (
+              <div className="flex flex-col gap-1.5">
+                <ChipGroup
+                  label={`途中でやめた理由（${progress.plannedReps}本の予定を${reps.length}本で終了）`}
+                  value={cause}
+                  onChange={setCause}
+                  options={ABORT_CAUSE_OPTIONS}
+                  columns={2}
+                  testId="abort-cause-chips"
+                />
+                <p
+                  className="text-[11.5px] leading-relaxed"
+                  style={{ color: cause ? "var(--text-2)" : "var(--amber)" }}
+                  data-testid="abort-cause-hint"
+                  role="status"
+                >
+                  {cause
+                    ? abortCauseHint(cause)
+                    : "理由で扱いが変わります。設定・疲労で止めたときだけ設定ペースを見直す材料に数えます。"}
+                </p>
+                {cause === "other" ? (
+                  <input
+                    className="w-full"
+                    aria-label="打ち切りの内容"
+                    placeholder="何があったか（任意）"
+                    value={causeNote}
+                    onChange={(e) => setCauseNote(e.target.value)}
+                  />
+                ) : null}
+              </div>
+            ) : null}
           </div>
           <ConfirmButton
-            label={stop ? "ここで打ち切って記録する" : "終えて記録する"}
+            label={short ? "ここで打ち切って記録する" : "終えて記録する"}
             title="この内容で記録しますか？"
             message={
-              stop
-                ? "打ち切りとして記録します。失敗ではありません。中止基準にしたがって止めた本数はCFEの未達には数えません。"
+              short
+                ? `${abortCauseLabel(cause)}のため打ち切りとして記録します。失敗ではありません。止めた本数はCFEの未達には数えません。`
                 : "そのまま練習結果になります。あとから記録画面で直せます。"
             }
             className="btn-volt w-full justify-center min-h-[48px]"
-            disabled={busy}
-            onConfirm={() => finish(stop)}
+            disabled={busy || (short && cause === undefined)}
+            onConfirm={() => finish(short)}
           />
+          {short && cause === undefined ? (
+            <p className="text-[11px] mt-2" style={{ color: "var(--amber)" }}>
+              理由を選ぶと記録できます。なぜ止めたかは本人にしか分からないので、こちらでは埋めません。
+            </p>
+          ) : null}
         </Card>
       ) : null}
 
@@ -333,8 +393,15 @@ export default function RunPage() {
               {n}
             </p>
           ))}
-          <a className="btn-ghost inline-flex mt-2" href={withQuery("/results", { date: session?.date })}>
-            記録画面で内容を直す
+          {/*
+            痛みで止めたときは、故障ログに残さないと次のメニューの判定に届かない。
+            打ち切りの記録そのものは負荷制限に使わない（部位も強さも分からないため）。
+          */}
+          <a
+            className={needsInjuryLog(cause) ? "btn-volt inline-flex mt-2" : "btn-ghost inline-flex mt-2"}
+            href={withQuery("/results", { date: session?.date })}
+          >
+            {needsInjuryLog(cause) ? "痛みの部位と強さを残す" : "記録画面で内容を直す"}
           </a>
         </Card>
       ) : null}

@@ -35,6 +35,7 @@ import { specificPace } from "./pace";
 import { diffDays } from "./dates";
 import type { Limiter } from "./limiter";
 import type { TrendVerdict } from "./adaptive";
+import { isStrainCause, type AbortCause } from "./abortCause";
 import {
   TRAINING_LOAD_LABELS,
   type TrainingLoadClass,
@@ -639,6 +640,8 @@ export interface TemplateHistoryEntry {
   rpe?: number;
   nextDayLegs?: NextDayLegs;
   aborted?: boolean;
+  /** 途中でやめた理由。体への負担として数えるかがこれで変わる */
+  abortCause?: AbortCause;
 }
 
 export interface BuildSpecInput {
@@ -718,7 +721,8 @@ function selectTemplate(
       (entry) =>
         entry.achievement === "partial" ||
         entry.achievement === "failed" ||
-        entry.aborted === true ||
+        // 天候・時間で止めたぶんは体への負担の証拠ではない（abortCause.ts）
+        (entry.aborted === true && isStrainCause(entry.abortCause)) ||
         (entry.rpe !== undefined && entry.rpe >= 9) ||
         entry.nextDayLegs === "heavy"
     ).length;

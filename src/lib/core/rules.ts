@@ -28,6 +28,7 @@ import type {
 } from "./types";
 import { addDays, diffDays, isMidsummer, isSummer, weekStart } from "./dates";
 import { isGrayZonePace } from "./pace";
+import { isStrainCause } from "./abortCause";
 import {
   HIGH_LOAD_CATEGORIES,
   hasDeepGlycolyticCostCategory,
@@ -139,7 +140,12 @@ function recoveryEvidence(ctx: RuleContext, sessions: Session[], week: string): 
   );
   const underachieved = results.filter(
     (result) =>
-      result.aborted === true ||
+      /*
+       * 打ち切りを疲労の裏付けに数えるのは、体の話で止めたときだけ。
+       * 雨・時間切れで止めたのを「回復していない証拠」に使うと、
+       * 走りとは関係ない事情で高負荷の配置に警告が出続ける（abortCause.ts）。
+       */
+      (result.aborted === true && isStrainCause(result.abortCause)) ||
       result.achievement === "partial" ||
       result.achievement === "failed"
   );
@@ -914,7 +920,8 @@ function acwrCorroboration(ctx: RuleContext): string[] {
     (result) =>
       result.date >= resultStart &&
       result.date <= ctx.evaluationDate &&
-      (result.aborted === true ||
+      // 同じ理由で、外的な事情の打ち切りはACWRの裏付けに数えない
+      ((result.aborted === true && isStrainCause(result.abortCause)) ||
         result.achievement === "partial" ||
         result.achievement === "failed" ||
         result.nextDayLegs === "heavy")

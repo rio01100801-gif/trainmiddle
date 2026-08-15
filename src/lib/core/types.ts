@@ -5,6 +5,12 @@
  * - すべてのタイム・ペースは「秒」で内部保持する（仕様書 8）
  * - 日付は "YYYY-MM-DD"、日時は ISO 8601 文字列
  */
+/*
+ * 型だけを取り込む。abortCause.ts は types.ts を参照していないので循環しない。
+ * 打ち切り理由は文字列ではなく列挙で持つ——扱い（設定を緩める材料に数えるか）が
+ * 値ごとに違うので、綴りの間違いを型で止めたい。
+ */
+import type { AbortCause } from "./abortCause";
 
 // ---------------------------------------------------------------------------
 // 3-1. 選手プロフィール
@@ -394,7 +400,16 @@ export interface SessionResult {
    * 打ち切りを未達としてCFEに響かせない（指示どおり止めたことを罰しない）。
    */
   aborted?: boolean;
+  /** 何が起きたか（自動生成の事実）。「3本目を予定1000mのうち600mで終了」など */
   abortReason?: string;
+  /**
+   * なぜ止めたか（本人が選ぶ）。事実と分けて持つ。
+   * 設定ペースの自動補正に数えるかどうかがこれで変わる（abortCause.ts）。
+   * 推測で埋めない——未入力のままにする。
+   */
+  abortCause?: AbortCause;
+  /** 「その他」を選んだときの自由記述 */
+  abortNote?: string;
   prescribedReps?: number;
   achievement: Achievement;
   rpe: number; // 1-10

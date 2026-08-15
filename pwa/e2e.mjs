@@ -3114,18 +3114,44 @@ else {
       if ((await cand.count()) === 0) fail("Q-2: 入れ替え候補の行が画面に出ていない");
       const swapBtn = cand.getByRole("button", { name: /に替える$/ }).first();
       if ((await swapBtn.count()) === 0) fail("Q-2: 「〜に替える」ボタンが無い");
+      const swapSessionId = p.candidates[0].sessionId;
+      const categoryBefore = await page.evaluate(async (id) => {
+        const d = await fetch("/api/sessions").then((r) => r.json());
+        return (d.sessions ?? []).find((s) => s.id === id)?.category ?? null;
+      }, swapSessionId);
       await swapBtn.click();
       await page.waitForTimeout(900);
-      // 候補の内側だけを読む。カード全体を読むと、末尾に出る旧実装でも通ってしまう
-      const candText = (await cand.textContent()) ?? "";
-      if (!/入れ替えました|ルールに反します|入れ替えできませんでした|RULE-/.test(candText)) {
-        fail("Q-2: 「に替える」を押しても、押した場所に結果が出ない（反応が無いように見える）");
-      }
-      // 止まったなら、なぜ止まったかと、押し切る手段が同じ場所にあること
-      if (!/入れ替えました/.test(candText)) {
-        if (!/RULE-/.test(candText)) fail("Q-2: 止まった理由（ルール名）が出ていない");
-        if ((await cand.getByRole("button", { name: "承知のうえで替える" }).count()) === 0) {
-          fail("Q-2: ルールで止まったのに、本人が押し切る手段が出ていない");
+      /*
+       * 入れ替えが**通った**場合、その予定はもう候補ではなくなるので行ごと消える。
+       * 以前はここで必ず行の中身を読もうとしていたので、
+       * 通った日に限って「行が見つからない」で落ちていた（日付でどちらに転ぶか変わる）。
+       * 通ったか止まったかで見るものを分ける。
+       */
+      if ((await cand.count()) === 0) {
+        // 通った側: 画面に結果が出ていることと、予定が実際に変わっていることの両方
+        const cardText = (await covCard.textContent()) ?? "";
+        if (!/入れ替えました/.test(cardText)) {
+          fail("Q-2: 入れ替えが通ったのに、画面に何も出ていない");
+        }
+        const categoryAfter = await page.evaluate(async (id) => {
+          const d = await fetch("/api/sessions").then((r) => r.json());
+          return (d.sessions ?? []).find((s) => s.id === id)?.category ?? null;
+        }, swapSessionId);
+        if (categoryAfter === categoryBefore) {
+          fail(`Q-2: 「入れ替えました」と出たのに予定が変わっていない（${categoryBefore}）`);
+        }
+      } else {
+        // 止まった側: 候補の内側だけを読む。カード全体を読むと、末尾に出る旧実装でも通ってしまう
+        const candText = (await cand.textContent()) ?? "";
+        if (!/入れ替えました|ルールに反します|入れ替えできませんでした|RULE-/.test(candText)) {
+          fail("Q-2: 「に替える」を押しても、押した場所に結果が出ない（反応が無いように見える）");
+        }
+        // 止まったなら、なぜ止まったかと、押し切る手段が同じ場所にあること
+        if (!/入れ替えました/.test(candText)) {
+          if (!/RULE-/.test(candText)) fail("Q-2: 止まった理由（ルール名）が出ていない");
+          if ((await cand.getByRole("button", { name: "承知のうえで替える" }).count()) === 0) {
+            fail("Q-2: ルールで止まったのに、本人が押し切る手段が出ていない");
+          }
         }
       }
       const tplAfter = await page.evaluate(async () =>
@@ -5419,6 +5445,118 @@ if ((await fitRebuildCard.count()) === 0) {
   if (rePressed < 1) fail("再編集で天候タグが戻らない");
 
   step(`天候・路面・シューズOK（複数選択・保存・再編集・使用距離${usage.totalKm}km）`);
+}
+
+// ---- 途中でやめた理由 ----
+/*
+ * 見るのは3つ。
+ *   ・**設定どおりに走れていても**、本数が足りなければ理由を聞くこと
+ *     （以前は中止基準に引っかかったときしか打ち切り扱いにならなかった）
+ *   ・理由を選ぶまで保存できないこと（空欄は「設定が高すぎた」として数えられる）
+ *   ・選んだ理由で扱いが変わり、それが画面に出ること
+ */
+{
+  const abortTarget = await page.evaluate(async (used) => {
+    const d = await fetch("/api/sessions").then((r) => r.json());
+    const s = (d.sessions ?? [])
+      .filter(
+        (x) =>
+          x.id !== used &&
+          x.status === "planned" &&
+          (x.targetPaces ?? []).length > 0 &&
+          x.category === "high_lactate"
+      )
+      .sort((a, b) => a.date.localeCompare(b.date))[0];
+    if (!s) return null;
+    const run = await fetch(`/api/session-run?sessionId=${s.id}`).then((r) => r.json());
+    return run?.progress?.plannedReps >= 2
+      ? { id: s.id, targetSec: run.progress.targetSec, plannedReps: run.progress.plannedReps }
+      : null;
+  }, runTarget);
+  if (!abortTarget) fail("打ち切り理由: 対象セッションが無い");
+
+  await page.goto(`http://localhost:8791/#/run?sessionId=${abortTarget.id}`);
+  await page.waitForTimeout(900);
+
+  // 設定どおりの1本だけ入れる。中止基準には引っかからない
+  await page.locator('input[inputmode="decimal"]').first().fill(abortTarget.targetSec.toFixed(1));
+  await page.getByRole("button", { name: "LAP", exact: true }).click();
+  await page.waitForTimeout(700);
+
+  const bodyText = await page.textContent("body");
+  if (bodyText.includes("打ち切ってください")) {
+    fail("打ち切り理由: 設定どおりのはずが中止判定になっている（前提が崩れた）");
+  }
+  if (!(await page.getByTestId("abort-cause-chips").count())) {
+    fail("打ち切り理由: 本数が足りないのに理由の選択が出ていない");
+  }
+
+  /*
+   * 未入力のスライダーは真ん中（1〜10なら6）に置かれている。
+   * そこへ6を入れてもReactは値が変わっていないと見て onChange を出さず、
+   * 未入力のまま保存に進んで止まる。真ん中以外を入れる。
+   */
+  await setSlider(page.getByTestId("run-rpe-slider"), 7);
+  await page.getByRole("button", { name: "主観 普通" }).click();
+  await page.waitForTimeout(200);
+
+  // 理由を選ぶまで保存できない
+  const finishBtn = page.getByRole("button", { name: /打ち切って記録する/ });
+  if (!(await finishBtn.count())) fail("打ち切り理由: 打ち切りのボタンが出ていない");
+  if (!(await finishBtn.first().isDisabled())) {
+    fail("打ち切り理由: 理由が未入力でも保存できてしまう");
+  }
+
+  // ラベルに本数が入るので正規表現で当てる
+  await page.getByRole("button", { name: /途中でやめた理由.*天候・路面/ }).click();
+  await page.waitForTimeout(300);
+  const hint = await page.getByTestId("abort-cause-hint").textContent();
+  if (!hint.includes("数えません")) {
+    fail(`打ち切り理由: 扱いが画面に出ていない（${hint}）`);
+  }
+  if (await finishBtn.first().isDisabled()) {
+    fail("打ち切り理由: 理由を選んでも保存できない");
+  }
+
+  // 止まったときに何と言われたのかを掴む（黙って落ちると原因を追えない）
+  let abortDialog = "";
+  const onAbortDialog = async (d) => {
+    abortDialog = d.message();
+    await d.dismiss();
+  };
+  page.on("dialog", onAbortDialog);
+  await finishBtn.first().click();
+  await page.waitForTimeout(300);
+  await page.getByRole("button", { name: "実行する" }).click();
+  await page.waitForTimeout(1400);
+  page.off("dialog", onAbortDialog);
+
+  const savedAbort = await page.evaluate(async (id) => {
+    const d = await fetch("/api/results").then((r) => r.json());
+    return (d.results ?? []).find((r) => r.sessionId === id) ?? null;
+  }, abortTarget.id);
+  if (!savedAbort) fail(`打ち切り理由: 記録が保存されていない（${abortDialog || "案内なし"}）`);
+  if (savedAbort.abortCause !== "condition") {
+    fail(`打ち切り理由: 理由が保存されていない（${savedAbort.abortCause}）`);
+  }
+  if (savedAbort.aborted !== true) {
+    fail("打ち切り理由: 設定どおりでも本数が足りなければ打ち切りのはず");
+  }
+
+  const afterText = await page.textContent("body");
+  if (!afterText.includes("設定の判断には数えません")) {
+    fail("打ち切り理由: 何に効いたかが記録後に出ていない");
+  }
+
+  // 設定ペースの補正に数えないこと（ここが本題）
+  const counted = await page.evaluate(async (id) => {
+    const d = await fetch("/api/results").then((r) => r.json());
+    const r = (d.results ?? []).find((x) => x.sessionId === id);
+    return { cause: r?.abortCause, aborted: r?.aborted };
+  }, abortTarget.id);
+  if (counted.cause !== "condition") fail("打ち切り理由: 読み直すと理由が消えている");
+
+  step("打ち切り理由OK（設定どおりでも聞く・未入力では保存させない・扱いを出す）");
 }
 
 if (errors.length) {

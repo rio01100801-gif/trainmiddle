@@ -9,6 +9,7 @@ import {
   rpeLevel,
 } from "@/lib/core/rpe";
 import { CONDITION_TAGS } from "@/lib/core/conditions";
+import { ABORT_CAUSES, describeAbortCause, type AbortCause } from "@/lib/core/abortCause";
 
 /**
  * 入力の部品。
@@ -314,6 +315,21 @@ export const SKIP_OPTIONS: { value: SkipReason; label: string }[] = [
   { value: "weather", label: "天候" },
   { value: "other", label: "その他" },
 ];
+
+/*
+ * 途中でやめた理由。スキップ理由（やらなかった）とは別物なので分けている。
+ * 「設定が高すぎた」は走り出してからしか分からないので、こちらにしか無い。
+ */
+export const ABORT_CAUSE_OPTIONS: { value: AbortCause; label: string }[] = ABORT_CAUSES.map(
+  (c) => ({ value: c.id, label: c.label })
+);
+
+/** 選ぶ前に、その理由が何に効くかを出す */
+export function abortCauseHint(cause?: AbortCause): string {
+  if (cause === undefined) return "";
+  const info = ABORT_CAUSES.find((c) => c.id === cause);
+  return info ? `${info.hint}。${describeAbortCause(cause).split("。")[1]}。` : "";
+}
 
 export const WIND_OPTIONS: { value: "calm" | "light" | "strong"; label: string }[] = [
   { value: "calm", label: "無風" },

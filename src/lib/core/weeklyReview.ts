@@ -9,6 +9,7 @@
  * 同じ週の同じデータからは必ず同じ文章が出る。
  */
 import type { Session, SessionResult, DailyCheck, RuleViolation } from "./types";
+import { abortCauseLabel } from "./abortCause";
 import { addDays, diffDays, fmtTime } from "./dates";
 import { equivalentRepSec } from "./workoutLog";
 
@@ -35,6 +36,8 @@ export interface QualityLine {
   reps: number;
   plannedReps?: number;
   aborted: boolean;
+  /** 打ち切った理由の呼び名。無いこともある（旧データ・本数を減らしただけ） */
+  abortCauseLabel?: string;
   rpe: number;
 }
 
@@ -97,6 +100,7 @@ export function buildWeeklyReview(input: WeeklyReviewInput): WeeklyReview {
       reps: times.length,
       plannedReps: r.prescribedReps,
       aborted: !!r.aborted,
+      abortCauseLabel: abortCauseLabel(r.abortCause) || undefined,
       rpe: r.rpe,
     });
   }
@@ -132,7 +136,10 @@ export function buildWeeklyReview(input: WeeklyReviewInput): WeeklyReview {
     }
     if (q.aborted) {
       parts.push(
-        `${q.plannedReps ?? "?"}本の予定を${q.reps}本で打ち切りました（中止基準にしたがって止めたもので、失敗ではありません）`
+        `${q.plannedReps ?? "?"}本の予定を${q.reps}本で打ち切りました` +
+          (q.abortCauseLabel
+            ? `（理由: ${q.abortCauseLabel}）`
+            : "（中止基準にしたがって止めたもので、失敗ではありません）")
       );
     } else if (q.plannedReps && q.reps < q.plannedReps) {
       parts.push(`${q.plannedReps}本の予定に対して${q.reps}本`);

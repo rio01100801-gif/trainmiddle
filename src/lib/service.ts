@@ -114,6 +114,13 @@ import {
 import { analyzeRace, RaceAnalysisOutput } from "./core/raceAnalysis";
 import { conditionSplits, type ConditionSplit } from "./core/conditions";
 import { shoeUsage, type Shoe, type ShoeUsage } from "./core/shoes";
+import {
+  abortCauseLabel,
+  describeAbortCause,
+  needsInjuryLog,
+  normalizeAbortCause,
+  type AbortCause,
+} from "./core/abortCause";
 import { buildFourWeekBalance, type FourWeekBalance } from "./core/trainingBalance";
 import { cycleOf, cyclePositionFor, validateWeekTemplate } from "./core/weekTemplate";
 import {
@@ -521,6 +528,7 @@ function completedTemplateHistory(repo: Store): TemplateHistoryEntry[] {
         rpe: result?.rpe,
         nextDayLegs: result?.nextDayLegs,
         aborted: result?.aborted,
+        abortCause: result?.abortCause,
       },
     ];
   });
@@ -1054,12 +1062,21 @@ function processResultCore(
    * CFEも同じ練習で2回動いてしまい、±1.5秒のガードレールが実質±3秒になる。
    */
   const existing = repo.resultForSession(result.sessionId);
+  /*
+   * 理由が選ばれていれば、それは本人が「途中でやめた」と言っているということ。
+   * 中止基準に引っかかっていなくても打ち切りとして扱う——
+   * 痛みや時間で止めた場合、設定から外れていないので M-3 は反応しない。
+   */
+  const abortCause = normalizeAbortCause(result.abortCause);
   result = {
     ...result,
     id: existing?.id ?? result.id,
     heatFlagged: env?.isHeatFlagged ?? result.heatFlagged,
     achievement: inferred ?? result.achievement,
-    aborted: shortenedRep !== undefined ? true : result.aborted,
+    abortCause,
+    // 理由を消したら記述も消す（「その他」から選び直したときに前の文が残らないように）
+    abortNote: abortCause ? result.abortNote?.trim() || undefined : undefined,
+    aborted: shortenedRep !== undefined || abortCause !== undefined ? true : result.aborted,
     abortReason:
       result.abortReason ??
       (shortenedRep
@@ -3177,13 +3194,22 @@ export function finishSessionProgress(
   repo: Store,
   sessionId: string,
   input: { rpe: number; subjective: SessionResult["subjective"]; aborted?: boolean; note?: string;
-    tempC?: number; humidityPct?: number }
+    tempC?: number; humidityPct?: number; abortCause?: AbortCause; abortNote?: string }
 ): ProcessResultOutput {
   const view = sessionProgress(repo, sessionId);
   const session = repo.getSession(sessionId)!;
   const { progress } = view;
+  const abortCause = normalizeAbortCause(input.abortCause);
+  /*
+   * 理由が選ばれていれば打ち切り。
+   * 以前は「中止基準に引っかかったか」だけで決めていたので、
+   * 痛みや時間で止めた場合は普通の完了として記録されていた。
+   * 本人が止めたと言っているのに、機械が「完走」と書き換えないようにする。
+   */
   const aborted =
-    input.aborted ?? (progress.reps.length < progress.plannedReps && view.evaluation.verdict === "stop");
+    abortCause !== undefined ||
+    (input.aborted ??
+      (progress.reps.length < progress.plannedReps && view.evaluation.verdict === "stop"));
 
   const result: SessionResult = {
     id: `res-${sessionId}`,
@@ -3207,6 +3233,8 @@ export function finishSessionProgress(
     prescribedReps: progress.plannedReps,
     aborted,
     abortReason: aborted ? view.evaluation.message : undefined,
+    abortCause,
+    abortNote: input.abortNote?.trim() || undefined,
     achievement: "achieved",
     rpe: input.rpe,
     subjective: input.subjective,
@@ -3219,6 +3247,11 @@ export function finishSessionProgress(
   if (aborted) {
     out.guardrailNotes = [
       "打ち切りとして記録しました。失敗ではありません。中止基準にしたがって止めた本数はCFEの未達には数えません",
+      // 選んだ理由が何に効いたかを、その場で返す（黙って扱いを変えない）
+      ...(abortCause ? [describeAbortCause(abortCause, input.abortNote)] : []),
+      ...(needsInjuryLog(abortCause)
+        ? ["痛みで止めたときは、部位と強さを故障ログに残してください。残さないと次のメニューの判定に届きません"]
+        : []),
       ...out.guardrailNotes,
     ];
   }
@@ -4512,6 +4545,7 @@ export function assistantContext(repo: Store, today: string): AssistantContext {
         completedReps: r.completedReps,
         prescribedReps: r.prescribedReps,
         aborted: r.aborted,
+        abortCauseLabel: abortCauseLabel(r.abortCause) || undefined,
       };
     });
 

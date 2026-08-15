@@ -1108,6 +1108,17 @@ function CoveragePanel() {
 
   const top = (d.proposals ?? [])[0];
 
+  /*
+   * もう候補一覧に無いのに結果だけ残っているもの＝入れ替えが通ったぶん。
+   * 行が消えても、何をしたのかは画面に残す。
+   */
+  const candidateKeys = new Set(
+    (d.proposals ?? []).flatMap((p) => p.candidates.map((c) => `${c.sessionId}:${p.category}`))
+  );
+  const doneOutcomes = Object.entries(outcomes).filter(
+    ([key, outcome]) => outcome.ok && !candidateKeys.has(key)
+  );
+
   return (
     <Card title="4週間のバランス">
       {/*
@@ -1257,6 +1268,22 @@ function CoveragePanel() {
           </tbody>
         </table>
       </div>
+
+      {/*
+        入れ替えが**通った**予定は、もう提案の候補ではなくなるので行ごと消える。
+        結果の一文は行の内側に出していたので、一緒に消えていた——
+        押した本人からは「押したのに何も起きない」に見える（止まったときだけ文が残る）。
+        消えた行のぶんはここに残す。
+      */}
+      {doneOutcomes.length > 0 ? (
+        <div className="mb-2">
+          {doneOutcomes.map(([key, outcome]) => (
+            <StatusText key={key} kind="success" className="text-[11.5px] leading-relaxed">
+              {outcome.message}
+            </StatusText>
+          ))}
+        </div>
+      ) : null}
 
       {d.proposals.length > 0 ? (
         <div className="metric-label mb-1">入れ替えるなら</div>

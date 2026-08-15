@@ -22,6 +22,7 @@ import { parseRest } from "@/lib/core/bulkImport";
 import { avgPaceSecPerKm, buildRepResults, REST_LABELS } from "@/lib/core/workoutLog";
 import { evaluateEnvironment, environmentNote, WIND_LABELS } from "@/lib/core/environment";
 import {
+  ABORT_CAUSE_OPTIONS,
   BODY_PARTS,
   BODY_PART_OPTIONS,
   ChipGroup,
@@ -39,9 +40,15 @@ import {
   SURFACE_TAGS,
   WEATHER_OPTIONS,
   WEATHER_TAGS,
+  abortCauseHint,
   describePain,
   describeRpe,
 } from "../components/inputs";
+import {
+  needsInjuryLog,
+  normalizeAbortCause,
+  type AbortCause,
+} from "@/lib/core/abortCause";
 import { normalizeConditions } from "@/lib/core/conditions";
 import { shoeChoices, type ShoeUsage } from "@/lib/core/shoes";
 import { PAIN_MAX, PAIN_MIN, RPE_MAX, RPE_MIN, isValidRpe } from "@/lib/core/rpe";
@@ -1282,6 +1289,20 @@ function ResultForm({
   useEffect(() => {
     if (hasStructuredPerRepRest) setWithRest(true);
   }, [hasStructuredPerRepRest]);
+  /*
+   * 処方の本数。本数がこれより少なければ「途中でやめた」とみなして理由を聞く。
+   * 読み取れなかったときは undefined のままにする——本数を勝手に決めない。
+   */
+  const prescribedReps =
+    structure?.kind === "interval" && structure.slots.length > 0
+      ? structure.slots.length
+      : undefined;
+  const shortOfPlan =
+    mode === "interval" &&
+    prescribedReps !== undefined &&
+    Number(reps) >= 1 &&
+    Number(reps) < prescribedReps;
+
   // 欄の数は「処方の本数」と「既に入れた本数」の多い方。
   // 打ち切って本数が減っても、入れた値が消えないようにする
   const slotCount = Math.max(
@@ -1306,6 +1327,15 @@ function ResultForm({
   const [shoeId, setShoeId] = useState<string | undefined>(existing?.shoeId);
   const [shoes, setShoes] = useState<ShoeUsage[]>([]);
   const [rain, setRain] = useState(!!existing?.rain);
+
+  /*
+   * 途中でやめた理由。天候タグと違い、これは判定に効く。
+   * 既定値は置かない——なぜ止めたかは本人にしか分からない。
+   */
+  const [cause, setCause] = useState<AbortCause | undefined>(
+    normalizeAbortCause(existing?.abortCause)
+  );
+  const [causeNote, setCauseNote] = useState(existing?.abortNote ?? "");
 
   // スキップ
   const [skipReason, setSkipReason] = useState("fatigue");
@@ -1477,6 +1507,15 @@ function ResultForm({
         return;
       }
 
+      // 理由を推測で埋めない。空のまま送ると「設定が高すぎた」として数えられてしまう
+      if (shortOfPlan && cause === undefined) {
+        setBusy(false);
+        alert(
+          "途中でやめた理由を選んでください。理由によって設定ペースの扱いが変わります。"
+        );
+        return;
+      }
+
       const envPayload = {
         weatherTempC: tempC ? Number(tempC) : undefined,
         humidityPct: humidity ? Number(humidity) : undefined,
@@ -1484,6 +1523,14 @@ function ResultForm({
         rain: rain || undefined,
         conditions: conditions.length > 0 ? conditions : undefined,
         shoeId: shoeId || undefined,
+        /*
+         * 一度選んだ理由は、本数の見え方が変わっても残す。
+         * run画面で終えた記録は interval.reps に**予定の**本数が入るので、
+         * ここで shortOfPlan だけを条件にすると、開き直して保存した瞬間に
+         * 理由が消える（＝設定を緩める材料に戻ってしまう）。
+         */
+        abortCause: cause,
+        abortNote: cause === "other" ? causeNote.trim() || undefined : undefined,
       };
 
       let payload: any;
@@ -2096,6 +2143,54 @@ function ResultForm({
               emptyLabel="未入力（任意）"
               testId="legs-chips"
             />
+            {/*
+              処方より本数が少ないときだけ出す。
+              ここは記録ではなく**判定に効く**——設定・疲労で止めたときだけ、
+              設定ペースを見直す材料に数える（abortCause.ts）。
+              空のまま保存できると「設定が高すぎた」として数えられるので必須にする。
+            */}
+            {shortOfPlan || cause !== undefined ? (
+              <div className="flex flex-col gap-1.5">
+                <ChipGroup
+                  label={
+                    shortOfPlan
+                      ? `途中でやめた理由（予定${prescribedReps}本に対して${Number(reps)}本）`
+                      : "途中でやめた理由"
+                  }
+                  value={cause}
+                  onChange={setCause}
+                  options={ABORT_CAUSE_OPTIONS}
+                  columns={2}
+                  testId="abort-cause-chips"
+                />
+                <p
+                  className="text-[11.5px] leading-relaxed"
+                  style={{ color: cause ? "var(--text-2)" : "var(--amber)" }}
+                  data-testid="abort-cause-hint"
+                  role="status"
+                >
+                  {cause
+                    ? abortCauseHint(cause)
+                    : "理由で扱いが変わります。設定・疲労で止めたときだけ設定ペースを見直す材料に数えます。"}
+                </p>
+                {cause === "other" ? (
+                  <input
+                    className="w-full"
+                    aria-label="打ち切りの内容"
+                    placeholder="何があったか（任意）"
+                    value={causeNote}
+                    onChange={(e) => setCauseNote(e.target.value)}
+                  />
+                ) : null}
+                {needsInjuryLog(cause) ? (
+                  <p className="text-[11.5px] leading-relaxed" style={{ color: "var(--amber)" }}>
+                    痛みは下の故障ログにも部位と強さを残してください。打ち切りの記録だけでは、
+                    どこがどれだけ痛いか分からないので次のメニューの判定に届きません。
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
             {/*
               その日の条件。複数選べる（雨で、かつトラックが濡れていた、など）。
               あとで「同じ設定なのにRPEが上がった」の理由を見分けるための記録で、
