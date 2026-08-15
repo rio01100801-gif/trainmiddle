@@ -121,22 +121,27 @@ forge-v99 の「本数の欄が押せない」は、横はみ出し検査を素�
 ```
 src/lib/service/
 ├── index.ts     入口。再exportだけ（呼ぶ側は @/lib/service のまま）
-├── run.ts       M-4 セッション中の入力（切り出し済み）
+├── run.ts       M-4 セッション中の入力
+├── adaptive.ts  M-2/M-3/M-9 適応的な処方
+├── health.ts    Apple Health の取り込み（何にも依存しない端）
 └── workflow.ts  予定と結果の輪。ここから順に端を剥がす
 ```
 
 向きは `npm run ci:layers` が見張っている。下から上への import で落ちる。
 （循環しても ESM の巻き上げで**動いてしまう**ので、動作では気づけない）
 
-次に出せる端（参照が片方向であることを確認済み）:
+**片方向で切れる端は出し切った。** 残りはすべて逆向きの参照がある。
 
-| 候補 | 行数 | 出て行く参照 |
-| --- | --- | --- |
-| Apple Health 取り込み | 96 | なし |
-| M-2/M-3/M-9 適応的な処方 | 239 | `trustedResults` `buildRuleContext` |
+| 残り | 逆向きの参照 |
+| --- | --- |
+| FIT取込 | `trustedResults` `lastRecordedDate` が広く使われている |
+| 一括入力 | `listPhrases` `savePhrase` を他から呼んでいる |
+| M-5 予定の編集 | `editSession` `PlanEditResult` を他から呼んでいる |
+| M-7〜M-12 分析・書き出し | 6件 |
 
-切れないもの（逆向きの参照あり。先に共通の下請けを下層へ出す必要がある）:
-FIT取込 / 一括入力 / M-5 予定の編集 / M-7〜M-12 分析・書き出し。
+**次は共通の下請けを下層へ降ろす。** `trustedResults` `buildRuleContext`
+`heatFlaggedDates` `lastRecordedDate` `isOwnedByAthlete` あたりを
+`shared.ts`（層0）に出せば、上の4つが順に切れるようになる。
 
 **移動のときは中身を変えない。** 各段階で typecheck・test・build・E2E を通す。
 

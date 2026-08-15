@@ -27,9 +27,15 @@ const DIR = path.resolve(import.meta.dirname, "../../src/lib/service");
 
 /** 数字が小さいほど下層。下層は上層を import してはいけない */
 const LAYER = {
-  "workflow.ts": 0,
-  "run.ts": 1,
-  "index.ts": 2,
+  // 誰にも依存しない端。Apple Health の書き出しを読むだけ
+  "health.ts": 0,
+  // 予定と結果の輪。ここから端を剥がしていく
+  "workflow.ts": 1,
+  // workflow を呼ぶだけの層
+  "adaptive.ts": 2,
+  "run.ts": 2,
+  // 入口。再exportだけ
+  "index.ts": 3,
 };
 
 const problems = [];

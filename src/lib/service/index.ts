@@ -29,10 +29,14 @@
  *
  *   index.ts     入口。再exportだけ
  *   run.ts       M-4 セッション中の入力。`workflow` を呼ぶだけ
+ *   adaptive.ts  M-2/M-3/M-9 適応的な処方。`workflow` を呼ぶだけ
  *   workflow.ts  予定と結果の輪。ここから順に端を剥がしていく
+ *   health.ts    Apple Health の取り込み。何にも依存しない端
  *
  * **移動のときは中身を変えない。** ロジックの変更と場所の変更を同時にやると、
  * 落ちたときにどちらが原因か切り分けられなくなる。
  */
+export * from "./health";
 export * from "./workflow";
+export * from "./adaptive";
 export * from "./run";
