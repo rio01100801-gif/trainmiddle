@@ -16,18 +16,18 @@ import type {
   SessionChange,
   SessionResult,
   SkipReason,
-} from "./core/types";
-import type { ChangeLogEntry, Store } from "./db/store";
-import { addDays, diffDays, fmtTime, weekStart } from "./core/dates";
-import { CONFIRM_HORIZON_DAYS } from "./core/horizon";
-import { buildResultAudit, type ResultAudit } from "./core/resultAudit";
+} from "../core/types";
+import type { ChangeLogEntry, Store } from "../db/store";
+import { addDays, diffDays, fmtTime, weekStart } from "../core/dates";
+import { CONFIRM_HORIZON_DAYS } from "../core/horizon";
+import { buildResultAudit, type ResultAudit } from "../core/resultAudit";
 import {
   buildAssistantContext,
   UPCOMING_DAYS,
   type AssistantContext,
   type AssistantResultInput,
   type AssistantSessionInput,
-} from "./core/assistantContext";
+} from "../core/assistantContext";
 import {
   applyStaleness,
   guardedBaseTime,
@@ -35,74 +35,74 @@ import {
   updateCfeFromResult,
   initCfe,
   revertCfeForSession,
-} from "./core/cfe";
-import { buildAerobicProfile, GRP_RATIOS, specificPace } from "./core/pace";
-import { activeInjuriesAt, runRuleEngine, weeklySummary, RuleContext } from "./core/rules";
-import { isHighLoadSession } from "./core/trainingClassification";
-import { generatePlan, phaseForDate } from "./core/periodization";
+} from "../core/cfe";
+import { buildAerobicProfile, GRP_RATIOS, specificPace } from "../core/pace";
+import { activeInjuriesAt, runRuleEngine, weeklySummary, RuleContext } from "../core/rules";
+import { isHighLoadSession } from "../core/trainingClassification";
+import { generatePlan, phaseForDate } from "../core/periodization";
 import {
   reviewCoverage,
   weeksUntil,
   type CoverageReview,
-} from "./core/coverage";
+} from "../core/coverage";
 import {
   heatHrEvidence,
   hrMaxReference,
   relativeIntensity,
   type HrMaxReference,
-} from "./core/heartRate";
+} from "../core/heartRate";
 import {
   buildSessionSpec,
   sessionVariants,
   type SessionVariant,
   type TemplateHistoryEntry,
-} from "./core/progression";
+} from "../core/progression";
 import {
   convertMenu,
   describeConverted,
   type ConvertedMenu,
-} from "./core/athleteConvert";
-import { assignExpectedPaces, diagnoseRounds, generateRecoverySessions, RoundResult } from "./core/rounds";
+} from "../core/athleteConvert";
+import { assignExpectedPaces, diagnoseRounds, generateRecoverySessions, RoundResult } from "../core/rounds";
 import {
   handleSkip,
   propagate,
   propagateRedSignal,
   resolveConflicts,
-} from "./core/propagation";
-import { effectiveSignal, judgeSignal } from "./core/signal";
-import { computeReadiness, type Readiness } from "./core/readiness";
-import { acwr, dailyLoads } from "./core/load";
-import { diagnose } from "./core/diagnosis";
-import { evaluateEnvironment } from "./core/environment";
+} from "../core/propagation";
+import { effectiveSignal, judgeSignal } from "../core/signal";
+import { computeReadiness, type Readiness } from "../core/readiness";
+import { acwr, dailyLoads } from "../core/load";
+import { diagnose } from "../core/diagnosis";
+import { evaluateEnvironment } from "../core/environment";
 import {
   assessCurrentFitness,
   toSessionAndResult,
   toFitnessMarker as pastToMarker,
   type FitnessAssessment,
   type PastEntry,
-} from "./core/backfill";
+} from "../core/backfill";
 import {
   computeReady,
   parseBulkText,
   type ParsedRow,
   type PhraseRule,
-} from "./core/bulkImport";
+} from "../core/bulkImport";
 import {
   checkPastEntry,
   checkSessionPlausibility,
   hasBlockingIssue,
   type SanityIssue,
-} from "./core/sanity";
-import { cfeRange, spreadOf } from "./core/backfill";
-import { groupBySamePrescription } from "./core/samePrescription";
-import { periodSummary, type PeriodKind } from "./core/periodSummary";
-import { planRaceSplits, type RaceLapSample } from "./core/racePlan";
+} from "../core/sanity";
+import { cfeRange, spreadOf } from "../core/backfill";
+import { groupBySamePrescription } from "../core/samePrescription";
+import { periodSummary, type PeriodKind } from "../core/periodSummary";
+import { planRaceSplits, type RaceLapSample } from "../core/racePlan";
 import {
   findPreviousEntry,
   inferAchievement,
   REP_DISTANCE_TOLERANCE_M,
   type PreviousEntry,
-} from "./core/workoutLog";
+} from "../core/workoutLog";
 import {
   hrvDeviation,
   parseAppleHealthExport,
@@ -110,29 +110,29 @@ import {
   toFitnessMarker,
   type HealthProvider,
   type SyncRecord,
-} from "./core/healthImport";
-import { analyzeRace, RaceAnalysisOutput } from "./core/raceAnalysis";
-import { conditionSplits, type ConditionSplit } from "./core/conditions";
-import { shoeUsage, type Shoe, type ShoeUsage } from "./core/shoes";
+} from "../core/healthImport";
+import { analyzeRace, RaceAnalysisOutput } from "../core/raceAnalysis";
+import { conditionSplits, type ConditionSplit } from "../core/conditions";
+import { shoeUsage, type Shoe, type ShoeUsage } from "../core/shoes";
 import {
   abortCauseLabel,
   describeAbortCause,
   needsInjuryLog,
   normalizeAbortCause,
   type AbortCause,
-} from "./core/abortCause";
-import { buildFourWeekBalance, type FourWeekBalance } from "./core/trainingBalance";
-import { cycleOf, cyclePositionFor, validateWeekTemplate } from "./core/weekTemplate";
+} from "../core/abortCause";
+import { buildFourWeekBalance, type FourWeekBalance } from "../core/trainingBalance";
+import { cycleOf, cyclePositionFor, validateWeekTemplate } from "../core/weekTemplate";
 import {
   OFF_SEASON_LABELS,
   OFF_SEASON_REASONS,
   type OffSeasonEmphasis,
-} from "./core/offSeason";
+} from "../core/offSeason";
 import {
   planVolumeProgression,
   VOLUME_HORIZON_DAYS,
   type VolumeProgressionChange,
-} from "./core/volumeProgression";
+} from "../core/volumeProgression";
 import {
   adjustPrescription,
   dailyAdjustment,
@@ -147,29 +147,29 @@ import {
   type ExecutionTrend,
   type JogEfficiency,
   type PrescriptionProposal,
-} from "./core/adaptive";
-import { heatPaceAdjustment, type HeatPaceAdjustment } from "./core/heatPace";
-import { parsePrescription, type PrescriptionStructure } from "./core/prescription";
+} from "../core/adaptive";
+import { heatPaceAdjustment, type HeatPaceAdjustment } from "../core/heatPace";
+import { parsePrescription, type PrescriptionStructure } from "../core/prescription";
 import {
   assessLimiter,
   categoryWeights,
   LIMITER_LABELS,
   type CategoryWeight,
   type LimiterAssessment,
-} from "./core/limiter";
+} from "../core/limiter";
 import {
   splitSamplesFromMarkers,
   splitSamplesFromPast,
   splitTrend,
   type SplitTrend,
-} from "./core/split600";
+} from "../core/split600";
 import {
   assessContactTime,
   contactSamplesFromResults,
   type ContactAssessment,
   type ContactSample,
-} from "./core/contactTime";
-import { buildWeeklyReview, type WeeklyReview } from "./core/weeklyReview";
+} from "../core/contactTime";
+import { buildWeeklyReview, type WeeklyReview } from "../core/weeklyReview";
 import {
   BACKUP_CHANGE_LOG_LIMIT,
   BACKUP_FORMAT,
@@ -181,7 +181,7 @@ import {
   type BackupFile,
   type RestoreMode,
   type RestoreReport,
-} from "./core/backup";
+} from "../core/backup";
 import {
   buildBackfilledSessionAndResult,
   buildLinkedResult,
@@ -190,9 +190,9 @@ import {
   type FitImportRecord,
   type FitResultConfirmation,
   isFitResultConfirmed,
-} from "./core/fitToSession";
-import type { FitParseResult } from "./core/fitParse";
-import type { IntervalClassifyResult, IntervalKind } from "./core/intervalClassify";
+} from "../core/fitToSession";
+import type { FitParseResult } from "../core/fitParse";
+import type { IntervalClassifyResult, IntervalKind } from "../core/intervalClassify";
 import {
   planTaper,
   shouldSuppressVolumeAdjustment,
@@ -201,14 +201,14 @@ import {
   TAPER_STAGE_LABELS,
   type TaperAdjustment,
   type TaperStage,
-} from "./core/taper";
+} from "../core/taper";
 import {
   abortCriteria,
   evaluateReps,
   prescriptionWithCriteria,
   type AbortCriteria,
   type RepEvaluation,
-} from "./core/abort";
+} from "../core/abort";
 
 // ---------------------------------------------------------------------------
 
@@ -3106,161 +3106,6 @@ export function prescriptionText(session: Session): string {
   if (!tp || !isHighLoadSession(session)) return session.prescription;
   const target = (tp.targetSecFast + tp.targetSecSlow) / 2;
   return prescriptionWithCriteria(session.prescription, target, abortCriteria(session.category, target));
-}
-
-// ---------------------------------------------------------------------------
-// M-4 セッション中の入力
-// ---------------------------------------------------------------------------
-
-export interface SessionProgress {
-  sessionId: string;
-  /** 入れた順の実施タイム（秒） */
-  reps: number[];
-  targetSec: number;
-  plannedReps: number;
-  distanceM: number;
-  updatedAt: string;
-}
-
-function progressKey(sessionId: string): string {
-  return `progress:${sessionId}`;
-}
-
-/**
- * 走っている最中の入力を保存する。
- *
- * 端末を閉じても消えないこと。1本ごとに入れる使い方なので、
- * 画面を閉じた瞬間に消えるなら誰も使わない。
- */
-export function saveSessionProgress(
-  repo: Store,
-  sessionId: string,
-  reps: number[],
-  today: string
-): SessionProgressView {
-  const prev = repo.getKv<SessionProgress>(progressKey(sessionId));
-  const session = repo.getSession(sessionId);
-  if (!session) throw new Error("セッションが見つかりません");
-  const tp = session.targetPaces[0];
-  const p: SessionProgress = {
-    sessionId,
-    reps,
-    targetSec: prev?.targetSec ?? (tp ? (tp.targetSecFast + tp.targetSecSlow) / 2 : 0),
-    plannedReps: prev?.plannedReps ?? repsOf(session) ?? reps.length,
-    distanceM: prev?.distanceM ?? tp?.distanceM ?? 0,
-    updatedAt: today,
-  };
-  repo.saveKv(progressKey(sessionId), p);
-  return sessionProgress(repo, sessionId);
-}
-
-export interface SessionProgressView {
-  progress: SessionProgress;
-  criteria: AbortCriteria;
-  evaluation: RepEvaluation;
-}
-
-export function sessionProgress(repo: Store, sessionId: string): SessionProgressView {
-  const session = repo.getSession(sessionId);
-  if (!session) throw new Error("セッションが見つかりません");
-  const tp = session.targetPaces[0];
-  const stored = repo.getKv<SessionProgress>(progressKey(sessionId));
-  const progress: SessionProgress = stored ?? {
-    sessionId,
-    reps: [],
-    targetSec: tp ? (tp.targetSecFast + tp.targetSecSlow) / 2 : 0,
-    plannedReps: repsOf(session) ?? 0,
-    distanceM: tp?.distanceM ?? 0,
-    updatedAt: session.date,
-  };
-  const criteria = abortCriteria(session.category, progress.targetSec);
-  return {
-    progress,
-    criteria,
-    evaluation: evaluateReps(
-      progress.reps,
-      progress.targetSec,
-      progress.plannedReps,
-      criteria
-    ),
-  };
-}
-
-/**
- * セッションを終える。入力済みの本数がそのまま記録になる。
- * 打ち切りは「失敗」ではなく正常な運用として残す。
- */
-export function finishSessionProgress(
-  repo: Store,
-  sessionId: string,
-  input: { rpe: number; subjective: SessionResult["subjective"]; aborted?: boolean; note?: string;
-    tempC?: number; humidityPct?: number; abortCause?: AbortCause; abortNote?: string }
-): ProcessResultOutput {
-  const view = sessionProgress(repo, sessionId);
-  const session = repo.getSession(sessionId)!;
-  const { progress } = view;
-  const abortCause = normalizeAbortCause(input.abortCause);
-  /*
-   * 理由が選ばれていれば打ち切り。
-   * 以前は「中止基準に引っかかったか」だけで決めていたので、
-   * 痛みや時間で止めた場合は普通の完了として記録されていた。
-   * 本人が止めたと言っているのに、機械が「完走」と書き換えないようにする。
-   */
-  const aborted =
-    abortCause !== undefined ||
-    (input.aborted ??
-      (progress.reps.length < progress.plannedReps && view.evaluation.verdict === "stop"));
-
-  const result: SessionResult = {
-    id: `res-${sessionId}`,
-    sessionId,
-    date: session.date,
-    actualLapsSec: progress.reps,
-    lapDistancesM: progress.reps.map(() => progress.distanceM),
-    interval: {
-      reps: progress.plannedReps,
-      distanceM: progress.distanceM,
-      targetSec: progress.targetSec,
-      restType: "jog",
-      results: progress.reps.map((t, i) => ({
-        index: i + 1,
-        distanceM: progress.distanceM,
-        targetSec: progress.targetSec,
-        actualSec: t,
-      })),
-    },
-    completedReps: progress.reps.length,
-    prescribedReps: progress.plannedReps,
-    aborted,
-    abortReason: aborted ? view.evaluation.message : undefined,
-    abortCause,
-    abortNote: input.abortNote?.trim() || undefined,
-    achievement: "achieved",
-    rpe: input.rpe,
-    subjective: input.subjective,
-    note: input.note,
-    weatherTempC: input.tempC,
-    humidityPct: input.humidityPct,
-  };
-  const out = processResult(repo, result);
-  repo.deleteKv(progressKey(sessionId));
-  if (aborted) {
-    out.guardrailNotes = [
-      "打ち切りとして記録しました。失敗ではありません。中止基準にしたがって止めた本数はCFEの未達には数えません",
-      // 選んだ理由が何に効いたかを、その場で返す（黙って扱いを変えない）
-      ...(abortCause ? [describeAbortCause(abortCause, input.abortNote)] : []),
-      ...(needsInjuryLog(abortCause)
-        ? ["痛みで止めたときは、部位と強さを故障ログに残してください。残さないと次のメニューの判定に届きません"]
-        : []),
-      ...out.guardrailNotes,
-    ];
-  }
-  return out;
-}
-
-/** 入力途中を捨てる */
-export function discardSessionProgress(repo: Store, sessionId: string): void {
-  repo.deleteKv(progressKey(sessionId));
 }
 
 // ---------------------------------------------------------------------------
