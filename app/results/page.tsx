@@ -1862,23 +1862,32 @@ function ResultForm({
               </label>
             </div>
           ) : (
-            <div className="grid grid-cols-3 gap-2">
+            <div className="flex flex-col gap-2">
               {/*
                 本数とレストは「だいたい決まっていて1つ足す・引く」が多いのでステッパー。
                 距離と設定は値の幅が広く、押して合わせると回数がかさむのでテンキーのまま。
+
+                **ステッパーを3列に入れない。** −と＋で88pt要るので、
+                iPhone幅の3列（1列105pt前後）だと入力欄に十数ptしか残らない。
+                数字が見えず押せもしない欄になり、しかも＋が隣の列にはみ出す。
+                行を分けて、本数だけ横幅を持たせる。
               */}
-              <Stepper label="本数" value={reps} onChange={setReps} min={1} max={40} />
-              <L label="距離(m)">
-                <input className="w-full min-h-[44px]" value={distM} onChange={(e) => setDistM(e.target.value)} inputMode="numeric" />
-              </L>
-              <L label="設定(秒)">
-                <input
-                  className="w-full min-h-[44px]"
-                  value={targetSec}
-                  onChange={(e) => setTargetSec(e.target.value)}
-                  inputMode="decimal"
-                />
-              </L>
+              <div style={{ maxWidth: 220 }}>
+                <Stepper label="本数" value={reps} onChange={setReps} min={1} max={40} />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <L label="距離(m)">
+                  <input className="w-full min-h-[44px]" value={distM} onChange={(e) => setDistM(e.target.value)} inputMode="numeric" />
+                </L>
+                <L label="設定(秒)">
+                  <input
+                    className="w-full min-h-[44px]"
+                    value={targetSec}
+                    onChange={(e) => setTargetSec(e.target.value)}
+                    inputMode="decimal"
+                  />
+                </L>
+              </div>
             </div>
           )}
           <div className="flex flex-col gap-2">

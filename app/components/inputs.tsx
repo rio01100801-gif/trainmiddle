@@ -267,13 +267,21 @@ export function Stepper({
         >
           −
         </button>
+        {/*
+          `min-w-0` だけにしない。
+          狭い枠に置かれると入力欄が数pxまで潰れ、**数字が見えず押せもしない欄**になる。
+          しかも枠には収まってしまうので、画面のはみ出し検査には引っかからない。
+          下限を置いて、狭すぎるときは目に見えてはみ出すようにする。
+        */}
         <input
           id={id}
-          className="flex-1 min-w-0 text-center min-h-[44px]"
+          className="flex-1 text-center min-h-[44px]"
+          style={{ minWidth: 56 }}
           value={value}
           inputMode={inputMode}
           aria-label={label}
           onChange={(e) => onChange(e.target.value)}
+          data-stepper-input="1"
         />
         <button
           type="button"

@@ -2756,6 +2756,82 @@ for (const width of [390, 320]) {
 await page.setViewportSize({ width: 390, height: 844 });
 step("横はみ出しゼロ（390px・320px幅）");
 
+// ---- 押せない入力欄が無いか（実寸で測る） ----
+/*
+ * 「本数」の欄が十数pxまで潰れて、数字も見えず押せもしない状態になっていた。
+ * ステッパーは −と＋で88pt使うので、3列に置くと入力欄にほとんど残らない。
+ *
+ * **横はみ出し検査では捕まらない。** 潰れた欄は枠の中に収まるので
+ * ページの scrollWidth は増えない。実寸を測るしかない。
+ */
+{
+  const measureTarget = await page.evaluate(async () => {
+    const d = await fetch("/api/sessions").then((r) => r.json());
+    const s = (d.sessions ?? [])
+      .filter((x) => x.status === "planned" && (x.targetPaces ?? []).length > 0)
+      .sort((a, b) => a.date.localeCompare(b.date))[0];
+    return s ? { date: s.date, name: s.name } : null;
+  });
+  if (!measureTarget) fail("入力欄の実寸: 対象の予定が無い");
+
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto(`http://localhost:8791/#/results?date=${measureTarget.date}`);
+    await page.waitForTimeout(900);
+    await page.getByRole("button", { name: /練習結果/ }).first().click();
+    await page.waitForTimeout(700);
+    // 予定を選ばないと入力欄そのものが出ない（タブを開いただけでは一覧が出る）
+    const pick = page.locator(`button:has-text("${measureTarget.name}")`).first();
+    if (await pick.count()) {
+      await pick.click();
+      await page.waitForTimeout(700);
+    }
+    const interval = page.locator('button:has-text("インターバル")').first();
+    if (await interval.count()) {
+      await interval.click();
+      await page.waitForTimeout(600);
+    }
+
+    // まず「測る相手が居る」ことを確かめる。居ないまま通すと何も見ていない検査になる
+    const steppers = page.locator("[data-stepper-input]");
+    const stepperCount = await steppers.count();
+    if (stepperCount === 0) {
+      fail(`入力欄の実寸: ステッパーが画面に出ていない（${width}px幅）`);
+      continue;
+    }
+
+    const narrow = await page.evaluate(() => {
+      const out = [];
+      for (const el of document.querySelectorAll("input, select, button")) {
+        // チェックボックスとラジオは16px角が正しい形。ラベルまで含めて押せる
+        if (el.type === "checkbox" || el.type === "radio") continue;
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) continue;
+        const label =
+          el.getAttribute("aria-label") || el.id || el.tagName.toLowerCase();
+        // 値を打ち込む欄が、触れる大きさ（44pt）の半分すら無いなら事実上押せない
+        if (r.width > 0 && r.width < 22) out.push({ label, w: Math.round(r.width) });
+      }
+      return out;
+    });
+    if (narrow.length > 0) {
+      fail(
+        `押せない幅の入力欄がある（${width}px幅）: ` +
+          narrow.map((x) => `${x.label}=${x.w}px`).join(", ")
+      );
+    }
+
+    // 本数の欄そのものも見る。数字が読める幅（44pt）を下回らないこと
+    const repsBox = await page.getByLabel("本数", { exact: true }).boundingBox();
+    if (!repsBox) fail(`入力欄の実寸: 本数の欄が見つからない（${width}px幅）`);
+    else if (repsBox.width < 44) {
+      fail(`本数の入力欄が狭すぎる（${width}px幅で ${Math.round(repsBox.width)}px）`);
+    }
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  step("押せない幅の入力欄ゼロ（390px・320px幅で実寸・ステッパーの中身も確認）");
+}
+
 // ---- 13. P-4: 最下部の要素が下部タブバー・FABの裏に隠れていないこと ----
 /*
  * 下部タブバーとFABは position:fixed なので、スクロール領域が
