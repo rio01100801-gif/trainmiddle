@@ -50,6 +50,7 @@ import {
   type AbortCause,
 } from "@/lib/core/abortCause";
 import { normalizeConditions } from "@/lib/core/conditions";
+import { checkResultDraft } from "@/lib/core/resultDraft";
 import { shoeChoices, type ShoeUsage } from "@/lib/core/shoes";
 import { PAIN_MAX, PAIN_MIN, RPE_MAX, RPE_MIN, isValidRpe } from "@/lib/core/rpe";
 import type {
@@ -1736,34 +1737,29 @@ function ResultForm({
       }
 
       /*
-       * RPEは本人にしか分からない値なので、こちらで埋めない。
-       *
-       * 以前は新規入力でも 7 が入っていた。数字が入っている欄は「入力済み」に見えるので、
-       * そのまま保存されうる。RPEはCFEの補正に効く（RPE_ADJUST_SEC_PER_POINT）ため、
-       * こちらが置いた既定値が能力の推定に混ざることになる。
-       * 空欄にして、入っていなければ保存させない（推測で埋めない・黙って混ぜない）。
+       * 保存させるかどうかは `checkResultDraft` が1か所で決める。
+       * ここに `alert` と `return` を散らすと、何を止めているのか一覧できず、
+       * 単体テストからも触れない（理由は core/resultDraft.ts に書いてある）。
        */
-      // スライダーは範囲外を作れないが、旧データの読み込み経路もあるので確かめる
-      if (!isValidRpe(rpe)) {
+      const draftError = checkResultDraft({
+        mode: mode === "continuous" ? "continuous" : "interval",
+        rpe,
+        subjective,
+        shortOfPlan,
+        abortCause: cause,
+        // 持続走の2値は S-2 が補ったあとの値を渡す
+        distanceKm: mode === "continuous" ? triple.distanceKm : undefined,
+        durationMin:
+          mode === "continuous" && triple.durationSec !== undefined
+            ? triple.durationSec / 60
+            : undefined,
+      });
+      if (draftError) {
         setBusy(false);
-        alert("RPEを選んでください。きつさの感じ方は本人にしか分からないので、こちらでは埋めません。");
+        alert(draftError);
         return;
       }
-      const rpeValue = rpe;
-      if (subjective === undefined) {
-        setBusy(false);
-        alert("主観を選んでください。");
-        return;
-      }
-
-      // 理由を推測で埋めない。空のまま送ると「設定が高すぎた」として数えられてしまう
-      if (shortOfPlan && cause === undefined) {
-        setBusy(false);
-        alert(
-          "途中でやめた理由を選んでください。理由によって設定ペースの扱いが変わります。"
-        );
-        return;
-      }
+      const rpeValue = rpe!;
 
       const envPayload = {
         weatherTempC: tempC ? Number(tempC) : undefined,
@@ -1784,14 +1780,10 @@ function ResultForm({
 
       let payload: any;
       if (mode === "continuous") {
-        // S-2: 3つのうち2つ入っていれば足りる。足りないものは補われている
+        // S-2: 3つのうち2つ入っていれば足りる。足りないものは補われている。
+        // 2つ揃っているかは checkResultDraft が上で見ている
         const km = triple.distanceKm ?? 0;
         const min = triple.durationSec !== undefined ? triple.durationSec / 60 : 0;
-        if (!km || !min) {
-          setBusy(false);
-          alert("距離・時間・平均ペースのうち2つを入力してください");
-          return;
-        }
         payload = {
           sessionId: session.id,
           sessionCategory,

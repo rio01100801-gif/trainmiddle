@@ -164,6 +164,7 @@ src/lib/service/
 | `SubjectiveFields` | RPE・主観・翌日の脚・途中でやめた理由 |
 | `ConditionFields` | 天候・路面・シューズ |
 | `RestFields` | レスト内容・指定方法・値 |
+| `checkResultDraft` | 保存させるかどうかの判定（`src/lib/core/resultDraft.ts`） |
 
 **どちらもモジュール直下に置いた。** 関数の中で関数コンポーネントを定義すると
 再描画のたびに別の関数になり、React が中身の input を作り直す。
@@ -176,9 +177,14 @@ src/lib/service/
 E2Eに欄を1つずつ足していくより、**形のほうを禁じた**ほうが
 欄が増えても勝手に守られる（N-1 は `設定(秒)` 1つしか見ていない）。
 
-残りの2つ（`IntervalResultForm` / `ContinuousResultForm`）は
-**保存ペイロードの組み立てと絡む**ので、欄を移すだけでは終わらない。
-`useResultDraft` と一緒に考える必要がある。
+判定は core へ出したので単体テストが書けるようになった
+（それまで画面の中にあり、E2Eで1経路ずつ叩くしかなかった）。
+
+**残りは保存ペイロードの組み立て。** これが一番大きい。
+`mode` で分岐しながら triple・perRep・slot・rest・hr を組み合わせており、
+入力が20以上ある。純関数として `buildResultPayload` に出せば
+`IntervalResultForm` / `ContinuousResultForm` の分割が素直になるが、
+**一度に片付く量ではない。** 新しいセッションでまとめてやること。
 
 
 2389行・73件の `useState`。**実際に不具合が出ているのはこの層。**
