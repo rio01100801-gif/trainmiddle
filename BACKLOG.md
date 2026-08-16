@@ -163,6 +163,7 @@ src/lib/service/
 | --- | --- |
 | `SubjectiveFields` | RPE・主観・翌日の脚・途中でやめた理由 |
 | `ConditionFields` | 天候・路面・シューズ |
+| `RestFields` | レスト内容・指定方法・値 |
 
 **どちらもモジュール直下に置いた。** 関数の中で関数コンポーネントを定義すると
 再描画のたびに別の関数になり、React が中身の input を作り直す。
@@ -171,9 +172,13 @@ src/lib/service/
 
 残り: `IntervalResultForm` / `ContinuousResultForm` / `RestFields` / `useResultDraft`。
 
-**先に足しておきたい検査**: N-1（1文字ずつ打ってフォーカスが残るか）は
-`設定(秒)` だけを見ている。切り出した部品の中の入力欄
-（「打ち切りの内容」など）は見ていないので、そこを入れ子にしても落ちない。
+入れ子のコンポーネントは `npm run ci:nested` が禁じている。
+E2Eに欄を1つずつ足していくより、**形のほうを禁じた**ほうが
+欄が増えても勝手に守られる（N-1 は `設定(秒)` 1つしか見ていない）。
+
+残りの2つ（`IntervalResultForm` / `ContinuousResultForm`）は
+**保存ペイロードの組み立てと絡む**ので、欄を移すだけでは終わらない。
+`useResultDraft` と一緒に考える必要がある。
 
 
 2389行・73件の `useState`。**実際に不具合が出ているのはこの層。**

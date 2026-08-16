@@ -1237,6 +1237,58 @@ function SubjectiveFields({
 }
 
 /**
+ * レストの欄（内容・指定方法・値）。
+ *
+ * 秒と距離で刻みを変えている。実際に使う刻みでないと押す回数が減らない。
+ * ここもモジュール直下に置く（理由は `SubjectiveFields` と同じ）。
+ */
+function RestFields({
+  restType,
+  setRestType,
+  restMode,
+  setRestMode,
+  restValue,
+  setRestValue,
+}: {
+  restType: RestType;
+  setRestType: (v: RestType) => void;
+  restMode: "time" | "distance";
+  setRestMode: (v: "time" | "distance") => void;
+  restValue: string;
+  setRestValue: (v: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <ChipGroup
+        label="レスト内容"
+        value={restType}
+        onChange={(v) => setRestType((v ?? "jog") as RestType)}
+        options={REST_TYPE_OPTIONS}
+        columns={3}
+      />
+      <div className="grid grid-cols-2 gap-2 items-end">
+        <ChipGroup
+          label="レスト指定"
+          value={restMode}
+          onChange={(v) => setRestMode((v ?? "time") as "time" | "distance")}
+          options={REST_MODE_OPTIONS}
+          columns={2}
+        />
+        {/* 秒は5刻み・距離は50刻み。実際に使う刻みでないと押す回数が減らない */}
+        <Stepper
+          label={restMode === "time" ? "レスト(秒)" : "レスト(m)"}
+          value={restValue}
+          onChange={setRestValue}
+          min={0}
+          max={restMode === "time" ? 1800 : 3000}
+          step={restMode === "time" ? 5 : 50}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
  * その日の条件（天候・路面・シューズ）。
  *
  * **記録であって判定材料ではない。** 暑熱条件は今までどおり気温と湿度から決める。
@@ -2087,33 +2139,14 @@ function ResultForm({
               </div>
             </div>
           )}
-          <div className="flex flex-col gap-2">
-            <ChipGroup
-              label="レスト内容"
-              value={restType}
-              onChange={(v) => setRestType((v ?? "jog") as RestType)}
-              options={REST_TYPE_OPTIONS}
-              columns={3}
-            />
-            <div className="grid grid-cols-2 gap-2 items-end">
-              <ChipGroup
-                label="レスト指定"
-                value={restMode}
-                onChange={(v) => setRestMode((v ?? "time") as "time" | "distance")}
-                options={REST_MODE_OPTIONS}
-                columns={2}
-              />
-              {/* 秒は5刻み・距離は50刻み。実際に使う刻みでないと押す回数が減らない */}
-              <Stepper
-                label={restMode === "time" ? "レスト(秒)" : "レスト(m)"}
-                value={restValue}
-                onChange={setRestValue}
-                min={0}
-                max={restMode === "time" ? 1800 : 3000}
-                step={restMode === "time" ? 5 : 50}
-              />
-            </div>
-          </div>
+          <RestFields
+            restType={restType}
+            setRestType={setRestType}
+            restMode={restMode}
+            setRestMode={setRestMode}
+            restValue={restValue}
+            setRestValue={setRestValue}
+          />
           {/* N-2: メニューの構造に合わせて1本ずつの欄を出す。
               貼り付けたい場合のために、まとめて入れる方式も残す */}
           <div className="seg mb-2">

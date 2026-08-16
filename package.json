@@ -27,7 +27,7 @@
     "ci:forbidden": "node scripts/ci/check-forbidden-patterns.mjs",
     "ci:api-parity": "node scripts/ci/check-api-shim-parity.mjs",
     "ci:perf-budget": "node scripts/ci/check-perf-budget.mjs",
-    "ci:checks": "npm run ci:secrets && npm run ci:forbidden && npm run ci:api-parity && npm run ci:docs && npm run ci:layers",
+    "ci:checks": "npm run ci:secrets && npm run ci:forbidden && npm run ci:api-parity && npm run ci:docs && npm run ci:layers && npm run ci:nested",
     "release:check": "node scripts/release-check.mjs",
     "smoke": "node scripts/smoke-test.mjs",
     "visual": "node pwa/visual.mjs --all-widths --check",
@@ -37,7 +37,8 @@
     "test:coverage": "vitest run --coverage --maxWorkers=1",
     "coverage:report": "node scripts/ci/coverage-report.mjs",
     "ci:docs": "node scripts/ci/check-doc-numbers.mjs",
-    "ci:layers": "node scripts/ci/check-service-layers.mjs"
+    "ci:layers": "node scripts/ci/check-service-layers.mjs",
+    "ci:nested": "node scripts/ci/check-nested-components.mjs"
   },
   "dependencies": {
     "fit-file-parser": "^4.1.0",
