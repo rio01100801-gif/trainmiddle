@@ -36,7 +36,8 @@ export default defineConfig({
      */
     coverage: {
       provider: "v8",
-      reporter: ["text-summary", "json-summary", "html"],
+      // json は「どの行のどの分岐が空いているか」を出すのに要る（coverage-report.mjs の相棒）
+      reporter: ["text-summary", "json-summary", "json", "html"],
       reportsDirectory: "coverage",
       /*
        * 画面（app/）は入れない。node環境のユニットテストからは実行されないので、

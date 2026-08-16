@@ -38,7 +38,8 @@
     "coverage:report": "node scripts/ci/coverage-report.mjs",
     "ci:docs": "node scripts/ci/check-doc-numbers.mjs",
     "ci:layers": "node scripts/ci/check-service-layers.mjs",
-    "ci:nested": "node scripts/ci/check-nested-components.mjs"
+    "ci:nested": "node scripts/ci/check-nested-components.mjs",
+    "coverage:gaps": "node scripts/ci/coverage-gaps.mjs"
   },
   "dependencies": {
     "fit-file-parser": "^4.1.0",

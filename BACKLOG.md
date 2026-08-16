@@ -44,6 +44,31 @@
 埋めたぶんだけ `scripts/ci/coverage-thresholds.json` を手で上げる。
 **自動で現在値に追従させない**（一時的な低下まで基準になる）。
 
+#### どこが空いているか（`npm run coverage:gaps`）
+
+```bash
+npm run test:coverage && npm run coverage:gaps
+```
+
+引数でファイルを変えられる（`npm run coverage:gaps core/backfill.ts`）。
+**「194本ある」だけでは手が付かない。** 関数ごとにまとめると順番が決まる。
+
+`workflow.ts` の内訳（測定時点）。上から埋めると効く順ではなく、
+**壊れたときの実害が大きい順**に並べ直してある:
+
+| 関数 | 未検証 | なぜ効くか |
+| --- | --- | --- |
+| `processResultCore` | 11 | 結果保存→CFEの中心。ここが黙って壊れると推定がずれる |
+| `regeneratePlanCore` | 11 | 生成の中心。メニューが変わっても気づけない |
+| `hasRecentLoadConcern` | 7 | 疲労の裏付け。**非公開なので `buildRuleContext` 経由で叩く** |
+| `processSkip` | 4 | スキップの判定 |
+| `resultAudit` | 4 | 記録の点検 |
+| `dashboard` | 11 | 表示のみ。落としても数値は狂わない |
+| `assistantContext` | 16 | 相談に渡す文の組み立て。表示のみ |
+
+**`dashboard` と `assistantContext` は数が多いが後回しでよい。**
+数を減らしたいだけなら先に埋まるが、守りたいのは数字ではない。
+
 ### A-2b. 「出力が出すぎた」を設定を上げる材料にするか（データ待ち・約束）
 
 **本人からの要望。忘れないためにここに置く。**
