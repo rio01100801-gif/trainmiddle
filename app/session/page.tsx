@@ -5,6 +5,91 @@ import { Card, Gauge, fmtSec } from "../components/ui";
 import { useQueryParam, withQuery } from "../components/route-query";
 import { localToday } from "@/lib/core/dates";
 import { sessionView } from "@/lib/core/horizon";
+import type { ShoeRecommendation } from "@/lib/core/shoeRecommend";
+
+/**
+ * おすすめシューズ。
+ *
+ * **判断はここでしない。** サービス層（`core/shoeRecommend.ts`）が出した順を
+ * そのまま出す。画面で並べ替えると、記録画面と違う靴が出ることになる。
+ *
+ * 出すのは「おすすめ」だけではなく、**なぜそれなのか**と**代替**と**注意点**。
+ * 理由が読めないと、違う靴を履きたいときに判断できない。
+ */
+function ShoeAdviceCard({ advice }: { advice: ShoeRecommendation }) {
+  const [open, setOpen] = useState(false);
+  if (!advice.best) {
+    return (
+      <Card title="おすすめシューズ">
+        <p className="text-[12px] leading-relaxed" style={{ color: "var(--text-2)" }}>
+          {advice.emptyNote}
+        </p>
+        <Link className="btn-ghost inline-flex mt-2" href="/settings">
+          シューズを登録する
+        </Link>
+      </Card>
+    );
+  }
+  const best = advice.best;
+  return (
+    <Card title="おすすめシューズ">
+      <button
+        className="w-full text-left min-h-[44px]"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="text-[15px] font-bold">{best.shoe.name}</span>
+        <span className="text-[11.5px] ml-2" style={{ color: "var(--text-3)" }}>
+          {open ? "▾ 理由をとじる" : "▸ 理由と代替を見る"}
+        </span>
+      </button>
+
+      {/* 注意点は畳まない。履く前に読めないと意味がない */}
+      {best.cautions.map((c, i) => (
+        <p key={i} className="text-[11.5px] leading-relaxed mt-1" style={{ color: "var(--amber)" }}>
+          {c}
+        </p>
+      ))}
+
+      {open ? (
+        <div className="mt-2">
+          <div className="metric-label mb-1">この靴にした理由</div>
+          {best.reasons.map((r, i) => (
+            <p key={i} className="text-[12px] leading-relaxed" style={{ color: "var(--text-2)" }}>
+              {r}
+            </p>
+          ))}
+
+          {advice.alternatives.length > 0 ? (
+            <>
+              <div className="metric-label mt-2.5 mb-1">代替候補</div>
+              {advice.alternatives.slice(0, 3).map((a) => (
+                <div key={a.shoe.id} className="text-[12px] leading-relaxed">
+                  <span className="font-semibold">{a.shoe.name}</span>
+                  {a.cautions.length > 0 ? (
+                    <span className="text-[11px] ml-1.5" style={{ color: "var(--amber)" }}>
+                      {a.cautions[0]}
+                    </span>
+                  ) : null}
+                </div>
+              ))}
+            </>
+          ) : null}
+
+          {/*
+            実績がまだ少ないことを必ず断る。
+            「学習済み」と受け取られると、根拠の薄い順位を信用させてしまう。
+          */}
+          {advice.dataNote ? (
+            <p className="text-[11px] leading-relaxed mt-2.5" style={{ color: "var(--text-3)" }}>
+              {advice.dataNote}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </Card>
+  );
+}
 
 /**
  * セッション詳細（メニューの根拠）
@@ -16,6 +101,12 @@ export default function SessionPage() {
   const id = useQueryParam("id");
   const [session, setSession] = useState<any>(null);
   const [readiness, setReadiness] = useState<any>(null);
+  /*
+   * その日の練習に合う靴。判断はサービス層（core/shoeRecommend.ts）だけが持つ。
+   * 画面で並べ替えたり足したりしない——ここで手を入れると、
+   * 記録画面と違う靴が出ることになる。
+   */
+  const [shoeAdvice, setShoeAdvice] = useState<ShoeRecommendation | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -33,6 +124,14 @@ export default function SessionPage() {
       })
       .finally(() => setLoading(false));
   }, [id]);
+
+  useEffect(() => {
+    if (!session?.id) return;
+    fetch(`/api/shoes?sessionId=${encodeURIComponent(session.id)}`)
+      .then((r) => r.json())
+      .then((d) => setShoeAdvice(d.advice ?? null))
+      .catch(() => setShoeAdvice(null));
+  }, [session?.id]);
 
   if (loading) return <p className="text-[13px]">読み込み中…</p>;
   if (!session) {
@@ -157,6 +256,8 @@ export default function SessionPage() {
           </Link>
         </div>
       </Card>
+
+      {shoeAdvice ? <ShoeAdviceCard advice={shoeAdvice} /> : null}
 
       {readiness ? (
         <Card title="セッション準備度">

@@ -240,6 +240,16 @@ export function recommendShoes(
       cautions.push("この練習でスパイクは履きません");
     }
 
+    /*
+     * トレッドミルはポイント練習でもスパイクを外す。
+     * 場所違いの −8 では、ポイント練習の加点に負けて1番に出てしまう。
+     * ベルトを切るので、狙いが合っていても履く場面が無い。
+     */
+    if (p.isSpike && ctx.place === "treadmill") {
+      score -= 20;
+      cautions.push("トレッドミルでスパイクは履きません");
+    }
+
     // --- 濡れた路面 ---
     if (ctx.wet || ctx.slippery) {
       /*
@@ -261,6 +271,18 @@ export function recommendShoes(
       score += (p.cushioning - 3) * 2;
       if (p.isSpike || p.cushioning <= 2) {
         cautions.push(ctx.hasPain ? "痛みがあるので硬い靴は避けます" : "疲労が残っているので脚に優しいほうへ");
+      } else if (p.cushioning >= 3) {
+        /*
+         * 選ばれた側にも理由を残す。
+         * 注意書きは順位を下げた靴に付くので、それだけだと
+         * **なぜ今日はこの靴なのか**が画面に出ない。
+         * いつもと違う靴が出た日に、理由が読めないのが一番困る。
+         */
+        reasons.push(
+          ctx.hasPain
+            ? "痛みがあるので、脚に負担の少ない靴を選びました"
+            : "疲労が残っているので、脚に負担の少ない靴を選びました"
+        );
       }
     }
 

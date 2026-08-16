@@ -1265,12 +1265,15 @@ function ConditionFields({
   shoeId,
   setShoeId,
   shoes,
+  recommendedShoeId,
 }: {
   conditions: string[];
   setConditions: (v: string[]) => void;
   shoeId?: string;
   setShoeId: (v: string | undefined) => void;
   shoes: ShoeUsage[];
+  /** その日の練習に薦められた靴。印を付けるだけで、選択は絞らない */
+  recommendedShoeId?: string;
 }) {
   return (
     <>
@@ -1313,9 +1316,16 @@ function ConditionFields({
                 label="シューズ"
                 value={shoeId}
                 onChange={setShoeId}
+                /*
+                  おすすめには印を付けるが、**選択肢は絞らない**。
+                  薦めたものと違う靴を履くのは普通のことで、
+                  そのときに選べないと記録が実際と食い違う。
+                */
                 options={shoes.map((u) => ({
                   value: u.shoe.id,
-                  label: `${u.shoe.name}${u.totalKm > 0 ? ` ${u.totalKm}km` : ""}`,
+                  label:
+                    (u.shoe.id === recommendedShoeId ? "★ " : "") +
+                    `${u.shoe.name}${u.totalKm > 0 ? ` ${u.totalKm}km` : ""}`,
                 }))}
                 allowEmpty
                 emptyLabel="未選択（任意）"
@@ -1540,6 +1550,8 @@ function ResultForm({
   );
   const [shoeId, setShoeId] = useState<string | undefined>(existing?.shoeId);
   const [shoes, setShoes] = useState<ShoeUsage[]>([]);
+  /** その日の練習に薦められた靴。印を付けるだけで、選択は絞らない */
+  const [recommendedShoeId, setRecommendedShoeId] = useState<string | undefined>(undefined);
   const [rain, setRain] = useState(!!existing?.rain);
 
   /*
@@ -1660,15 +1672,41 @@ function ResultForm({
     tempC: tempC ? Number(tempC) : undefined,
     humidityPct: humidity ? Number(humidity) : undefined,
   });
-  // 登録済みのシューズ。最後に使ったものが先頭に来る（毎回同じ靴なら1タップ）
+  /*
+   * 登録済みのシューズ。
+   *
+   * 並びは**その日の練習の推薦順**。判断はサービス層（core/shoeRecommend.ts）が
+   * 持っていて、ここでは並べ替えない——画面ごとに理屈を書くと、
+   * 練習詳細で薦められた靴と記録画面の1番目が食い違う。
+   *
+   * 推薦が取れないときは、これまでどおり最後に使ったものを先頭にする。
+   */
   useEffect(() => {
-    fetch("/api/shoes")
-      .then((r) => r.json())
-      .then((d) => setShoes(shoeChoices(d.usage ?? [])))
+    Promise.all([
+      fetch("/api/shoes").then((r) => r.json()),
+      fetch(`/api/shoes?sessionId=${encodeURIComponent(session.id)}`)
+        .then((r) => r.json())
+        .catch(() => ({})),
+    ])
+      .then(([all, adv]) => {
+        const usage: ShoeUsage[] = all.usage ?? [];
+        const order: string[] = adv?.advice?.best
+          ? [adv.advice.best, ...(adv.advice.alternatives ?? [])].map(
+              (s: { shoe: { id: string } }) => s.shoe.id
+            )
+          : [];
+        setRecommendedShoeId(order[0]);
+        if (order.length === 0) {
+          setShoes(shoeChoices(usage));
+          return;
+        }
+        const byId = new Map(usage.map((u) => [u.shoe.id, u]));
+        setShoes(order.map((id) => byId.get(id)).filter((u): u is ShoeUsage => !!u));
+      })
       .catch(() => {
         /* 靴は任意。取れなくても記録は入れられる */
       });
-  }, []);
+  }, [session.id]);
 
   const envNotes = environmentNote({
     tempC: tempC ? Number(tempC) : undefined,
@@ -2275,6 +2313,7 @@ function ResultForm({
               shoeId={shoeId}
               setShoeId={setShoeId}
               shoes={shoes}
+              recommendedShoeId={recommendedShoeId}
             />
           </div>
 

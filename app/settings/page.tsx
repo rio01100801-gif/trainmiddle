@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Card, ConfirmButton, StatusText } from "../components/ui";
 import { ChipGroup } from "../components/inputs";
 import { SHOE_KIND_LABELS, type ShoeKind, type ShoeUsage } from "@/lib/core/shoes";
+import { profileOf, SHOE_PURPOSE_LABELS, type ShoePurpose } from "@/lib/core/shoeProfile";
 import { SETTINGS_ITEMS } from "../components/nav";
 import { searchFeatures } from "@/lib/core/featureSearch";
 
@@ -183,6 +184,24 @@ function ShoeCard() {
     setMsg("登録しました。");
   };
 
+  /**
+   * 靴の性格を直す。
+   *
+   * 直した項目だけを `profile` に足す。**触っていない項目は入れない**——
+   * 全部を書き込むと、種類から置いた目安と本人が決めた値の区別が付かなくなる。
+   */
+  const saveProfile = async (u: ShoeUsage, patch: Record<string, unknown>) => {
+    const next = { ...u.shoe, profile: { ...(u.shoe.profile ?? {}), ...patch } };
+    const r = await fetch("/api/shoes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(next),
+    });
+    const d = await r.json();
+    if (d.error) setMsg(d.error);
+    else setUsage(d.usage ?? []);
+  };
+
   const setRetired = async (u: ShoeUsage, retired: boolean) => {
     const r = await fetch("/api/shoes", {
       method: "POST",
@@ -293,6 +312,60 @@ function ShoeCard() {
                         最後に使った日: {u.lastUsed}
                       </p>
                     ) : null}
+
+                    {/*
+                      推薦の材料。**製品ごとの性能表は持っていない。**
+                      種類から作った一般的な傾向を出発点にして、
+                      本人が直したものを常に優先する
+                      （こちらで確かめずに数値を書くと、推薦の理由を検証できない）。
+                    */}
+                    <div className="metric-label mb-1">この靴の性格（推薦に使う）</div>
+                    <p className="text-[10.5px] leading-relaxed mb-1.5" style={{ color: "var(--text-3)" }}>
+                      種類から置いた目安です。実際と違えば直してください。直したほうが優先されます。
+                    </p>
+                    {(
+                      [
+                        ["cushioning", "クッション"],
+                        ["responsiveness", "反発"],
+                        ["stability", "安定"],
+                        ["grip", "グリップ"],
+                        ["lightness", "軽さ"],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <div key={key} className="flex items-center justify-between gap-2 mb-1">
+                        <span className="text-[11.5px]">{label}</span>
+                        <span className="flex gap-1">
+                          {([1, 2, 3, 4, 5] as const).map((n) => (
+                            <button
+                              key={n}
+                              type="button"
+                              aria-label={`${u.shoe.name} ${label} ${n}`}
+                              aria-pressed={profileOf(u.shoe)[key] === n}
+                              className="rounded num text-[11.5px] font-semibold min-h-[44px]"
+                              style={{
+                                width: 34,
+                                background:
+                                  profileOf(u.shoe)[key] === n ? "var(--volt)" : "var(--surface)",
+                                color:
+                                  profileOf(u.shoe)[key] === n ? "var(--volt-ink)" : "var(--text-2)",
+                              }}
+                              onClick={() => saveProfile(u, { [key]: n })}
+                            >
+                              {n}
+                            </button>
+                          ))}
+                        </span>
+                      </div>
+                    ))}
+                    <div className="mt-1.5 mb-2">
+                      <ChipGroup
+                        label="主な用途"
+                        value={profileOf(u.shoe).purpose}
+                        onChange={(v) => saveProfile(u, { purpose: v ?? "any" })}
+                        options={SHOE_PURPOSE_OPTIONS}
+                        columns={3}
+                      />
+                    </div>
                     <div className="flex gap-2 flex-wrap">
                       <button
                         className="btn-ghost !py-1.5 !px-2.5 !text-[11.5px] min-h-[44px]"
@@ -334,6 +407,10 @@ function ShoeCard() {
     </Card>
   );
 }
+
+const SHOE_PURPOSE_OPTIONS: { value: ShoePurpose; label: string }[] = (
+  Object.keys(SHOE_PURPOSE_LABELS) as ShoePurpose[]
+).map((v) => ({ value: v, label: SHOE_PURPOSE_LABELS[v] }));
 
 export default function SettingsPage() {
   return (

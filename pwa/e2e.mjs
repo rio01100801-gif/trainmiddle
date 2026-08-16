@@ -67,7 +67,8 @@ const SHOT_DIR = path.join(ROOT, "shots");
 const shot = (name) => page.screenshot({ path: path.join(SHOT_DIR, `${name}.png`), fullPage: true });
 fs.mkdirSync(SHOT_DIR, { recursive: true });
 const step = (msg) => console.log("STEP:", msg);
-const fail = (msg) => { console.log("FAIL:", msg); process.exitCode = 1; };
+let failCount = 0;
+const fail = (msg) => { failCount++; console.log("FAIL:", msg); process.exitCode = 1; };
 
 // ---- 1. 初回起動 ----
 await page.goto("http://localhost:8791/");
@@ -5570,7 +5571,7 @@ if ((await fitRebuildCard.count()) === 0) {
   }
 
   if (!(await page.getByTestId("shoe-chips").count())) fail("シューズの選択が出ていない");
-  await page.getByRole("button", { name: /シューズ E2Eスパイク/ }).click();
+  await page.getByRole("button", { name: /シューズ .*E2Eスパイク/ }).click();
   await page.waitForTimeout(200);
 
   await setSlider(page.getByTestId("rpe-slider"), 8);
@@ -5912,6 +5913,123 @@ if ((await fitRebuildCard.count()) === 0) {
   step("記録画面の不変条件OK（隠れた値は保存に混ざらない・切り替えても入力が消えない）");
 }
 
+
+// ---- おすすめシューズ ----
+/*
+ * 見るのは4つ。
+ *   ・登録してある靴だけが出ること（**持っていない靴を薦めない**）
+ *   ・理由と代替が読めること（読めないと違う靴を選ぶ判断ができない）
+ *   ・記録画面の並びが練習詳細と同じであること
+ *     （画面ごとに理屈を書くと食い違う。判断は core/shoeRecommend.ts だけ）
+ *   ・薦めたものと**違う靴も選べる**こと
+ */
+{
+  const adviceBefore = failCount;
+
+  /*
+   * 2足目を登録する。1足しか無いと並び順の検査が意味を持たない
+   * （登録順と推薦順がどうやっても同じになる）。
+   * **登録はスパイクが先・推薦はジョグ用が先**になる条件を作り、
+   * 並びが登録順ではなく推薦から来ていることを確かめる。
+   */
+  await page.goto("http://localhost:8791/#/settings");
+  await page.waitForTimeout(800);
+  await page.getByLabel("製品名").fill("E2Eデイリー");
+  await page.getByRole("button", { name: "種類 トレーニング" }).click();
+  await page.getByRole("button", { name: "登録する" }).click();
+  await page.waitForTimeout(700);
+
+  // ジョグを対象にする。ここでスパイクが1番になったら推薦が働いていない
+  const adviceTarget = await page.evaluate(async () => {
+    const d = await fetch("/api/sessions").then((r) => r.json());
+    const s = (d.sessions ?? [])
+      .filter((x) => x.status === "planned" && x.category === "aerobic")
+      .sort((a, b) => a.date.localeCompare(b.date))[0];
+    return s ? { id: s.id, date: s.date, name: s.name } : null;
+  });
+  if (!adviceTarget) fail("おすすめシューズ: 対象のCVセッションが無い");
+  else {
+    const advice = await page.evaluate(
+      async (id) =>
+        fetch(`/api/shoes?sessionId=${encodeURIComponent(id)}`).then((r) => r.json()),
+      adviceTarget.id
+    );
+    if (!advice?.advice) fail("おすすめシューズ: APIが返らない（シムに対で足していない可能性）");
+    else {
+      const registered = await page.evaluate(async () =>
+        fetch("/api/shoes").then((r) => r.json())
+      );
+      const known = new Set((registered.shoes ?? []).map((s) => s.id));
+      const listed = [advice.advice.best, ...(advice.advice.alternatives ?? [])]
+        .filter(Boolean)
+        .map((x) => x.shoe.id);
+      if (listed.length === 0) fail("おすすめシューズ: 候補が空（登録済みの靴があるのに出ない）");
+      for (const id of listed) {
+        if (!known.has(id)) fail(`おすすめシューズ: 登録していない靴が出ている（${id}）`);
+      }
+      if (advice.advice.best.shoe.name === "E2Eスパイク") {
+        fail("おすすめシューズ: ジョグにスパイクを薦めている（練習の種類を見ていない）");
+      }
+      if ((advice.advice.alternatives ?? []).length === 0) {
+        fail("おすすめシューズ: 代替が出ていない（2足あるのに1つしか出さない）");
+      }
+
+      // 練習詳細に出ること
+      await page.goto(`http://localhost:8791/#/session?id=${encodeURIComponent(adviceTarget.id)}`);
+      await page.waitForTimeout(1200);
+      const card = page.locator("section.card", { hasText: "おすすめシューズ" }).first();
+      if ((await card.count()) === 0) fail("おすすめシューズ: 練習詳細にカードが出ていない");
+      else {
+        // 理由は畳んである。開いて読めること
+        await card.getByRole("button", { name: /理由と代替を見る/ }).click();
+        await page.waitForTimeout(400);
+        const opened = (await card.textContent()) ?? "";
+        if (!opened.includes("この靴にした理由")) {
+          fail("おすすめシューズ: 理由が読めない");
+        }
+        // 実績が少ないことを断っていること（「学習済み」と誤解させない）
+        if (!opened.includes("足りません")) {
+          fail("おすすめシューズ: 実績が少ないことを断っていない");
+        }
+      }
+
+      // 記録画面の並びが同じで、違う靴も選べること
+      await page.goto(`http://localhost:8791/#/results?date=${adviceTarget.date}`);
+      await page.waitForTimeout(900);
+      await page.getByRole("button", { name: /練習結果/ }).first().click();
+      await page.waitForTimeout(700);
+      const pick = page.locator(`button:has-text("${adviceTarget.name}")`).first();
+      if (await pick.count()) {
+        await pick.click();
+        await page.waitForTimeout(700);
+      }
+      const chips = page.locator('[role="group"][aria-label="シューズ"] button');
+      if ((await chips.count()) === 0) fail("おすすめシューズ: 記録画面に選択が出ていない");
+      else {
+        const first = (await chips.nth(0).textContent()) ?? "";
+        if (!first.includes("★")) {
+          fail(`おすすめシューズ: 記録画面の先頭に印が無い（${first}）`);
+        }
+        const bestName = advice.advice.best.shoe.name;
+        if (!first.includes(bestName)) {
+          fail(
+            `おすすめシューズ: 練習詳細と記録画面で1番目が違う（詳細=${bestName} 記録=${first}）`
+          );
+        }
+        // 薦めたものと違う靴も選べる
+        if ((await chips.count()) >= 2) {
+          await chips.nth(1).click();
+          await page.waitForTimeout(300);
+          const pressed = await chips.nth(1).getAttribute("aria-pressed");
+          if (pressed !== "true") fail("おすすめシューズ: 薦めたものと違う靴を選べない");
+        }
+      }
+    }
+  }
+  if (failCount === adviceBefore) {
+    step("おすすめシューズOK（登録済みだけ・理由と代替・記録と同じ並び・違うものも選べる）");
+  }
+}
 
 if (errors.length) {
   console.log("JS ERRORS:", errors.slice(0, 5));
