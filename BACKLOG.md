@@ -58,7 +58,7 @@ npm run test:coverage && npm run coverage:gaps
 
 | 関数 | 未検証 | なぜ効くか |
 | --- | --- | --- |
-| `processResultCore` | 11 | 結果保存→CFEの中心。ここが黙って壊れると推定がずれる |
+| ~~`processResultCore`~~ | 済 | `tests/processResultCore.test.ts` |
 | `regeneratePlanCore` | 11 | 生成の中心。メニューが変わっても気づけない |
 | `hasRecentLoadConcern` | 7 | 疲労の裏付け。**非公開なので `buildRuleContext` 経由で叩く** |
 | `processSkip` | 4 | スキップの判定 |
