@@ -735,7 +735,18 @@ function DayRow({
    * これからやることの一覧ではなくなる。消してはいない（実施率には残る）ので、
    * 下に小さく件数を出して戻せるようにする。
    */
-  const activeSessions = sessions.filter((s) => s.status !== "skipped");
+  /*
+   * 2部練習の日は午前を先に出す。
+   *
+   * これまで並べ替えていなかったので、保存された順によっては
+   * **午後の本練習が先、午前のジョグが後**に並んでいた。
+   * その日を上から読むと逆順になり、朝に何をやるのかが下にある。
+   * 実際にやる順に並べる。
+   */
+  const activeSessions = sessions
+    .filter((s) => s.status !== "skipped")
+    .slice()
+    .sort((a, b) => (a.timeOfDay === b.timeOfDay ? 0 : a.timeOfDay === "am" ? -1 : 1));
   const skippedSessions = sessions.filter((s) => s.status === "skipped");
   /**
    * ✎を出すセッション。
@@ -821,6 +832,12 @@ function DayRow({
                     <span
                       key={s.id}
                       className="block text-[12.5px] truncate"
+                      /*
+                        1日の行は1つのリンクの中に複数セッションが並ぶ。
+                        並び順（午前が先）を検査するために、1件ずつ目印を付ける。
+                        リンク単位では数えられない。
+                      */
+                      data-calendar-session={s.timeOfDay}
                       onPointerDown={() => start(s)}
                       onPointerUp={cancel}
                       onPointerCancel={cancel}
@@ -834,6 +851,19 @@ function DayRow({
                         「高乳酸」と「経済走」の区別は形からは付かないため。
                       */}
                       <span className="inline-flex items-center gap-1.5 align-middle mr-1.5">
+                        {/*
+                          2部練習の日だけ「午前」を出す。
+                          普段の練習は午後なので、午後側には何も付けない——
+                          全部に付けると、印が付いていること自体が情報でなくなる。
+                        */}
+                        {s.timeOfDay === "am" ? (
+                          <span
+                            className="text-[10px] px-1 py-0.5 rounded"
+                            style={{ background: "var(--surface-2)", color: "var(--text-2)" }}
+                          >
+                            午前
+                          </span>
+                        ) : null}
                         <IntensityShape mark={intensityMark(s.category)} />
                         <b style={{ color: CATEGORY_COLORS[s.category as keyof typeof CATEGORY_COLORS] }}>
                           {CATEGORY_LABELS[s.category as keyof typeof CATEGORY_LABELS] ?? s.category}

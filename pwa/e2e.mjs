@@ -303,8 +303,54 @@ await page.getByRole("button", { name: "水曜 指定なし", exact: true }).cli
     if (!tue.amCats.every((c) => c === "aerobic")) {
       fail(`2部練習: 火曜の午前が指定どおりでない（${JSON.stringify(tue.amCats)}）`);
     }
+    /*
+     * カレンダーで午前が先に並び、「午前」と分かること。
+     * 並べ替えていなかったので、保存順によっては午後の本練習が先に来て、
+     * その日を上から読むと**実際にやる順と逆**になっていた。
+     */
+    const amDate = await page.evaluate(async () => {
+      const d = await fetch("/api/sessions").then((r) => r.json());
+      const byDate = new Map();
+      for (const s of d.sessions ?? []) {
+        if (!byDate.has(s.date)) byDate.set(s.date, []);
+        byDate.get(s.date).push(s);
+      }
+      for (const [date, list] of byDate) {
+        if (list.length >= 2 && list.some((s) => s.timeOfDay === "am")) return date;
+      }
+      return null;
+    });
+    if (!amDate) fail("2部練習: 午前つきの日が見つからない");
+    else {
+      await page.goto("http://localhost:8791/#/calendar");
+      await page.waitForTimeout(800);
+      await page.locator("select").first().selectOption("4");
+      await page.waitForTimeout(800);
+      const dayCard = page
+        .locator("div.card", { hasText: amDate.slice(5).replace("-", "/") })
+        .first();
+      const rows = dayCard.locator("[data-calendar-session]");
+      const rowCount = await rows.count();
+      /*
+       * **見つからなければ落とす。** 「2本あれば見る」にしていたら、
+       * 行に届いていないだけのときも通ってしまい、
+       * 並び順を逆にしても落ちない検査になっていた（実際そうなっていた）。
+       */
+      if (rowCount < 2) {
+        fail(`2部練習: ${amDate} の行が読めない（${rowCount}行しか見つからない）`);
+      } else {
+        const firstRow = (await rows.nth(0).textContent()) ?? "";
+        if (!firstRow.includes("午前")) {
+          fail(`2部練習: カレンダーで午前が先に来ていない（1行目: ${firstRow.slice(0, 40)}）`);
+        }
+        const secondRow = (await rows.nth(1).textContent()) ?? "";
+        if (secondRow.includes("午前")) {
+          fail("2部練習: 午後の行にも「午前」が付いている（印が情報でなくなる）");
+        }
+      }
+    }
     step(
-      `2部練習OK（火曜 ${tue.withAm}/${tue.total} 日が2本・午前はジョグ・生成前にERRORも出る）`
+      `2部練習OK（火曜 ${tue.withAm}/${tue.total} 日が2本・午前はジョグ・午前が先・生成前にERRORも出る）`
     );
 
     /*
