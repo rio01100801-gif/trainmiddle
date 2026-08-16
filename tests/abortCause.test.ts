@@ -42,11 +42,13 @@ describe("理由の語彙", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("6つそろっている", () => {
+  it("8つそろっている", () => {
     expect(ABORT_CAUSES.map((c) => c.id)).toEqual([
       "pace",
       "fatigue",
       "pain",
+      "too_fast",
+      "taper",
       "condition",
       "schedule",
       "other",
@@ -74,7 +76,7 @@ describe("設定を緩める材料に数えるか", () => {
   });
 
   it("痛み・天候・時間・その他は数えない", () => {
-    for (const c of ["pain", "condition", "schedule", "other"] as AbortCause[]) {
+    for (const c of ["pain", "condition", "schedule", "other", "too_fast", "taper"] as AbortCause[]) {
       expect(countsTowardPaceEase(c), c).toBe(false);
     }
   });
@@ -393,5 +395,36 @@ describe("週次レビューに理由を出す", () => {
     const line = review.qualityLines.find((q) => q.aborted);
     expect(line?.abortCauseLabel).toBe("天候・路面");
     expect(review.text).toContain("天候・路面");
+  });
+});
+
+describe("出力が出すぎた・レースの調整", () => {
+  it("どちらも設定を緩める材料にしない", () => {
+    // 「速すぎて止めた」を緩める材料にしたら、設定が下がって余計に速くなる
+    expect(countsTowardPaceEase("too_fast")).toBe(false);
+    expect(countsTowardPaceEase("taper")).toBe(false);
+  });
+
+  it("体への負担としても数えない", () => {
+    /*
+     * どちらも「途中で止めたから負荷が入っていない」側。
+     * 疲労の裏付けに使うと、調子が良い日ほど疲れている扱いになる。
+     */
+    expect(isStrainCause("too_fast")).toBe(false);
+    expect(isStrainCause("taper")).toBe(false);
+  });
+
+  it("締める側の判定にも入れない（数値ロジックは検証まで動かさない）", () => {
+    const trend = executionTrend([
+      sample({ aborted: true, abortCause: "too_fast" }),
+      sample({ aborted: true, abortCause: "too_fast" }),
+    ]);
+    expect(trend.verdict).toBe("hold");
+    expect(trend.paceAbortCount).toBe(0);
+  });
+
+  it("故障ログは求めない", () => {
+    expect(needsInjuryLog("too_fast")).toBe(false);
+    expect(needsInjuryLog("taper")).toBe(false);
   });
 });

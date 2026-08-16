@@ -21,6 +21,10 @@ export type AbortCause =
   | "fatigue"
   /** 痛み・違和感。安全のため止めた */
   | "pain"
+  /** 調子が良く、出力が出すぎた。設定より速く入ったので狙いから外れた */
+  | "too_fast"
+  /** レースの調整。狙って短くした */
+  | "taper"
   /** 天候・路面。雨・風・場所の状態 */
   | "condition"
   /** 時間・予定。時間切れ */
@@ -43,6 +47,12 @@ export const ABORT_CAUSES: AbortCauseInfo[] = [
   { id: "pace", label: "設定が高すぎた", hint: "前半から離れて、続けても狙った刺激が入らない" },
   { id: "fatigue", label: "疲労が残っていた", hint: "設定は妥当だが、今日は体が動かない" },
   { id: "pain", label: "痛み・違和感", hint: "安全のため止めた。痛みの記録に残す" },
+  {
+    id: "too_fast",
+    label: "出力が出すぎた",
+    hint: "調子が良く、設定より速く入ったので狙った刺激から外れた",
+  },
+  { id: "taper", label: "レースの調整", hint: "狙って短くした。予定どおりの打ち切り" },
   { id: "condition", label: "天候・路面", hint: "雨・風・場所の状態で続けられない" },
   { id: "schedule", label: "時間・予定", hint: "時間切れ。走りとは関係ない" },
   { id: "other", label: "その他", hint: "当てはまるものが無いとき。何があったか書く" },
@@ -67,6 +77,16 @@ export function countsTowardPaceEase(cause?: AbortCause): boolean {
   if (cause === undefined) return true;
   return cause === "pace" || cause === "fatigue";
 }
+
+/*
+ * 「出力が出すぎた」は**設定を緩める材料ではない**。むしろ逆を示している。
+ * ただし締める側の判定（`executionTrend` の tighten）にも入れていない。
+ *
+ * 締めるかどうかは、いま実測3回そろって全部速いときだけ動く仕組みで、
+ * そこに打ち切り1本を材料として足すのは**係数の変更**にあたる。
+ * 妥当性の検証（BACKLOG A-2）が済むまで数値ロジックは動かさないと決めてある。
+ * いまは記録するだけで、締めたいなら実測がそろったときに自然に締まる。
+ */
 
 /**
  * 体への負担の証拠として数えるか。

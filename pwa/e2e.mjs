@@ -5714,7 +5714,39 @@ if ((await fitRebuildCard.count()) === 0) {
   }, abortTarget.id);
   if (counted.cause !== "condition") fail("打ち切り理由: 読み直すと理由が消えている");
 
-  step("打ち切り理由OK（設定どおりでも聞く・未入力では保存させない・扱いを出す）");
+  /*
+   * カレンダーに中止が出ること。
+   * これまでカレンダーは種目の食い違いしか見ておらず、
+   * **途中で切った日と予定どおり終えた日が同じ顔**をしていた。
+   */
+  const abortDate = await page.evaluate(async (id) => {
+    const d = await fetch("/api/sessions").then((r) => r.json());
+    return (d.sessions ?? []).find((s) => s.id === id)?.date ?? null;
+  }, abortTarget.id);
+  if (!abortDate) fail("打ち切り理由: 対象日が分からない");
+  else {
+    await page.goto("http://localhost:8791/#/calendar");
+    await page.waitForTimeout(800);
+    await page.locator("select").first().selectOption("4");
+    await page.waitForTimeout(900);
+    const abortDay = page
+      .locator("div.card", { hasText: abortDate.slice(5).replace("-", "/") })
+      .first();
+    if ((await abortDay.count()) === 0) {
+      fail(`打ち切り理由: ${abortDate} の行がカレンダーに無い`);
+    } else {
+      const dayText = (await abortDay.textContent()) ?? "";
+      if (!dayText.includes("中止")) {
+        fail(`打ち切り理由: カレンダーに中止が出ていない（${dayText.slice(0, 60)}）`);
+      }
+      // 理由まで出ること（扱いが違うものを同じ顔で並べない）
+      if (!dayText.includes("天候・路面")) {
+        fail(`打ち切り理由: カレンダーに理由が出ていない（${dayText.slice(0, 60)}）`);
+      }
+    }
+  }
+
+  step("打ち切り理由OK（設定どおりでも聞く・未入力では保存させない・扱いを出す・カレンダーに中止）");
 }
 
 // ---- 記録画面の不変条件（分割の前に固定する） ----

@@ -20,7 +20,11 @@ import {
 import { localToday } from "@/lib/core/dates";
 import type { CoverageReview } from "@/lib/core/coverage";
 import type { Race, Session, SessionResult } from "@/lib/core/types";
-import { actualDiffersFromPlan, describeActualResult } from "@/lib/core/actualVsPlan";
+import {
+  actualDiffersFromPlan,
+  describeAbort,
+  describeActualResult,
+} from "@/lib/core/actualVsPlan";
 import { sessionView } from "@/lib/core/horizon";
 import { intensityMark, type IntensityMark } from "@/lib/core/trainingClassification";
 
@@ -826,6 +830,7 @@ function DayRow({
                   const result = resultBySessionId.get(s.id);
                   const diverged = actualDiffersFromPlan(s, result);
                   const actualText = diverged ? describeActualResult(result) : undefined;
+                  const abortText = describeAbort(result);
                   // 確定範囲の外は設定ペースを出さない（素案。horizon.ts が唯一の判断）
                   const view = sessionView(s, today);
                   return (
@@ -883,6 +888,18 @@ function DayRow({
                       {view.badge ? (
                         <span className="text-[10px] ml-1" style={{ color: "var(--text-3)" }}>
                           {view.badge}
+                        </span>
+                      ) : null}
+                      {/*
+                        途中でやめた日は、予定どおり終えた日と見分けが付くようにする。
+                        **失敗の印ではない**ので赤にしない。琥珀で「ここで切った」とだけ言う。
+                      */}
+                      {abortText ? (
+                        <span
+                          className="text-[10px] ml-1 px-1 py-0.5 rounded"
+                          style={{ background: "var(--surface-2)", color: "var(--amber)" }}
+                        >
+                          {abortText}
                         </span>
                       ) : null}
                       {diverged && actualText ? (
