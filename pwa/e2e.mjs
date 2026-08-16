@@ -2431,8 +2431,18 @@ const editBox = await page.locator("section.card", { hasText: "メニュー本�
 if (editBox && editBox.y > 844) fail(`編集シートが画面外に出ている（y=${Math.round(editBox.y)}px）`);
 const calendarEditSheet = page.locator("section.card", { hasText: "メニュー本文" }).first();
 const calendarEditBody = calendarEditSheet.locator("textarea").first();
+/*
+ * 末尾に印を足す形だと、カレンダーの行が短い形（距離×本数と設定）を
+ * 出すようになった時点で見えなくなる——**行が詰まったのか、
+ * 保存が効いていないのかを区別できない**。
+ * 行が必ず残すもの（距離）を書き換えて、それが出ることで確かめる。
+ */
+const calendarEditBefore = await calendarEditBody.inputValue();
+// 印は `@`（設定の始まり）より前に入れる。そこが行に残る側
 await calendarEditBody.fill(
-  `${await calendarEditBody.inputValue()}（カレンダー反映テスト）`
+  calendarEditBefore.includes("@")
+    ? calendarEditBefore.replace("@", "（カレンダー反映テスト）@")
+    : `${calendarEditBefore}（カレンダー反映テスト）`
 );
 await page.waitForTimeout(900);
 await calendarEditSheet.getByRole("button", { name: "保存する", exact: true }).click();
@@ -2441,7 +2451,9 @@ const reflectedCalendarRow = page.locator("div.card a.flex-1", {
   hasText: "カレンダー反映テスト",
 });
 if ((await reflectedCalendarRow.count()) === 0) {
-  fail("カレンダーで保存したメニュー本文が一覧へ反映されない");
+  fail(
+    `カレンダーで保存したメニュー本文が一覧へ反映されない（元: ${calendarEditBefore.slice(0, 40)}）`
+  );
 }
 step("カレンダー: 編集保存→一覧・再取得への反映OK");
 await shot("26_calendar_edit");

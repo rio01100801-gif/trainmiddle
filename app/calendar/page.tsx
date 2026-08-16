@@ -9,6 +9,7 @@ import {
   prescriptionPayload,
   usePrescriptionFields,
 } from "../components/prescription-fields";
+import { shortPrescription } from "@/lib/core/prescriptionSummary";
 import { SessionEditSheet } from "../components/session-edit-sheet";
 import {
   loadCalendarAnchor,
@@ -866,7 +867,14 @@ function DayRow({
                           className="block text-[10.5px] truncate"
                           style={{ color: "var(--text-3)" }}
                         >
-                          {view.prescription}
+                          {/*
+                            距離×本数と設定タイムだけに詰める。
+                            原文をそのまま置いて CSS で切ると、
+                            `@300m 41.2〜41.6秒` の手前で切れて
+                            **一番見たい設定タイムが真っ先に消える**。
+                            読み取れない形なら原文をそのまま出す。
+                          */}
+                          {shortPrescription(view.prescription) ?? view.prescription}
                         </span>
                       ) : null}
                     </span>

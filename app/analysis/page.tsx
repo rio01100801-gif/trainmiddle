@@ -1690,9 +1690,19 @@ function GapPanel() {
                 </div>
               ))}
             </div>
-            <p className="text-[12px] leading-relaxed" style={{ color: "var(--text-2)" }}>
-              {split.narrative}
-            </p>
+            {/*
+              上の表と同じ数字を文にし直したもの。毎回は読まないので畳む。
+              材料が足りないとき（下の分岐）は**畳まない**——
+              あれは「何を入れれば出せるか」を伝える文で、初めて見る内容だから。
+            */}
+            <Collapsible label="この判定の根拠" className="mt-1">
+              <p
+                className="text-[12px] leading-relaxed mt-1.5"
+                style={{ color: "var(--text-2)" }}
+              >
+                {split.narrative}
+              </p>
+            </Collapsible>
           </>
         ) : (
           <p className="text-[12px] leading-relaxed" style={{ color: "var(--text-2)" }}>
