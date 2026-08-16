@@ -147,6 +147,13 @@ function ShoeCard() {
   const [name, setName] = useState("");
   const [kind, setKind] = useState<ShoeKind>("trainer");
   const [msg, setMsg] = useState("");
+  /*
+   * 靴は増える一方で減らない。1足ずつ操作を並べると設定画面が伸び続けるので、
+   * 押した1足だけ開き、引退したものは畳んでおく。
+   */
+  const [openShoeId, setOpenShoeId] = useState<string | null>(null);
+  const [showRetired, setShowRetired] = useState(false);
+  const retiredCount = usage.filter((u) => u.shoe.retired).length;
 
   const load = useCallback(() => {
     fetch("/api/shoes")
@@ -239,52 +246,84 @@ function ShoeCard() {
           まだ登録がありません。
         </p>
       ) : (
-        <div className="flex flex-col gap-1.5">
-          {usage.map((u) => (
-            <div
-              key={u.shoe.id}
-              className="rounded-lg p-2.5"
-              style={{ background: "var(--surface-2)", opacity: u.shoe.retired ? 0.6 : 1 }}
-            >
-              <div className="flex items-baseline justify-between gap-2 flex-wrap">
-                <span className="text-[13px] font-semibold">
-                  {u.shoe.name}
-                  <span className="text-[11px] ml-1.5" style={{ color: "var(--text-3)" }}>
-                    {SHOE_KIND_LABELS[u.shoe.kind]}
-                    {u.shoe.retired ? "・引退" : ""}
-                  </span>
-                </span>
-                <span className="num text-[13px] font-bold">
-                  {u.totalKm}
-                  <span className="text-[10.5px] font-normal" style={{ color: "var(--text-3)" }}>
-                    km / {u.sessions}回
-                  </span>
-                </span>
-              </div>
-              {u.lastUsed ? (
-                <p className="text-[10.5px] mt-0.5" style={{ color: "var(--text-3)" }}>
-                  最後に使った日: {u.lastUsed}
-                </p>
-              ) : null}
-              <div className="flex gap-2 mt-1.5 flex-wrap">
+        /*
+          1足を1行にする。
+          以前は1足ごとに「名前・使用距離・最後に使った日・引退・消す」を
+          縦に積んでいたので、**登録するほど設定画面が伸びた**。
+          靴は増える一方で減らないので、増えても伸びない形にする。
+
+          押した1足だけ操作を開く。引退した靴は畳んでおく——
+          記録として残す必要はあるが、ふだん見るものではない。
+        */
+        <div className="flex flex-col gap-1">
+          {usage
+            .filter((u) => !u.shoe.retired || showRetired)
+            .map((u) => (
+              <div key={u.shoe.id}>
                 <button
-                  className="btn-ghost !py-1.5 !px-2.5 !text-[11.5px] min-h-[44px]"
-                  onClick={() => setRetired(u, !u.shoe.retired)}
+                  className="w-full flex items-baseline justify-between gap-2 rounded-lg px-2.5 min-h-[44px] text-left"
+                  style={{
+                    background: openShoeId === u.shoe.id ? "var(--surface-2)" : "transparent",
+                    opacity: u.shoe.retired ? 0.6 : 1,
+                  }}
+                  aria-expanded={openShoeId === u.shoe.id}
+                  onClick={() => setOpenShoeId(openShoeId === u.shoe.id ? null : u.shoe.id)}
                 >
-                  {u.shoe.retired ? "また使う" : "引退にする"}
+                  <span className="text-[13px] font-semibold truncate">
+                    {u.shoe.name}
+                    <span className="text-[11px] ml-1.5" style={{ color: "var(--text-3)" }}>
+                      {SHOE_KIND_LABELS[u.shoe.kind]}
+                      {u.shoe.retired ? "・引退" : ""}
+                    </span>
+                  </span>
+                  <span className="num text-[13px] font-bold flex-shrink-0">
+                    {u.totalKm}
+                    <span className="text-[10.5px] font-normal" style={{ color: "var(--text-3)" }}>
+                      km / {u.sessions}回
+                    </span>
+                  </span>
                 </button>
-                {u.sessions === 0 ? (
-                  <ConfirmButton
-                    label="消す"
-                    title="このシューズを消しますか？"
-                    message="まだ使った記録が無いので消せます。"
-                    className="btn-ghost !py-1.5 !px-2.5 !text-[11.5px] min-h-[44px]"
-                    onConfirm={() => remove(u)}
-                  />
+                {openShoeId === u.shoe.id ? (
+                  <div
+                    className="rounded-lg p-2.5 mt-0.5"
+                    style={{ background: "var(--surface-2)" }}
+                  >
+                    {u.lastUsed ? (
+                      <p className="text-[10.5px] mb-1.5" style={{ color: "var(--text-3)" }}>
+                        最後に使った日: {u.lastUsed}
+                      </p>
+                    ) : null}
+                    <div className="flex gap-2 flex-wrap">
+                      <button
+                        className="btn-ghost !py-1.5 !px-2.5 !text-[11.5px] min-h-[44px]"
+                        onClick={() => setRetired(u, !u.shoe.retired)}
+                      >
+                        {u.shoe.retired ? "また使う" : "引退にする"}
+                      </button>
+                      {u.sessions === 0 ? (
+                        <ConfirmButton
+                          label="消す"
+                          title="このシューズを消しますか？"
+                          message="まだ使った記録が無いので消せます。"
+                          className="btn-ghost !py-1.5 !px-2.5 !text-[11.5px] min-h-[44px]"
+                          onConfirm={() => remove(u)}
+                        />
+                      ) : null}
+                    </div>
+                  </div>
                 ) : null}
               </div>
-            </div>
-          ))}
+            ))}
+          {retiredCount > 0 ? (
+            <button
+              className="text-[11.5px] min-h-[44px] text-left"
+              style={{ color: "var(--text-2)" }}
+              aria-expanded={showRetired}
+              onClick={() => setShowRetired((v) => !v)}
+            >
+              {showRetired ? "▾" : "▸"} 引退したシューズ {retiredCount}足
+            </button>
+          ) : null}
         </div>
       )}
       {msg ? (

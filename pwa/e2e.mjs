@@ -5507,6 +5507,25 @@ if ((await fitRebuildCard.count()) === 0) {
   if (!settingsText.includes("E2Eスパイク")) fail("シューズを登録しても一覧に出ない");
   if (!settingsText.includes("0km")) fail("使用距離の初期値が出ていない");
 
+  /*
+   * 靴は増える一方で減らない。1足ごとに操作を並べると設定画面が伸び続けるので、
+   * **押すまで操作を出さない**。ここが崩れると、登録するほど画面が長くなる。
+   */
+  const shoeRow = page.getByRole("button", { name: /E2Eスパイク/ }).first();
+  if ((await shoeRow.count()) === 0) fail("シューズの行が出ていない");
+  else {
+    if ((await page.getByRole("button", { name: "引退にする" }).count()) > 0) {
+      fail("シューズの操作が最初から開いている（登録するほど画面が伸びる）");
+    }
+    await shoeRow.click();
+    await page.waitForTimeout(400);
+    if ((await page.getByRole("button", { name: "引退にする" }).count()) === 0) {
+      fail("シューズの行を押しても操作が出ない");
+    }
+    await shoeRow.click();
+    await page.waitForTimeout(300);
+  }
+
   const shoes = await page.evaluate(async () => fetch("/api/shoes").then((r) => r.json()));
   const shoeId = (shoes.shoes ?? []).find((x) => x.name === "E2Eスパイク")?.id;
   if (!shoeId) fail("シューズがAPIから返らない（シムに対で足していない可能性）");
