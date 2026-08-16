@@ -75,12 +75,19 @@ npm run verify
 
 ## いま進めていること
 
-`BACKLOG.md` の **A-1（カバレッジの空白を埋める）** が先頭。
+`BACKLOG.md` の **A-1（カバレッジの空白を埋める）**。
 
-土台として入っているもの:
+埋め終わったもの: `weekTemplate`（周期の枠検証）・`split600`（600m通過の材料判定）・
+記録画面の判定と組み立て・サービス層の未検証経路。
 
-- カバレッジ計測（`npm run test:coverage`）。閾値は測定時の現在値を下限にしてある
-- 空白の場所を出す `npm run coverage:report`（branch を主に見る）
+**次に手を付けるのは `src/lib/service/workflow.ts`。** 未検証の分岐が突出して多く、
+生成と波及の中心なので**一番慎重さが要る**。頭が新しいときにやること。
+
+始め方:
+
+```bash
+npm run test:coverage && npm run coverage:report
+```
 
 **既存の数値ロジック（CFEの係数・閾値）は、検証結果が出るまで変更しない。**
 凍結するのは係数であって、コードの整理まで止める意味ではない。
@@ -100,6 +107,9 @@ npm run verify
 | 秘密情報 | `npm run ci:secrets` |
 | 配信物のVERSION | `tests/buildVersionConsistency.test.ts` |
 | 文書の数字の手書き | `npm run ci:docs` |
+| サービス層の import の向き | `npm run ci:layers`（下から上への import で落ちる） |
+| 入れ子のコンポーネント | `npm run ci:nested`（0件。iOSでキーボードが閉じる原因） |
+| カバレッジ | `npm run test:coverage`（閾値は下げない。埋めたぶんだけ手で上げる） |
 
 ---
 
@@ -120,4 +130,7 @@ npm run verify
 
 最後の1つが一番起きやすい。
 検査を書いたら、**わざと壊して落ちることまで確認する**（`CLAUDE.md` の「落とし穴」）。
-このセッションだけでも、置換が空振りして「壊したつもりで壊れていない」検査が3回あった。
+**特に `node -e` は避ける。** シェルを1回通るので `d` `s` `` が黙って消え、
+正規表現が別物になる。置換したつもりで何も置換していない検査が
+何度も生まれた（`replaced: true` を必ず出して確かめる）。
+スクリプトはファイルに書いて `node script.mjs` で走らせる。
