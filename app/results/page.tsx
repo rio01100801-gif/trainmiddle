@@ -1114,6 +1114,203 @@ function L({ label, children }: { label: string; children: React.ReactNode }) {
   );
 }
 
+/**
+ * 感じ方の欄（RPE・主観・翌日の脚・途中でやめた理由）。
+ *
+ * **モジュール直下に置くこと。** ResultForm の中で定義すると、
+ * 再描画のたびに別の関数になって React が input を作り直す。
+ * 入力中にフォーカスが外れ、iOSでは1文字ごとにキーボードが閉じる。
+ * 画面には何も出ないので、E2Eの N-1 でしか気づけない。
+ */
+function SubjectiveFields({
+  rpe,
+  setRpe,
+  subjective,
+  setSubjective,
+  legs,
+  setLegs,
+  shortOfPlan,
+  cause,
+  setCause,
+  causeNote,
+  setCauseNote,
+  prescribedReps,
+  repsCount,
+}: {
+  rpe?: number;
+  setRpe: (v: number) => void;
+  subjective?: Subjective;
+  setSubjective: (v: Subjective | undefined) => void;
+  legs?: NextDayLegs;
+  setLegs: (v: NextDayLegs | undefined) => void;
+  /** 処方より本数が少ない。理由を必須にするかどうかがこれで決まる */
+  shortOfPlan: boolean;
+  cause?: AbortCause;
+  setCause: (v: AbortCause | undefined) => void;
+  causeNote: string;
+  setCauseNote: (v: string) => void;
+  prescribedReps?: number;
+  repsCount: number;
+}) {
+  return (
+    <>
+            <SnapSlider
+              label="RPE（きつさ）"
+              value={rpe}
+              onChange={setRpe}
+              min={RPE_MIN}
+              max={RPE_MAX}
+              describe={describeRpe}
+              emptyHint="スライダーを動かして選んでください。きつさの感じ方は本人にしか分からないので、こちらでは埋めません。"
+              testId="rpe-slider"
+            />
+            <ChipGroup
+              label="主観"
+              value={subjective}
+              onChange={setSubjective}
+              options={SUBJECTIVE_OPTIONS}
+              /*
+                主観は必須なので、選んだあとに外せるようにしない。
+                allowEmpty を付けていたら、選んだチップをもう一度押したときに
+                未入力へ戻り、保存が止まる。任意の欄（翌日の脚）とは扱いを分ける。
+              */
+              testId="subjective-chips"
+            />
+            <ChipGroup
+              label="翌日の脚"
+              value={legs}
+              onChange={setLegs}
+              options={LEGS_OPTIONS}
+              allowEmpty
+              emptyLabel="未入力（任意）"
+              testId="legs-chips"
+            />
+            {/*
+              処方より本数が少ないときだけ出す。
+              ここは記録ではなく**判定に効く**——設定・疲労で止めたときだけ、
+              設定ペースを見直す材料に数える（abortCause.ts）。
+              空のまま保存できると「設定が高すぎた」として数えられるので必須にする。
+            */}
+            {shortOfPlan || cause !== undefined ? (
+              <div className="flex flex-col gap-1.5">
+                <ChipGroup
+                  label={
+                    shortOfPlan
+                      ? `途中でやめた理由（予定${prescribedReps}本に対して${repsCount}本）`
+                      : "途中でやめた理由"
+                  }
+                  value={cause}
+                  onChange={setCause}
+                  options={ABORT_CAUSE_OPTIONS}
+                  columns={2}
+                  testId="abort-cause-chips"
+                />
+                <p
+                  className="text-[11.5px] leading-relaxed"
+                  style={{ color: cause ? "var(--text-2)" : "var(--amber)" }}
+                  data-testid="abort-cause-hint"
+                  role="status"
+                >
+                  {cause
+                    ? abortCauseHint(cause)
+                    : "理由で扱いが変わります。設定・疲労で止めたときだけ設定ペースを見直す材料に数えます。"}
+                </p>
+                {cause === "other" ? (
+                  <input
+                    className="w-full"
+                    aria-label="打ち切りの内容"
+                    placeholder="何があったか（任意）"
+                    value={causeNote}
+                    onChange={(e) => setCauseNote(e.target.value)}
+                  />
+                ) : null}
+                {needsInjuryLog(cause) ? (
+                  <p className="text-[11.5px] leading-relaxed" style={{ color: "var(--amber)" }}>
+                    痛みは下の故障ログにも部位と強さを残してください。打ち切りの記録だけでは、
+                    どこがどれだけ痛いか分からないので次のメニューの判定に届きません。
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+    </>
+  );
+}
+
+/**
+ * その日の条件（天候・路面・シューズ）。
+ *
+ * **記録であって判定材料ではない。** 暑熱条件は今までどおり気温と湿度から決める。
+ * ここを判定に混ぜると、タグの付け忘れが能力の変化として現れる。
+ */
+function ConditionFields({
+  conditions,
+  setConditions,
+  shoeId,
+  setShoeId,
+  shoes,
+}: {
+  conditions: string[];
+  setConditions: (v: string[]) => void;
+  shoeId?: string;
+  setShoeId: (v: string | undefined) => void;
+  shoes: ShoeUsage[];
+}) {
+  return (
+    <>
+            {/*
+              その日の条件。複数選べる（雨で、かつトラックが濡れていた、など）。
+              あとで「同じ設定なのにRPEが上がった」の理由を見分けるための記録で、
+              **設定の判定には使わない**。
+            */}
+            <ChipMultiGroup
+              label="天候"
+              values={conditions.filter((c) => WEATHER_TAGS.includes(c))}
+              onChange={(next) =>
+                setConditions(
+                  normalizeConditions([
+                    ...next,
+                    ...conditions.filter((c) => !WEATHER_TAGS.includes(c)),
+                  ])
+                )
+              }
+              options={WEATHER_OPTIONS}
+              testId="weather-chips"
+            />
+            <ChipMultiGroup
+              label="路面"
+              values={conditions.filter((c) => SURFACE_TAGS.includes(c))}
+              onChange={(next) =>
+                setConditions(
+                  normalizeConditions([
+                    ...next,
+                    ...conditions.filter((c) => !SURFACE_TAGS.includes(c)),
+                  ])
+                )
+              }
+              options={SURFACE_OPTIONS}
+              hint="同じ設定でもRPEが上がった理由を、あとで見分けるための記録です。設定の判定には使いません。"
+              testId="surface-chips"
+            />
+            {shoes.length > 0 ? (
+              <ChipGroup
+                label="シューズ"
+                value={shoeId}
+                onChange={setShoeId}
+                options={shoes.map((u) => ({
+                  value: u.shoe.id,
+                  label: `${u.shoe.name}${u.totalKm > 0 ? ` ${u.totalKm}km` : ""}`,
+                }))}
+                allowEmpty
+                emptyLabel="未選択（任意）"
+                columns={2}
+                testId="shoe-chips"
+              />
+            ) : null}
+    </>
+  );
+}
+
+
 function ResultForm({
   session,
   existing,
@@ -2121,134 +2318,28 @@ function ResultForm({
       {mode !== "skip" ? (
         <>
           <div className="flex flex-col gap-3 mt-3">
-            <SnapSlider
-              label="RPE（きつさ）"
-              value={rpe}
-              onChange={setRpe}
-              min={RPE_MIN}
-              max={RPE_MAX}
-              describe={describeRpe}
-              emptyHint="スライダーを動かして選んでください。きつさの感じ方は本人にしか分からないので、こちらでは埋めません。"
-              testId="rpe-slider"
+            <SubjectiveFields
+              rpe={rpe}
+              setRpe={setRpe}
+              subjective={subjective}
+              setSubjective={setSubjective}
+              legs={legs}
+              setLegs={setLegs}
+              shortOfPlan={shortOfPlan}
+              cause={cause}
+              setCause={setCause}
+              causeNote={causeNote}
+              setCauseNote={setCauseNote}
+              prescribedReps={prescribedReps}
+              repsCount={Number(reps)}
             />
-            <ChipGroup
-              label="主観"
-              value={subjective}
-              onChange={setSubjective}
-              options={SUBJECTIVE_OPTIONS}
-              /*
-                主観は必須なので、選んだあとに外せるようにしない。
-                allowEmpty を付けていたら、選んだチップをもう一度押したときに
-                未入力へ戻り、保存が止まる。任意の欄（翌日の脚）とは扱いを分ける。
-              */
-              testId="subjective-chips"
+            <ConditionFields
+              conditions={conditions}
+              setConditions={setConditions}
+              shoeId={shoeId}
+              setShoeId={setShoeId}
+              shoes={shoes}
             />
-            <ChipGroup
-              label="翌日の脚"
-              value={legs}
-              onChange={setLegs}
-              options={LEGS_OPTIONS}
-              allowEmpty
-              emptyLabel="未入力（任意）"
-              testId="legs-chips"
-            />
-            {/*
-              処方より本数が少ないときだけ出す。
-              ここは記録ではなく**判定に効く**——設定・疲労で止めたときだけ、
-              設定ペースを見直す材料に数える（abortCause.ts）。
-              空のまま保存できると「設定が高すぎた」として数えられるので必須にする。
-            */}
-            {shortOfPlan || cause !== undefined ? (
-              <div className="flex flex-col gap-1.5">
-                <ChipGroup
-                  label={
-                    shortOfPlan
-                      ? `途中でやめた理由（予定${prescribedReps}本に対して${Number(reps)}本）`
-                      : "途中でやめた理由"
-                  }
-                  value={cause}
-                  onChange={setCause}
-                  options={ABORT_CAUSE_OPTIONS}
-                  columns={2}
-                  testId="abort-cause-chips"
-                />
-                <p
-                  className="text-[11.5px] leading-relaxed"
-                  style={{ color: cause ? "var(--text-2)" : "var(--amber)" }}
-                  data-testid="abort-cause-hint"
-                  role="status"
-                >
-                  {cause
-                    ? abortCauseHint(cause)
-                    : "理由で扱いが変わります。設定・疲労で止めたときだけ設定ペースを見直す材料に数えます。"}
-                </p>
-                {cause === "other" ? (
-                  <input
-                    className="w-full"
-                    aria-label="打ち切りの内容"
-                    placeholder="何があったか（任意）"
-                    value={causeNote}
-                    onChange={(e) => setCauseNote(e.target.value)}
-                  />
-                ) : null}
-                {needsInjuryLog(cause) ? (
-                  <p className="text-[11.5px] leading-relaxed" style={{ color: "var(--amber)" }}>
-                    痛みは下の故障ログにも部位と強さを残してください。打ち切りの記録だけでは、
-                    どこがどれだけ痛いか分からないので次のメニューの判定に届きません。
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-
-            {/*
-              その日の条件。複数選べる（雨で、かつトラックが濡れていた、など）。
-              あとで「同じ設定なのにRPEが上がった」の理由を見分けるための記録で、
-              **設定の判定には使わない**。
-            */}
-            <ChipMultiGroup
-              label="天候"
-              values={conditions.filter((c) => WEATHER_TAGS.includes(c))}
-              onChange={(next) =>
-                setConditions(
-                  normalizeConditions([
-                    ...next,
-                    ...conditions.filter((c) => !WEATHER_TAGS.includes(c)),
-                  ])
-                )
-              }
-              options={WEATHER_OPTIONS}
-              testId="weather-chips"
-            />
-            <ChipMultiGroup
-              label="路面"
-              values={conditions.filter((c) => SURFACE_TAGS.includes(c))}
-              onChange={(next) =>
-                setConditions(
-                  normalizeConditions([
-                    ...next,
-                    ...conditions.filter((c) => !SURFACE_TAGS.includes(c)),
-                  ])
-                )
-              }
-              options={SURFACE_OPTIONS}
-              hint="同じ設定でもRPEが上がった理由を、あとで見分けるための記録です。設定の判定には使いません。"
-              testId="surface-chips"
-            />
-            {shoes.length > 0 ? (
-              <ChipGroup
-                label="シューズ"
-                value={shoeId}
-                onChange={setShoeId}
-                options={shoes.map((u) => ({
-                  value: u.shoe.id,
-                  label: `${u.shoe.name}${u.totalKm > 0 ? ` ${u.totalKm}km` : ""}`,
-                }))}
-                allowEmpty
-                emptyLabel="未選択（任意）"
-                columns={2}
-                testId="shoe-chips"
-              />
-            ) : null}
           </div>
 
           {/* 2-1 環境条件（任意項目なので折りたたみ） */}
