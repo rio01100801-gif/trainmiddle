@@ -37,7 +37,7 @@
 | --- | --- |
 | `src/lib/service/workflow.ts` | 未検証の分岐が突出して多い。B-1（分割）と合わせて進める |
 | ~~`src/lib/core/weekTemplate.ts`~~ | 済（`tests/cycleWeekTemplate.test.ts`） |
-| `src/lib/core/split600.ts` | 分岐カバレッジが半分ほど |
+| ~~`src/lib/core/split600.ts`~~ | 済（`tests/split600.test.ts`） |
 | `src/lib/core/weeklyReview.ts` | 文章生成の条件分岐が薄い |
 | `src/lib/core/backfill.ts` | 遡り入力。欠損データの扱いが分岐の塊 |
 
@@ -172,8 +172,6 @@ src/lib/service/
 入力中にフォーカスが外れ、iOSでは1文字ごとにキーボードが閉じる。
 画面には何も出ないので気づけない。
 
-残り: `IntervalResultForm` / `ContinuousResultForm` / `RestFields` / `useResultDraft`。
-
 入れ子のコンポーネントは `npm run ci:nested` が禁じている。
 E2Eに欄を1つずつ足していくより、**形のほうを禁じた**ほうが
 欄が増えても勝手に守られる（N-1 は `設定(秒)` 1つしか見ていない）。
@@ -191,26 +189,6 @@ E2Eに欄を1つずつ足していくより、**形のほうを禁じた**ほう
 組み立てが純関数になったので、次は
 「どの state がどの draft に入るか」が型から追える状態になっている。
 
-
-2389行・73件の `useState`。**実際に不具合が出ているのはこの層。**
-＋ボタンが反応しない / キーボードが1文字ごとに閉じる / 主観チップが外れる /
-空欄のRPEが0として保存される / 本数の欄が押せない——全部ここ。
-
-巨大な `useReducer` に一括変換しない。責務ごとに分ける:
-
-`ContinuousResultForm` / `IntervalResultForm` / `SubjectiveFields` /
-`EnvironmentFields` / `ShoeConditionFields` / `RestFields` / `useResultDraft`
-
-相互依存する値だけを `useReducer` か型付き draft にまとめる。
-
-目的は行数削減ではなく、次を保証すること:
-
-- 持続走とインターバルの値が混ざらない
-- 非表示のモードに残った古い値が保存されない
-- 編集時に既存値が消えない
-- 入力途中でフォームが作り直されない（N-1）
-- iOSでフォーカスとキーボードが外れない
-- 保存内容を1か所で追える
 
 ### B-3. `pwa/e2e.mjs` の分割
 

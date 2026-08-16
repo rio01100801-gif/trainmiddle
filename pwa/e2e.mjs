@@ -131,7 +131,16 @@ await dt.nth(1).fill("2026-09-27T15:00");
 await page.getByRole("button", { name: "+ 通過点レース追加" }).click();
 const checkpointCard = page.locator("section.card", { hasText: "通過点レース" }).first();
 await checkpointCard.locator('input[placeholder="大会名"]').fill("夏季記録会");
-await checkpointCard.locator('input[type="date"]').fill("2026-08-16");
+/*
+ * 日付を固定するとカレンダーの表示窓（今日から4週間）から外れて、
+ * **ある日を境に落ちるようになる**（実際に日付が変わった翌日に落ちた）。
+ * 今日から2週間後にして、日付が進んでも窓の中に居るようにする。
+ */
+const checkpointDate = new Date();
+checkpointDate.setDate(checkpointDate.getDate() + 14);
+await checkpointCard
+  .locator('input[type="date"]')
+  .fill(checkpointDate.toISOString().slice(0, 10));
 await checkpointCard.locator("select").selectOption("B");
 await page.getByRole("button", { name: "目標・レースを保存" }).click();
 await page.waitForTimeout(400);
@@ -4928,6 +4937,21 @@ if ((await fitRebuildCard.count()) === 0) {
   if (savedGoal.goal?.targetRaceId !== "") {
     fail("レース未定が保存されない: " + JSON.stringify(savedGoal.goal));
   }
+
+  /*
+   * 通過点レースも消す。
+   *
+   * ここが見たいのは「レースが1本も無い期間」の生成。
+   * 目標レースだけ外して通過点を残すと、そちらへ向けたテーパーが正しく出る——
+   * つまり**前提が崩れているのに、検査は不合格と言う**。
+   * 以前は通過点の日付が過去に固定されていたので偶然通っていた。
+   */
+  await page.evaluate(async () => {
+    const d = await fetch("/api/goal").then((r) => r.json());
+    for (const race of d.races ?? []) {
+      await fetch(`/api/goal?raceId=${encodeURIComponent(race.id)}`, { method: "DELETE" });
+    }
+  });
 
   const winter = await page.evaluate(async () =>
     fetch("/api/plan", {
