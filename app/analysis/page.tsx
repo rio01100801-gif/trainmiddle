@@ -5,6 +5,7 @@ import RaceAnalysis from "../race/page";
 import type { CoverageReview } from "@/lib/core/coverage";
 import type { SessionCategory } from "@/lib/core/types";
 import type { TimelineDay } from "@/lib/core/timeline";
+import { describeAbortSummary, type AbortSummary } from "@/lib/core/abortSummary";
 import {
   formatPeriodRange,
   PERIOD_LABELS,
@@ -165,6 +166,7 @@ export default function AnalysisPage() {
       <div className={seg === "trend" ? "flex flex-col gap-3" : "hidden"}>
         <PerformancePanel periods={data.performance ?? []} />
         <BalanceCard balance={data.balance} />
+        <AbortBreakdownCard summary={data.abortBreakdown} />
         <ConditionCard />
         <TimelineCard days={data.timeline ?? []} />
       </div>
@@ -416,6 +418,46 @@ function ConditionCard() {
           </tbody>
         </table>
       </div>
+    </Card>
+  );
+}
+
+/**
+ * 打ち切りの理由別の内訳。
+ *
+ * 理由は forge-v98 から記録していたが、**貯まっても誰も見ていなかった**。
+ * 理由ごとに扱いが違う（設定を緩める材料になるもの／ならないもの）ので、
+ * 数と扱いを並べて出す。
+ */
+function AbortBreakdownCard({ summary }: { summary?: AbortSummary | null }) {
+  // 1回も無いなら出さない（空のカードを並べても読むものが増えるだけ）
+  if (!summary || summary.total === 0) return null;
+  return (
+    <Card title="途中でやめた練習">
+      <p className="text-[11.5px] leading-relaxed mb-2" style={{ color: "var(--text-2)" }}>
+        {describeAbortSummary(summary)}
+      </p>
+      <div className="flex flex-col gap-1">
+        {summary.counts.map((c) => (
+          <div key={c.cause} className="flex items-baseline justify-between gap-2 text-[12.5px]">
+            <span>{c.label}</span>
+            <span className="flex items-baseline gap-2">
+              {/* 扱いの違いを数字の隣に出す。色だけに頼らない */}
+              <span className="text-[10.5px]" style={{ color: "var(--text-3)" }}>
+                {c.countsTowardPaceEase ? "設定に反映" : "記録のみ"}
+              </span>
+              <b className="num">{c.count}回</b>
+            </span>
+          </div>
+        ))}
+      </div>
+      {summary.tooFastReached ? (
+        <StatusText kind="warning" className="text-[11.5px] leading-relaxed mt-2.5">
+          「出力が出すぎた」が{summary.tooFastCount}回たまりました。設定を上げる材料にするか
+          検討する時期です（`BACKLOG.md` の A-2b）。
+          **ただしこの数だけでは動かしません。** 実行可能率の測定と両方そろってから判断します。
+        </StatusText>
+      ) : null}
     </Card>
   );
 }

@@ -5746,7 +5746,32 @@ if ((await fitRebuildCard.count()) === 0) {
     }
   }
 
-  step("打ち切り理由OK（設定どおりでも聞く・未入力では保存させない・扱いを出す・カレンダーに中止）");
+  /*
+   * 分析に理由別の内訳が出ること。
+   * 理由は記録していたが、**貯まっても誰も見ていなかった**。
+   * 数と、その理由が設定に反映されるかどうかを並べて出す。
+   */
+  await page.goto("http://localhost:8791/#/analysis");
+  await page.waitForTimeout(900);
+  await page.getByRole("button", { name: "現在地", exact: true }).click();
+  await page.waitForTimeout(900);
+  const abortCard = page.locator("section.card", { hasText: "途中でやめた練習" }).first();
+  if ((await abortCard.count()) === 0) {
+    fail("打ち切り理由: 分析に理由別の内訳が出ていない");
+  } else {
+    const cardText = (await abortCard.textContent()) ?? "";
+    if (!cardText.includes("天候・路面")) {
+      fail(`打ち切り理由: 内訳に理由が出ていない（${cardText.slice(0, 60)}）`);
+    }
+    // 扱いの違いを数字の隣に出す（色だけに頼らない）
+    if (!cardText.includes("記録のみ")) {
+      fail(`打ち切り理由: 内訳に扱いが出ていない（${cardText.slice(0, 60)}）`);
+    }
+  }
+
+  step(
+    "打ち切り理由OK（設定どおりでも聞く・未入力では保存させない・扱いを出す・カレンダーに中止・分析に内訳）"
+  );
 }
 
 // ---- 記録画面の不変条件（分割の前に固定する） ----

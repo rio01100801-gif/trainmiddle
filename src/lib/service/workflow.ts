@@ -114,6 +114,7 @@ import {
 import { analyzeRace, RaceAnalysisOutput } from "../core/raceAnalysis";
 import { conditionSplits, type ConditionSplit } from "../core/conditions";
 import { shoeUsage, type Shoe, type ShoeUsage } from "../core/shoes";
+import { abortSummary, type AbortSummary } from "../core/abortSummary";
 import {
   abortCauseLabel,
   describeAbortCause,
@@ -3547,6 +3548,14 @@ export function deleteShoe(
   }
   repo.saveKv(SHOES_KEY, rest);
   return { deleted: true };
+}
+
+/**
+ * 打ち切りの理由別の内訳。
+ * 記録は端末の中にしかないので、数えるのもここ（画面から呼ぶ）。
+ */
+export function abortBreakdown(repo: Store, today: string): AbortSummary {
+  return abortSummary(trustedResults(repo), today);
 }
 
 /** 靴ごとの使用距離。結果から毎回足し上げる */

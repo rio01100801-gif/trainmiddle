@@ -65,6 +65,7 @@ import {
   saveShoe,
   shoeUsageList,
   contactTimeStatus,
+  abortBreakdown,
   trainingBalance,
   listContactSamples,
   importContactSamples,
@@ -326,6 +327,7 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
         weeks,
         // 予定と実際のズレ（合計は periodSummary の担当。役割を分けている）
         balance: trainingBalance(repo, today),
+        abortBreakdown: abortBreakdown(repo, today),
         changeLog: repo.listChangeLog(50),
       };
     },

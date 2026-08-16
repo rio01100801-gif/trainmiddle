@@ -7,6 +7,7 @@ import { addDays, weekStart, localToday } from "@/lib/core/dates";
 import { weeklySummary } from "@/lib/core/rules";
 import { buildTimeline } from "@/lib/core/timeline";
 import {
+  abortBreakdown,
   buildRuleContext,
   performanceSummaries,
   samePrescriptionGroups,
@@ -90,6 +91,7 @@ export async function GET(req: NextRequest) {
     weeks,
     // 予定と実際のズレ（合計は periodSummary の担当。役割を分けている）
     balance: trainingBalance(repo, today),
+    abortBreakdown: abortBreakdown(repo, today),
     changeLog: repo.listChangeLog(50),
   });
 }
