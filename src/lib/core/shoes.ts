@@ -34,6 +34,14 @@ export interface Shoe {
    * （消すと「何を履いていたか」が分からなくなる）。
    */
   retired?: boolean;
+  /**
+   * 本人が設定した性格。推薦の材料になる（`shoeProfile.ts`）。
+   *
+   * **入っている項目だけが本人の設定。** 入っていない項目は種類から作った
+   * 一般的な傾向で埋める。製品ごとの性能表は持たない——こちらで確かめずに
+   * 数値を書くと、推薦の理由を本人が検証できなくなる。
+   */
+  profile?: Partial<import("./shoeProfile").ShoeProfile>;
 }
 
 export interface ShoeUsage {

@@ -6,8 +6,10 @@ import {
   listShoes,
   saveShoe,
   shoeUsageList,
+  shoeAdviceFor,
 } from "@/lib/service";
 import type { Shoe } from "@/lib/core/shoes";
+import { localToday } from "@/lib/core/dates";
 
 export const dynamic = "force-dynamic";
 
@@ -16,8 +18,17 @@ export const dynamic = "force-dynamic";
  *
  * ⚠️ 対になるPWA側の実装が `pwa/api-shim.ts` にある。片方だけ直さないこと。
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   const repo = openRepo();
+  /*
+   * その日の練習に合う靴。判断は core/shoeRecommend.ts だけが持つ。
+   * 画面ごとに別の理屈を書かないよう、ここから配る。
+   */
+  const sessionId = req.nextUrl.searchParams.get("sessionId");
+  if (sessionId) {
+    const today = req.nextUrl.searchParams.get("date") ?? localToday();
+    return NextResponse.json({ advice: shoeAdviceFor(repo, sessionId, today) });
+  }
   return NextResponse.json({
     shoes: listShoes(repo),
     usage: shoeUsageList(repo),
@@ -33,8 +44,8 @@ export async function POST(req: NextRequest) {
     id: body.id ?? `shoe-${Date.now()}`,
     name: body.name ?? "",
     kind: body.kind ?? "trainer",
-    note: body.note,
-    retired: body.retired,
+    note: body.note,    retired: body.retired,    // 本人が設定した性格（推薦の材料）。未設定の項目は種類から埋める
+    profile: body.profile,
   };
   try {
     return NextResponse.json({ ok: true, shoes: saveShoe(repo, shoe), usage: shoeUsageList(repo) });

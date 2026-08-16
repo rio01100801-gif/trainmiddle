@@ -63,6 +63,7 @@ import {
   deleteShoe,
   listShoes,
   saveShoe,
+  shoeAdviceFor,
   shoeUsageList,
   contactTimeStatus,
   abortBreakdown,
@@ -138,11 +139,23 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
 
   // シューズの登録と使用距離。app/api/shoes と対
   "/api/shoes": {
-    GET: (repo) => ({
-      shoes: listShoes(repo),
-      usage: shoeUsageList(repo),
-      conditionSplits: conditionComparison(repo),
-    }),
+    GET: (repo, _b, params) => {
+      /*
+       * その日の練習に合う靴。判断は core/shoeRecommend.ts だけが持つ。
+       * 画面ごとに別の理屈を書かないよう、ここから配る。
+       */
+      const sessionId = params?.get("sessionId");
+      if (sessionId) {
+        return {
+          advice: shoeAdviceFor(repo, sessionId, params?.get("date") ?? localToday()),
+        };
+      }
+      return {
+        shoes: listShoes(repo),
+        usage: shoeUsageList(repo),
+        conditionSplits: conditionComparison(repo),
+      };
+    },
     POST: (repo, body) => {
       const shoe = {
         id: body.id ?? `shoe-${Date.now()}`,
@@ -150,6 +163,8 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
         kind: body.kind ?? "trainer",
         note: body.note,
         retired: body.retired,
+        // 本人が設定した性格（推薦の材料）。未設定の項目は種類から埋める
+        profile: body.profile,
       };
       try {
         return { ok: true, shoes: saveShoe(repo, shoe), usage: shoeUsageList(repo) };

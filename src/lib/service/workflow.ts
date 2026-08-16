@@ -116,6 +116,12 @@ import { conditionSplits, type ConditionSplit } from "../core/conditions";
 import { shoeUsage, type Shoe, type ShoeUsage } from "../core/shoes";
 import { abortSummary, type AbortSummary } from "../core/abortSummary";
 import {
+  recommendShoes,
+  shoeSessionKindOf,
+  type ShoeOutcome,
+  type ShoeRecommendation,
+} from "../core/shoeRecommend";
+import {
   abortCauseLabel,
   describeAbortCause,
   needsInjuryLog,
@@ -3569,6 +3575,86 @@ export function shoeUsageList(repo: Store): ShoeUsage[] {
  * 「設定は同じでも雨でRPEが上がった」を数字にする。
  * **これで設定は動かさない。** 見て本人が判断する材料。
  */
+/**
+ * その日の練習に合う靴。
+ *
+ * **判断は core/shoeRecommend.ts だけ。** ここは材料を集めて渡すだけで、
+ * 画面ごとに別の理屈を書かないための入口。
+ *
+ * 材料:
+ *   ・登録してある靴と使用距離
+ *   ・その日のセッション（狙い・場所）
+ *   ・直近の状態（疲労・痛み）
+ *   ・同じ狙いで実際に履いたときの結果
+ */
+export function shoeAdviceFor(
+  repo: Store,
+  sessionId: string,
+  today: string
+): ShoeRecommendation {
+  const session = repo.getSession(sessionId);
+  const shoes = listShoes(repo);
+  const usage = shoeUsageList(repo);
+  if (!session) {
+    return recommendShoes(shoes, { kind: "easy" }, usage, shoeOutcomes(repo));
+  }
+
+  /*
+   * 痛みと疲労は既にある記録から取る。**推薦のために新しく聞かない。**
+   * 聞く欄を増やすと、答えないと推薦が出ない仕組みになる。
+   */
+  const injuries = activeInjuriesAt(repo.listInjuries(), session.date);
+  const recentChecks = repo
+    .listDailyChecks()
+    .filter((c) => c.date <= session.date && diffDays(c.date, session.date) <= 3);
+  const fatigueHigh = recentChecks.some(
+    (c) =>
+      c.signal === "yellow" ||
+      c.signal === "red" ||
+      (c.overallFatigue ?? 0) >= 4 ||
+      (c.legFatigue ?? 0) >= 4
+  );
+
+  const nextRace = repo
+    .listRaces()
+    .map((r) => r.dateStart)
+    .filter((d) => d >= session.date)
+    .sort()[0];
+
+  return recommendShoes(
+    shoes,
+    {
+      kind: shoeSessionKindOf(session.category, {
+        aerobicPurpose: session.aerobicPurpose,
+      }),
+      place: session.surface === "treadmill" ? "treadmill" : session.surface,
+      fatigueHigh,
+      hasPain: injuries.length > 0,
+      daysToRace: nextRace ? diffDays(session.date, nextRace) : undefined,
+    },
+    usage,
+    shoeOutcomes(repo)
+  );
+}
+
+/** 同じ狙いで実際に履いたときの結果。少ないうちは推薦側が使わない */
+function shoeOutcomes(repo: Store): ShoeOutcome[] {
+  const sessionById = new Map(repo.listSessions().map((s) => [s.id, s]));
+  const out: ShoeOutcome[] = [];
+  for (const r of trustedResults(repo)) {
+    if (!r.shoeId) continue;
+    const s = sessionById.get(r.sessionId);
+    if (!s) continue;
+    out.push({
+      shoeId: r.shoeId,
+      kind: shoeSessionKindOf(s.category, { aerobicPurpose: s.aerobicPurpose }),
+      rpe: r.rpe,
+      legsHeavy: r.nextDayLegs === "heavy",
+    });
+  }
+  return out;
+}
+
 export function conditionComparison(repo: Store): ConditionSplit[] {
   return conditionSplits(trustedResults(repo));
 }
