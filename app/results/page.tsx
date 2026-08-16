@@ -51,6 +51,13 @@ import {
 } from "@/lib/core/abortCause";
 import { normalizeConditions } from "@/lib/core/conditions";
 import { checkResultDraft } from "@/lib/core/resultDraft";
+import {
+  buildContinuousPayload,
+  buildIntervalPayload,
+  parsePerRepRestInput,
+  parseRepTime,
+  parseRestInput,
+} from "@/lib/core/resultPayload";
 import { shoeChoices, type ShoeUsage } from "@/lib/core/shoes";
 import { PAIN_MAX, PAIN_MIN, RPE_MAX, RPE_MIN, isValidRpe } from "@/lib/core/rpe";
 import type {
@@ -1043,49 +1050,6 @@ function AerobicMarkerForm({ defaultDate }: { defaultDate?: string }) {
 
 type Mode = "interval" | "continuous" | "skip";
 
-/** 実施タイム1本ぶん。「41.6」「1:26.5」いずれも受ける */
-function parseRepTime(v: string): number | undefined {
-  const t = v.trim();
-  if (!t) return undefined;
-  if (t.includes(":")) {
-    const [m, sec] = t.split(":");
-    const n = Number(m) * 60 + Number(sec);
-    return isFinite(n) ? n : undefined;
-  }
-  const n = Number(t);
-  return isFinite(n) && n > 0 ? n : undefined;
-}
-
-/**
- * S-4: 「6分」「90秒」「300」のようなレストの書き方を秒に直す。
- *
- * 解釈は一括入力と同じ `parseRest` に任せる（同じ文字列が画面によって違う意味に
- * ならないようにする）。単位が無いものは分でも秒でも決められないので、
- * ここでは日誌でよく使われる「分」として読む——のではなく、
- * **入力欄なので数字だけなら秒として読む**。
- * 日誌の解釈（読めなければ埋めない）と、入力欄（本人が今打っている）は事情が違う。
- */
-function parseRestInput(v: string): number | undefined {
-  const t = v.trim();
-  if (!t) return undefined;
-  const parsed = parseRest(t);
-  if (parsed.restSec !== undefined) return parsed.restSec;
-  if (parsed.restDistanceM !== undefined) return undefined; // 距離指定はここでは扱わない
-  const n = Number(t.replace(/[^\d.]/g, ""));
-  return isFinite(n) && n > 0 ? n : undefined;
-}
-
-function parsePerRepRestInput(v: string): {
-  restSec?: number;
-  restDistanceM?: number;
-  restType?: RestType;
-} {
-  const parsed = parseRest(v.trim());
-  if (parsed.restSec !== undefined || parsed.restDistanceM !== undefined) return parsed;
-  const restSec = parseRestInput(v);
-  return restSec !== undefined ? { restSec, restType: parsed.restType } : parsed;
-}
-
 /** 秒を入力欄に戻す。60の倍数なら分で書く（打ったとおりに近い形にする） */
 function fmtRestInput(sec: number): string {
   return sec % 60 === 0 ? `${sec / 60}分` : `${sec}秒`;
@@ -1761,7 +1725,13 @@ function ResultForm({
       }
       const rpeValue = rpe!;
 
-      const envPayload = {
+      const common = {
+        sessionId: session.id,
+        sessionCategory,
+        date: session.date,
+        rpe: rpeValue,
+        subjective: subjective!,
+        nextDayLegs: legs || undefined,
         weatherTempC: tempC ? Number(tempC) : undefined,
         humidityPct: humidity ? Number(humidity) : undefined,
         wind: wind || undefined,
@@ -1778,107 +1748,48 @@ function ResultForm({
         abortNote: cause === "other" ? causeNote.trim() || undefined : undefined,
       };
 
-      let payload: any;
-      if (mode === "continuous") {
-        // S-2: 3つのうち2つ入っていれば足りる。足りないものは補われている。
-        // 2つ揃っているかは checkResultDraft が上で見ている
-        const km = triple.distanceKm ?? 0;
-        const min = triple.durationSec !== undefined ? triple.durationSec / 60 : 0;
-        payload = {
-          sessionId: session.id,
-          sessionCategory,
-          date: session.date,
-          continuous: {
-            distanceKm: Math.round(km * 100) / 100,
-            durationMin: Math.round(min * 10) / 10,
-            avgPaceSecPerKm: triple.paceSecPerKm ?? avgPaceSecPerKm(km, min),
-            // 手で入れたペースが計算値の代わりに使われた場合だけ「上書き」とする。
-            // ペースから距離を出したときは上書きではなく、それが実測そのもの
-            paceOverridden: paceOverride && triple.derived !== "distanceKm" ? true : undefined,
-            avgHr: avgHr ? Number(avgHr) : undefined,
-            maxHr: maxHr ? Number(maxHr) : undefined,
-          },
-          achievement: "achieved",
-          rpe: rpeValue,
-          subjective: subjective!,
-          nextDayLegs: legs || undefined,
-          durationMin: min,
-          ...envPayload,
-        };
-      } else {
-        const source = perRep ? repTimes.join(",") : times;
-        // 心拍と「何本目か」で対応させるため、間引く前の並びも残す
-        const parsedTimes = source.split(",").map((x: string) => parseRepTime(x) ?? 0);
-        const t = targetSec ? Number(targetSec) : undefined;
-        // S-4: 区間ごとのレスト。空欄の本はセッション共通の設定を使う（undefinedのまま）
-        const perRepRests =
-          perRep && withRest
-            ? Array.from({ length: slotCount }, (_, index) => {
-                const entered = repRests[index]?.trim();
-                return entered
-                  ? parsePerRepRestInput(entered)
-                  : { restDistanceM: slotRestDistances[index], restType: structureRestType };
-              })
-            : [];
-        // 予定距離と実距離を分ける。500m予定を400mで止めた本も400m実測として残す。
-        const plannedDists = perRep
-          ? Array.from({ length: slotCount }, (_, index) =>
-              slotDistances[index] ?? Number(distM)
-            )
-          : [];
-        const dists = perRep
-          ? plannedDists.map((plannedDistance, index) => {
-              if (!withActualDistance) return plannedDistance;
-              const entered = Number(repDistances[index]);
-              return isFinite(entered) && entered > 0 ? entered : plannedDistance;
+      /*
+       * 保存する中身は core/resultPayload.ts が組み立てる。
+       * モードごとに引数の型が別なので、**表示していないほうの値は渡しようがない**。
+       * 入力欄の state は残したまま（切り替えで打ち直しにならないように）、
+       * 混ざるのはここで止める。
+       */
+      const payload =
+        mode === "continuous"
+          ? buildContinuousPayload(common, {
+              distanceKm: triple.distanceKm ?? 0,
+              durationMin: triple.durationSec !== undefined ? triple.durationSec / 60 : 0,
+              paceSecPerKm: triple.paceSecPerKm,
+              derived: triple.derived,
+              // 元は文字列の真偽で見ていた（どの欄を上書きしたかは使っていない）
+              paceOverride: !!paceOverride,
+              avgHr: avgHr ? Number(avgHr) : undefined,
+              maxHr: maxHr ? Number(maxHr) : undefined,
             })
-          : [];
-        const hrs =
-          perRep && withHr
-            ? repHrs.map((v) => {
-                const n = Number(v);
-                return v.trim() && isFinite(n) && n > 0 ? n : undefined;
-              })
-            : [];
-        const builtResults = buildRepResults(
-          Number(distM),
-          parsedTimes,
-          structure?.mixed ? undefined : t,
-          hrs,
-          dists,
-          perRepRests.map((rest) => rest.restSec),
-          slotTargets,
-          perRepRests.map((rest) => rest.restDistanceM),
-          plannedDists
-        );
-        payload = {
-          sessionId: session.id,
-          sessionCategory,
-          date: session.date,
-          interval: {
-            reps: Number(reps),
-            distanceM: Number(distM),
-            targetSec: structure?.mixed ? undefined : t,
-            restType: structureRestType ?? restType,
-            restSec:
-              !hasStructuredPerRepRest && restMode === "time"
-                ? Number(restValue)
-                : undefined,
-            restDistanceM:
-              !hasStructuredPerRepRest && restMode === "distance"
-                ? Number(restValue)
-                : undefined,
-            results: builtResults,
-          },
-          actualLapsSec: builtResults.map((result) => result.actualSec),
-          lapDistancesM: builtResults.map((result) => result.distanceM),
-          achievement: "achieved", // サービス層が実測から上書きする
-          rpe: rpeValue,
-          subjective: subjective!,
-          nextDayLegs: legs || undefined,
-          ...envPayload,
-        };
-      }
+          : buildIntervalPayload(common, {
+              reps: Number(reps),
+              distanceM: Number(distM),
+              targetSec: targetSec ? Number(targetSec) : undefined,
+              mixed: !!structure?.mixed,
+              perRep,
+              repTimes,
+              times,
+              slotCount,
+              slotDistances,
+              slotTargets,
+              slotRestDistances,
+              structureRestType,
+              withRest,
+              repRests,
+              withActualDistance,
+              repDistances,
+              withHr,
+              repHrs,
+              hasStructuredPerRepRest,
+              restType,
+              restMode,
+              restValue,
+            });
 
       const result = await apiRequest("/api/results", {
         method: "POST",

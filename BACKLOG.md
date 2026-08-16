@@ -165,6 +165,7 @@ src/lib/service/
 | `ConditionFields` | 天候・路面・シューズ |
 | `RestFields` | レスト内容・指定方法・値 |
 | `checkResultDraft` | 保存させるかどうかの判定（`src/lib/core/resultDraft.ts`） |
+| `buildContinuousPayload` / `buildIntervalPayload` | 保存する中身の組み立て（`src/lib/core/resultPayload.ts`） |
 
 **どちらもモジュール直下に置いた。** 関数の中で関数コンポーネントを定義すると
 再描画のたびに別の関数になり、React が中身の input を作り直す。
@@ -180,11 +181,15 @@ E2Eに欄を1つずつ足していくより、**形のほうを禁じた**ほう
 判定は core へ出したので単体テストが書けるようになった
 （それまで画面の中にあり、E2Eで1経路ずつ叩くしかなかった）。
 
-**残りは保存ペイロードの組み立て。** これが一番大きい。
-`mode` で分岐しながら triple・perRep・slot・rest・hr を組み合わせており、
-入力が20以上ある。純関数として `buildResultPayload` に出せば
-`IntervalResultForm` / `ContinuousResultForm` の分割が素直になるが、
-**一度に片付く量ではない。** 新しいセッションでまとめてやること。
+組み立ても core へ出した。**モードごとに引数の型が別**なので、
+表示していないほうの値は渡しようがない。入力欄の state は残したまま
+（切り替えで打ち直しにならないように）、混ざるのは型で止まる。
+
+**残り: `useState` の整理。** 73個あるのは変わっていない。
+ここまでは欄の置き場所と、判定・組み立ての切り出し。
+状態の持ち方（`useResultDraft`）はまだ手つかず。
+組み立てが純関数になったので、次は
+「どの state がどの draft に入るか」が型から追える状態になっている。
 
 
 2389行・73件の `useState`。**実際に不具合が出ているのはこの層。**
