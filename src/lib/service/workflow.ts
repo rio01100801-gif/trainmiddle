@@ -3535,10 +3535,17 @@ export function deleteShoe(
         "使った記録があるシューズは消せません。履歴が指す先が無くなるためです。使い終わったものは「引退」にしてください（選択肢から外れ、記録は残ります）。",
     };
   }
-  repo.saveKv(
-    SHOES_KEY,
-    listShoes(repo).filter((x) => x.id !== shoeId)
-  );
+  const list = listShoes(repo);
+  const rest = list.filter((x) => x.id !== shoeId);
+  /*
+   * 消すものが無ければ「消した」と言わない。
+   * 何もしていないのに成功と返すと、画面は「削除しました」と出す。
+   * 実行していないことを成功と報告しない（禁止事項の同じ話）。
+   */
+  if (rest.length === list.length) {
+    return { deleted: false, reason: "そのシューズは登録されていません。" };
+  }
+  repo.saveKv(SHOES_KEY, rest);
   return { deleted: true };
 }
 

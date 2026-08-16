@@ -26,7 +26,7 @@
 
 ## A. 検証の土台
 
-### A-1. カバレッジの空白を埋める ← いまここ
+### A-1. カバレッジの空白を埋める ← 進行中
 
 計測は入った（`npm run test:coverage` → `npm run coverage:report`）。
 閾値は現在値を下限にしてあるので、下がれば落ちる。**上げるのはこれから。**
@@ -36,7 +36,7 @@
 | ファイル | 見るべき理由 |
 | --- | --- |
 | `src/lib/service/workflow.ts` | 未検証の分岐が突出して多い。B-1（分割）と合わせて進める |
-| `src/lib/core/weekTemplate.ts` | 周期モードを足したときに分岐が増えた |
+| ~~`src/lib/core/weekTemplate.ts`~~ | 済（`tests/cycleWeekTemplate.test.ts`） |
 | `src/lib/core/split600.ts` | 分岐カバレッジが半分ほど |
 | `src/lib/core/weeklyReview.ts` | 文章生成の条件分岐が薄い |
 | `src/lib/core/backfill.ts` | 遡り入力。欠損データの扱いが分岐の塊 |
