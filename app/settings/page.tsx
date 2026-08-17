@@ -2,9 +2,14 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Card, ConfirmButton, StatusText } from "../components/ui";
-import { ChipGroup } from "../components/inputs";
+import { ChipGroup, ChipMultiGroup } from "../components/inputs";
 import { SHOE_KIND_LABELS, type ShoeKind, type ShoeUsage } from "@/lib/core/shoes";
-import { profileOf, SHOE_PURPOSE_LABELS, type ShoePurpose } from "@/lib/core/shoeProfile";
+import {
+  normalizePurposes,
+  profileOf,
+  SHOE_PURPOSE_LABELS,
+  type ShoePurpose,
+} from "@/lib/core/shoeProfile";
 import { SETTINGS_ITEMS } from "../components/nav";
 import { searchFeatures } from "@/lib/core/featureSearch";
 
@@ -358,12 +363,24 @@ function ShoeCard() {
                       </div>
                     ))}
                     <div className="mt-1.5 mb-2">
-                      <ChipGroup
-                        label="主な用途"
-                        value={profileOf(u.shoe).purpose}
-                        onChange={(v) => saveProfile(u, { purpose: v ?? "any" })}
+                      {/*
+                        用途は複数選べる（forge-v109）。
+                        1つしか選べなかったとき、厚底のように
+                        「レースにもポイント練習にも履く」靴を表せなかった。
+
+                        「決めていない」は他と併用しない（`normalizePurposes`）。
+                        併用できると「決めていないがレース用でもある」という
+                        読めない設定が保存できてしまう。
+                      */}
+                      <ChipMultiGroup
+                        label="主な用途（複数選べる）"
+                        values={profileOf(u.shoe).purposes}
+                        onChange={(next) =>
+                          saveProfile(u, { purposes: normalizePurposes(next) })
+                        }
                         options={SHOE_PURPOSE_OPTIONS}
                         columns={3}
+                        testId={`shoe-purposes-${u.shoe.id}`}
                       />
                     </div>
                     <div className="flex gap-2 flex-wrap">

@@ -1932,11 +1932,39 @@ else {
   if ((await varCard.getByRole("button", { name: "この進め方にする" }).count()) !== 2) {
     fail("S-9: TODAYで2案とも選べない");
   }
+  /*
+   * 対象が固定枠かどうかで、正しい結果が変わる。
+   *
+   * 画面は「今日がポイント練習ならそれ、違えば次の1本」を対象にする。
+   * 今日が固定曜日のポイント練習に当たった日（火・土）は、
+   * RULE-15 で内容を変えられないのが**正しい振る舞い**。
+   *
+   * 以前はここを「反映された文が出ること」だけで見ていたので、
+   * **曜日によって落ちる検査**になっていた（火・土は必ず赤）。
+   * どちらの場合も、その場合に出るべき文を名指しで確かめる。
+   */
   await varCard.getByRole("button", { name: "この進め方にする" }).first().click();
   await page.waitForTimeout(1200);
   const afterVar = await page.textContent("body");
-  if (!/今後14日間|安全に増やせる|この進め方をカレンダーへ保存|ルールに反します/.test(afterVar)) {
-    fail("S-9: 選んだ結果が反映されない");
+  /*
+   * 押した結果は2通りある。**どちらも正しい振る舞い。**
+   *
+   *   ・書き換えられる予定 → 変更内容が出る
+   *   ・固定枠（RULE-15）  → **変えられない理由**が出る
+   *
+   * 以前は前者だけを見ていたので、今日が固定曜日のポイント練習に当たった日
+   * （火・土）はここが必ず落ちていた。**曜日によって落ちる検査**は、
+   * 何も見ていない日があるのと同じ。
+   *
+   * どちらでもない（押しても何も出ない）ときだけ落とす。
+   * 「何か出た」で通すのではなく、出るべき文を名指しで並べてある。
+   */
+  const applied = /今後14日間|安全に増やせる|この進め方をカレンダーへ保存|ルールに反します/.test(
+    afterVar
+  );
+  const refused = /固定セッション|変更できません|RULE-15/.test(afterVar);
+  if (!applied && !refused) {
+    fail("S-9: 押しても、変更内容も断りの理由も出ない");
   }
 }
 step("S-9 進め方の2案OK（理由つき・TODAYで選べる）");
@@ -4660,6 +4688,18 @@ if ((await fitRebuildCard.count()) === 0) {
         (x) =>
           x.status !== "completed" &&
           x.date >= today &&
+          /*
+           * 固定枠は内容を変えられない（RULE-15）ので、入力欄が組み上がらない。
+           * 今日が固定曜日に当たった日（火・土）はここが必ず落ちていた。
+           * **曜日によって落ちる検査は、何も見ていない日がある**のと同じ。
+           */
+          x.isFixed !== true &&
+          /*
+           * 下でカテゴリのボタンを押して開くので、**押せるカテゴリに限る**。
+           * 有酸素の日はインターバル形の処方が付くことがあるが、
+           * ボタンが無いのでフォームが開かず「欄を読めない」で落ちていた。
+           */
+          ["high_lactate", "threshold", "race_economy", "cv", "modeling"].includes(x.category) &&
           x.targetPaces?.length === 1 &&
           /^\d+m × \d+ @/.test(x.prescription ?? "") &&
           /[rR]\d+(?:秒|分)/.test(x.prescription ?? "")
@@ -6442,23 +6482,6 @@ if ((await fitRebuildCard.count()) === 0) {
    * **検査ごと飛んでいた**（理由を最初から出す実装に変えても落ちなかった）。
    * 検査したい状態は検査の側で作る。
    */
-  const noteSetup = await page.evaluate(async () => {
-    const d = await fetch("/api/dashboard").then((r) => r.json());
-    const id = d?.todaySession?.id;
-    if (!id) return { ok: false, reason: "今日の予定が無い" };
-    const r = await fetch("/api/sessions", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        id,
-        prescription:
-          "40分有酸素ジョグ @4:42/km〜5:02/km（会話可能な呼吸・RPE 3〜4を優先。暑熱時はペースを強制しない）",
-      }),
-    }).then((x) => x.json());
-    return { ok: !r.error, reason: r.error };
-  });
-  if (!noteSetup.ok) fail(`ホーム: 検査の準備に失敗（${noteSetup.reason}）`);
-
   await page.goto("http://localhost:8791/#/");
   await page.waitForTimeout(1200);
 
@@ -6474,9 +6497,20 @@ if ((await fitRebuildCard.count()) === 0) {
   }
 
   /*
-   * 注記のある処方かどうかを先に確かめる。
-   * 「畳んでいるボタンがあれば見る」だけだと、注記の無い日には検査ごと飛ぶ——
-   * 実際に一度これで空振りした（理由を最初から出す実装に変えても落ちなかった）。
+   * 注記のある処方かどうかで、見られることが変わる。
+   *
+   * **今日の枠は検査の側で用意できない。** 固定枠（RULE-15）だと
+   * 内容を変えられず、消すこともできない（isFixed は予定に保存された値なので、
+   * テンプレートを変えても既存の予定は変わらない）。
+   * 曜日によって今日の処方に注記が無い日がある。
+   *
+   * そこで**日付に依らないところだけを見る**。
+   *   ・形（距離×本数・時間）が出ていること … 毎日見る
+   *   ・注記があるとき、畳んであること     … 注記のある日だけ見る
+   *
+   * 注記の読み取りそのものは `tests/prescriptionSummary.test.ts` が見ている。
+   * ここで見たいのは「畳んであるか」で、注記が無い日はその状態が作れない。
+   * **通ったことを実際より広く言わない**ため、step の文にどこまで見たかを書く。
    */
   const todayHasNote = await page.evaluate(async () => {
     const d = await fetch("/api/dashboard").then((r) => r.json());
@@ -6498,7 +6532,11 @@ if ((await fitRebuildCard.count()) === 0) {
   }
 
   if (failCount === homeBefore) {
-    step("ホームOK（形と設定を先に出す／理由は畳むが消さない）");
+    step(
+      todayHasNote
+        ? "ホームOK（形と設定を先に出す／理由は畳むが消さない）"
+        : "ホームOK（形と設定を先に出す／今日は注記が無いので畳みの検査は未実施）"
+    );
   }
 }
 
@@ -6613,6 +6651,107 @@ if ((await fitRebuildCard.count()) === 0) {
 
   if (failCount === todBefore) {
     step("主練習の時間帯OK（選べる・保存される・枠の中身は動かない・午前に生成される）");
+  }
+}
+
+// ---- 靴の用途を複数選べる ----
+/*
+ * 1つしか選べなかったとき、厚底のように「レースにもポイント練習にも履く」靴を
+ * 表せなかった。どちらかを選ぶと、選ばなかったほうの練習で加点されない。
+ *
+ * ここで見るのは3つ。
+ *   ・2つ選べて、2つとも保存されること
+ *   ・「決めていない」を押すと他が外れること（併用できない）
+ *   ・再読込しても選択が戻ってくること
+ */
+{
+  const purposeBefore = failCount;
+
+  const target = await page.evaluate(async () => {
+    const d = await fetch("/api/shoes").then((r) => r.json());
+    const s = (d.shoes ?? [])[0];
+    return s ? { id: s.id, name: s.name } : null;
+  });
+
+  if (!target) fail("靴の用途: 対象の靴が無い");
+  else {
+    await page.goto("http://localhost:8791/#/settings");
+    await page.waitForTimeout(900);
+
+    // 靴の行を開く（押すまで操作を出さない作りになっている）
+    const row = page.getByRole("button", { name: new RegExp(target.name) }).first();
+    if ((await row.count()) === 0) fail("靴の用途: 靴の行が無い");
+    else {
+      await row.click();
+      await page.waitForTimeout(500);
+
+      const group = page.locator(`[data-testid="shoe-purposes-${target.id}"]`);
+      if ((await group.count()) === 0) fail("靴の用途: 用途の選択が出ていない");
+      else {
+        // 2つ選ぶ
+        for (const label of ["レース用", "ポイント練習用"]) {
+          const chip = group.getByRole("button", { name: new RegExp(label) }).first();
+          if ((await chip.count()) === 0) {
+            fail(`靴の用途: 「${label}」が無い`);
+            continue;
+          }
+          if ((await chip.getAttribute("aria-pressed")) !== "true") {
+            await chip.click();
+            await page.waitForTimeout(500);
+          }
+        }
+
+        const saved = await page.evaluate(async (id) => {
+          const d = await fetch("/api/shoes").then((r) => r.json());
+          const s = (d.shoes ?? []).find((x) => x.id === id);
+          return s?.profile?.purposes ?? null;
+        }, target.id);
+        if (!Array.isArray(saved) || !saved.includes("race") || !saved.includes("quality")) {
+          fail(`靴の用途: 2つ選んでも両方保存されない（${JSON.stringify(saved)}）`);
+        }
+
+        // 再読込しても戻ってくる
+        await page.reload();
+        await page.waitForTimeout(1200);
+        const row2 = page.getByRole("button", { name: new RegExp(target.name) }).first();
+        if (await row2.count()) {
+          await row2.click();
+          await page.waitForTimeout(500);
+        }
+        const group2 = page.locator(`[data-testid="shoe-purposes-${target.id}"]`);
+        for (const label of ["レース用", "ポイント練習用"]) {
+          const chip = group2.getByRole("button", { name: new RegExp(label) }).first();
+          if ((await chip.count()) > 0 && (await chip.getAttribute("aria-pressed")) !== "true") {
+            fail(`靴の用途: 再読込で「${label}」の選択が消えている`);
+          }
+        }
+
+        /*
+         * 「決めていない」は他と併用しない。
+         * 併用できると「決めていないがレース用でもある」という読めない設定が残る。
+         */
+        const anyChip = group2.getByRole("button", { name: /決めていない/ }).first();
+        if ((await anyChip.count()) === 0) fail("靴の用途: 「決めていない」が無い");
+        else {
+          await anyChip.click();
+          await page.waitForTimeout(600);
+          const afterAny = await page.evaluate(async (id) => {
+            const d = await fetch("/api/shoes").then((r) => r.json());
+            const s = (d.shoes ?? []).find((x) => x.id === id);
+            return s?.profile?.purposes ?? null;
+          }, target.id);
+          if (JSON.stringify(afterAny) !== JSON.stringify(["any"])) {
+            fail(
+              `靴の用途: 「決めていない」が単独にならない（${JSON.stringify(afterAny)}）`
+            );
+          }
+        }
+      }
+    }
+  }
+
+  if (failCount === purposeBefore) {
+    step("靴の用途OK（複数選べる・保存され戻る・「決めていない」は単独）");
   }
 }
 

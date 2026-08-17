@@ -287,14 +287,14 @@ export function recommendShoes(
     }
 
     // --- レースまでの日数 ---
-    if (ctx.daysToRace !== undefined && ctx.daysToRace <= 14 && p.purpose === "race") {
+    if (ctx.daysToRace !== undefined && ctx.daysToRace <= 14 && p.purposes.includes("race")) {
       // 本番が近いなら、本番の靴に慣れておく価値がある
       score += 4;
       reasons.push("レースが近いので、本番で履く靴に慣れておけます");
     }
 
     // --- 本人が決めた用途は、一般的な傾向より優先する ---
-    const purposeFit: Partial<Record<ShoeSessionKind, ShoeProfile["purpose"][]>> = {
+    const purposeFit: Partial<Record<ShoeSessionKind, ShoeProfile["purposes"]>> = {
       recovery: ["recovery", "daily"],
       easy: ["daily", "recovery"],
       long: ["long", "daily"],
@@ -307,7 +307,15 @@ export function recommendShoes(
       hill: ["quality", "daily"],
       race: ["race"],
     };
-    if (p.purpose !== "any" && purposeFit[ctx.kind]?.includes(p.purpose)) {
+    /*
+     * 用途は複数選べる。**1つでも噛み合っていれば加点する。**
+     *
+     * 全部が噛み合うことを求めると、「レース用でもポイント練習用でもある」靴が
+     * どちらの日にも加点されなくなる（選択を増やすほど不利になる）。
+     * 加点は1回だけ——2つ噛み合ったからといって2倍良いわけではない。
+     */
+    const fit = purposeFit[ctx.kind] ?? [];
+    if (!p.purposes.includes("any") && p.purposes.some((x) => fit.includes(x))) {
       score += 6;
       reasons.push("この用途に使うと決めてある靴です");
     }
