@@ -1,0 +1,2 @@
+import{Bd as q}from"./chunk-w8n918vr.js";import{Ed as k}from"./chunk-xxswvqzx.js";var v=14;function w(b,c){return k(c,b)<=v}var j=`設定ペースは${v}日前に入ってから、そのときのCFEで決まります`;function B(b,c){if(b.userEdited||b.origin!==void 0&&b.origin!=="generated")return{confirmed:!0,prescription:b.prescription};if(w(b.date,c))return{confirmed:!0,prescription:b.prescription};let h=q(b.category)?.purpose;return{confirmed:!1,badge:"素案",prescription:h?`${h}。${j}`:j}}
+export{v as $a,B as ab};
