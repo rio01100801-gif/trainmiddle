@@ -93,10 +93,17 @@ export default function SetupPage() {
     }
   };
 
+  /**
+   * @param note 何に効くのかを1行で書く。
+   *   効かない欄には「記録用」と書いてある（身長・骨格筋量・3000m/5000m）。
+   *   **その逆も要る。** 効くのに効くと書いていないと、空欄のまま放置しても
+   *   気づけない。400mPBと1500mPBは forge-v112 で実際に処方を動かすようになった。
+   */
   const F = (
     label: string,
     key: keyof typeof form,
-    placeholder = ""
+    placeholder = "",
+    note?: string
   ) => (
     <label className="block text-sm mb-2">
       <span className="block text-xs mb-0.5" style={{ color: "var(--text-2)" }}>
@@ -108,6 +115,15 @@ export default function SetupPage() {
         placeholder={placeholder}
         onChange={(e) => setForm({ ...form, [key]: e.target.value })}
       />
+      {note ? (
+        <span
+          className="block text-[11px] mt-0.5 leading-snug"
+          style={{ color: "var(--text-3)" }}
+          data-field-note={key}
+        >
+          {note}
+        </span>
+      ) : null}
     </label>
   );
 
@@ -125,9 +141,19 @@ export default function SetupPage() {
           {F("身長(cm・記録用)", "heightCm", "171")}
           {F("体重(kg)", "weightKg", "64.5")}
           {F("骨格筋量(kg・記録用)", "skeletalMuscleKg", "32.5")}
-          {F("400m PB", "pb400", "49.0")}
+          {F(
+            "400m PB",
+            "pb400",
+            "49.0",
+            "流しの設定タイムの基準。空だと目標800mから推定します"
+          )}
           {F("800m PB（必須）", "pb800", "1:49.51")}
-          {F("1500m PB", "pb1500", "3:56.0")}
+          {F(
+            "1500m PB",
+            "pb1500",
+            "3:56.0",
+            "実測が無いときのLT推定に使います。空だとCFEから推定します"
+          )}
           {/*
             R-1: 相対強度の基準。任意。年齢からの推定式は使わない。
             分析の相対強度にだけ効く（メニューの生成・調整には入れていない）。

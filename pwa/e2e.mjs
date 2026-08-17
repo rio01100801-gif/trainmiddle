@@ -5417,7 +5417,35 @@ if ((await fitRebuildCard.count()) === 0) {
   if (!setup.includes("有酸素マーカー")) {
     fail("3000m/5000mをどこに入れるのかを書いていない");
   }
-  step("効かない欄に効かないと書いてあるOK（身長・骨格筋量・3000m/5000mの置き場所）");
+
+  /*
+   * **その逆も見る。** 効くのに効くと書いていないと、空欄のまま放置しても気づけない。
+   * 400mPBは流しの設定、1500mPBはLT推定を動かす（forge-v112）。
+   * 注記は欄そのものに付いていること（本文のどこかにあるだけでは、
+   * どの欄の話なのか読めない）。
+   */
+  for (const [key, word] of [
+    ["pb400", "流し"],
+    ["pb1500", "LT"],
+  ]) {
+    const note = page.locator(`[data-field-note="${key}"]`);
+    if ((await note.count()) === 0) {
+      fail(`${key} に「何に効くのか」の注記が付いていない`);
+    } else {
+      const text = (await note.first().textContent()) ?? "";
+      if (!text.includes(word)) {
+        fail(`${key} の注記が効き先を書いていない（${text}）`);
+      }
+      // 空でも推定に落ちることが読めるか（入れ忘れに気づける文言か）
+      if (!text.includes("空だと")) {
+        fail(`${key} の注記が、空欄のときどうなるかを書いていない（${text}）`);
+      }
+    }
+  }
+
+  step(
+    "PBの欄OK（効かない欄には記録用と書く／400m・1500mは効き先と空欄時の挙動を欄に書く）"
+  );
 }
 
 // ---- RPEのスライダー ----
