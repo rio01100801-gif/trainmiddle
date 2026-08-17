@@ -308,7 +308,8 @@ export function buildRuleContext(repo: Store, evaluationDate: string): RuleConte
     markers,
     evaluationDate,
     repo.getCfe()?.estimated800mSec,
-    heatFlaggedDates(repo)
+    heatFlaggedDates(repo),
+    repo.getAthlete()?.pb1500mSec
   );
   return {
     sessions,
@@ -640,7 +641,8 @@ function regeneratePlanCore(repo: Store, startDate: string): {
     aerobicEvidenceMarkers(repo),
     startDate,
     cfe.estimated800mSec,
-    heatFlaggedDates(repo)
+    heatFlaggedDates(repo),
+    repo.getAthlete()?.pb1500mSec
   );
   const savedSessions = repo.listSessions();
   const templateHistory = completedTemplateHistory(repo);
@@ -925,7 +927,8 @@ export function refreshNearHorizon(repo: Store, fromDate: string): SessionChange
       aerobicEvidenceMarkers(repo),
       fromDate,
       cfe.estimated800mSec,
-      heatFlaggedDates(repo)
+      heatFlaggedDates(repo),
+      repo.getAthlete()?.pb1500mSec
     ),
     startDate: fromDate,
     weekTemplate: repo.getWeekTemplate(),
@@ -1654,7 +1657,8 @@ export function dashboard(repo: Store, today: string) {
     aerobicEvidenceMarkers(repo),
     today,
     cfe?.estimated800mSec,
-    heatFlaggedDates(repo)
+    heatFlaggedDates(repo),
+    repo.getAthlete()?.pb1500mSec
   );
   const diag = athlete ? diagnose(athlete, goal?.targetTimeSec) : undefined;
   const phase = targetRace
@@ -3321,7 +3325,8 @@ export function sessionPlanVariants(
     aerobicEvidenceMarkers(repo),
     session.date,
     cfe.estimated800mSec,
-    heatFlaggedDates(repo)
+    heatFlaggedDates(repo),
+    repo.getAthlete()?.pb1500mSec
   );
 
   const base = buildSessionSpec({

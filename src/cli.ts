@@ -292,7 +292,9 @@ export function main(): void {
       const profile = buildAerobicProfile(
         repo.listMarkers(),
         date,
-        repo.getCfe()?.estimated800mSec
+        repo.getCfe()?.estimated800mSec,
+        undefined,
+        repo.getAthlete()?.pb1500mSec
       );
       console.log(
         `実測を登録しました（${km}km ${fmtTime(sec)}）。有酸素設定を更新します。`

@@ -420,7 +420,8 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
           markers,
           today,
           repo.getCfe()?.estimated800mSec,
-          heatFlaggedDates(repo)
+          heatFlaggedDates(repo),
+          repo.getAthlete()?.pb1500mSec
         ),
       };
     },
@@ -445,7 +446,8 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
           aerobicEvidenceMarkers(repo),
           marker.date,
           repo.getCfe()?.estimated800mSec,
-          heatFlaggedDates(repo)
+          heatFlaggedDates(repo),
+          repo.getAthlete()?.pb1500mSec
         ),
       };
     },

@@ -18,7 +18,8 @@ export async function GET(req: NextRequest) {
       markers,
       today,
       repo.getCfe()?.estimated800mSec,
-      heatFlaggedDates(repo)
+      heatFlaggedDates(repo),
+      repo.getAthlete()?.pb1500mSec
     ),
   });
 }
@@ -52,7 +53,8 @@ export async function POST(req: NextRequest) {
       markers,
       marker.date,
       repo.getCfe()?.estimated800mSec,
-      heatFlaggedDates(repo)
+      heatFlaggedDates(repo),
+      repo.getAthlete()?.pb1500mSec
     ),
   });
 }

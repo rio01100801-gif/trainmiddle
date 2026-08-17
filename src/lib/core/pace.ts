@@ -446,11 +446,43 @@ export function ltNeedsRefresh(est: LtEstimate | undefined): string | undefined 
  * 有酸素プロファイルを構築する。
  * 実測データが無い場合は CFE ベースの粗い推定値を使い、isEstimated を必ず立てる。
  */
+/**
+ * 実測が足りないときのLT推定。**近い種目から順に落とす。**
+ *
+ * 係数の根拠:
+ *   1500m → LT: 1500mペースの 1.24 倍/km
+ *   800m  → LT: 800mペースの 1.42 倍/km
+ *
+ * どちらも同じ選手で同じ答えに寄るように取ってある。
+ * 1500m 3:56 → 195秒/km、CFE 1:49.5 → 194秒/km。
+ * 実測経路（5000m 15:22 → 196秒/km）とも揃う。
+ * **3経路が揃わない係数は使わない**——揃わなければどれかが間違っている。
+ */
+export function ltFallback(
+  cfe800Sec?: number,
+  pb1500mSec?: number
+): { lt: number; source: string } {
+  if (pb1500mSec !== undefined && pb1500mSec > 0) {
+    return {
+      lt: (pb1500mSec / 1.5) * 1.24,
+      source:
+        "実測データ不足のため1500mPBからの推定値（精度低。閾値走の実測入力を推奨）",
+    };
+  }
+  const base = cfe800Sec ?? 112;
+  return {
+    lt: (base / 0.8) * 1.42,
+    source: "実測データ不足のためCFEからの推定値（精度低。閾値走の実測入力を推奨）",
+  };
+}
+
 export function buildAerobicProfile(
   markers: FitnessMarker[],
   today: string,
   cfe800Sec?: number,
-  heatFlaggedDates?: Set<string>
+  heatFlaggedDates?: Set<string>,
+  /** 1500mPB（秒）。実測が足りないときのLT推定で、800mより先に使う */
+  pb1500mSec?: number
 ): AerobicProfile {
   const est = estimateLtFromMarkers(markers, today, heatFlaggedDates);
   let lt: number;
@@ -464,12 +496,27 @@ export function buildAerobicProfile(
     source = est.source;
     confidence = est.confidence;
   } else {
-    // フォールバック: 800m能力からの粗い推定（精度が出ないことを明示する）
-    // 中距離選手のLTはおおよそ 800mペースの 1.55〜1.65倍/km。中央値1.6を使用。
-    const base = cfe800Sec ?? 112;
-    lt = (base / 0.8) * 1.6;
+    /*
+     * 実測が足りないときのフォールバック。**近い種目から順に落とす。**
+     *
+     * 以前は 800m から一段で `(base / 0.8) * 1.6` を使っていた。
+     * CFE 1:49.5 で LT 3:39/km になり、同じ選手の実測経路（`ltOffsetFor`）が
+     * 返す 3:16/km と **23秒/km 食い違っていた**。
+     * 同じソフトの中で答えが2つある状態で、しかもCVはCFEを更新しないので
+     * このずれは画面のどこにも出なかった。
+     *
+     * 1500mのほうが800mより有酸素能力に近いので先に使う。
+     * 採用した段は必ず `source` に書く（どこから来た数字かを追えるように）。
+     * どの段も推定なので `isEstimated` は立てたまま。
+     *
+     * 3000m・5000m はここでは使わない。あれは `FitnessMarker` として
+     * 日付つきで入れるもので、実測経路が先に拾う（`types.ts` の Athlete のコメント参照）。
+     * 静的なPBとして二重に持つと、LTの出どころが2つになる。
+     */
+    const fallback = ltFallback(cfe800Sec, pb1500mSec);
+    lt = fallback.lt;
     isEstimated = true;
-    source = "実測データ不足のためCFEからの推定値（精度低。閾値走の実測入力を推奨）";
+    source = fallback.source;
     confidence = "low";
   }
   const cvEstimate =
