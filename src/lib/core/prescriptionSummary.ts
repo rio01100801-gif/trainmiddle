@@ -88,7 +88,16 @@ function compactRest(text: string): string | undefined {
  */
 function compactContinuousShape(head: string): string | undefined {
   const m = /^(\d+)分(.*)$/.exec(head.trim());
-  if (!m) return head.trim() || undefined;
+  /*
+   * 「N分…」の形でないものは、そのままでは形とみなせない。
+   * 短ければ形として通す（`ペース走` など）。長ければ形ではないので返さない。
+   * ここも `shape` に流れる経路なので、短さを保証する場所が要る。
+   */
+  if (!m) {
+    const raw = head.trim();
+    if (!raw) return undefined;
+    return isShapeLike(raw) ? raw : leadingAmount(raw);
+  }
   /*
    * 括弧の中は落とす。自作メニューでは `40分ジョグ （カレンダー反映テスト）` のように
    * 説明が途中に入ることがあり、そのまま繋ぐと
@@ -168,6 +177,41 @@ function parseCompound(head: string): { shape: string; targets: string[] } | und
   return { shape: shapeParts.join("＋"), targets: paces };
 }
 
+/**
+ * 形として置いてよい短さかどうか。
+ *
+ * `shape` は縮めずに置く場所なので、**長いものを入れてはいけない**。
+ * 「休養」「補強」「チーム練習」は形。
+ * 「回復促進と有酸素土台の維持。設定ペースは…」は説明であって形ではない。
+ *
+ * 句点・読点があれば文章。無くても長ければ形ではない。
+ * 14文字にしたのは、いちばん長い実物（`500m×3＋300m×2` = 13文字）が入り、
+ * かつ 320px 幅で1行に収まるため。
+ */
+const SHORT_SHAPE_MAX = 14;
+function isShapeLike(head: string): boolean {
+  if (/[。、]/.test(head)) return false;
+  return head.length <= SHORT_SHAPE_MAX;
+}
+
+/**
+ * 文章の先頭から量だけを取り出す。
+ *
+ * 回復ジョグの処方は
+ *
+ *   `20〜30分・会話可能・RPE 2以下。痛みが増す、走動作が変わる場合は中止して完全休養。`
+ *
+ * のように、**先頭に量があってその後ろが文章**という形をしている。
+ * 文章だからと丸ごと捨てると、`20〜30分` という
+ * **一番見たい量まで消える**（予定と実際を並べる行から予定側が消えた）。
+ *
+ * 後ろの文章は切ってよい。タップすれば全部読める。
+ */
+function leadingAmount(head: string): string | undefined {
+  const m = /^(\d+(?:\.\d+)?(?:〜\d+(?:\.\d+)?)?(?:分|km|m(?:×\d+)?))/.exec(head.trim());
+  return m ? m[1] : undefined;
+}
+
 /** 処方を、切ってよい部分と切ってはいけない部分に分ける */
 export function prescriptionParts(prescription: string): PrescriptionParts {
   const text = prescription?.trim();
@@ -205,9 +249,20 @@ export function prescriptionParts(prescription: string): PrescriptionParts {
     /*
      * 設定が無い処方（休養・補強・固定枠のチーム練習など）。
      * 形だけでも出せるなら出す。
+     *
+     * ただし**形であることを作りで保証する**。
+     * `shape` は「絶対に切らない」場所なので、呼ぶ側は縮めずに置く。
+     * ここに文章が入ると切れない塊になり、横にはみ出す
+     * （素案の「回復促進と有酸素土台の維持。設定ペースは14日前に…」で実際に起きた）。
+     *
+     * 文章は形ではない。読めなかったことにして原文を返させる——
+     * 呼ぶ側は原文を切ってよい場所に出すので、そちらなら収まる。
      */
     const head = text.split("（")[0].trim();
-    return head ? { shape: head, note, rpe, heatNote } : { note, rpe, heatNote };
+    if (!head) return { note, rpe, heatNote };
+    // 短ければそのまま形。文章なら先頭の量だけ取る。量も無ければ形は無い
+    const shape = isShapeLike(head) ? head : leadingAmount(head);
+    return shape ? { shape, note, rpe, heatNote } : { note, rpe, heatNote };
   }
 
   const head = text.slice(0, at).trim();

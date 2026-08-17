@@ -6398,6 +6398,34 @@ if ((await fitRebuildCard.count()) === 0) {
     if (targetCount === 0) {
       fail(`カレンダー行（${width}px幅）: 設定が1つも出ていない（検査が空振りする）`);
     }
+
+    /*
+     * **切れているかとは別に、はみ出していないかも見る。**
+     *
+     * 切らないと決めた要素は `flex-shrink-0` で置いてある。
+     * 中身が長いと縮まずに横へ伸び、**要素の中では切れていない**ので
+     * `scrollWidth > clientWidth` では捕まらない。
+     * ページ全体の `scrollWidth` でも捕まらない（カードの中で隠れるだけで、
+     * 文書は広がらない）。実際に素案の処方が文章のまま入り、画面外へ出ていた。
+     *
+     * 右端が画面の外に出ていないかを直接測る。
+     */
+    const stuckOut = await page.evaluate(() => {
+      const out = [];
+      const vw = document.documentElement.clientWidth;
+      const sel = "[data-calendar-shape],[data-calendar-target],[data-calendar-rest]";
+      document.querySelectorAll(sel).forEach((el) => {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0) return; // 畳まれている行は測らない
+        if (r.right > vw + 1) out.push((el.textContent || "").slice(0, 40));
+      });
+      return out;
+    });
+    if (stuckOut.length > 0) {
+      fail(
+        `カレンダー行（${width}px幅）: 縮まない要素が画面外へはみ出している — ${stuckOut.join(" / ")}`
+      );
+    }
   }
   await page.setViewportSize({ width: 390, height: 844 });
 
@@ -6953,7 +6981,7 @@ if ((await fitRebuildCard.count()) === 0) {
       }),
     }).then((r) => r.json());
     if (res.error) return { ok: false, reason: res.error };
-    return { ok: true, date: s.date, planned: s.durationMin, actual: longer };
+    return { ok: true, date: s.date, planned: s.durationMin, actual: longer, prescription: s.prescription };
   });
 
   if (!setup.ok) fail(`予定と違う量: 検査の準備に失敗（${setup.reason}）`);
@@ -6972,7 +7000,9 @@ if ((await fitRebuildCard.count()) === 0) {
       } else {
         // 予定と実際が並んでいること
         if ((await planned.count()) === 0) {
-          fail("予定と違う量: 予定側が出ていない（何から変わったのか読めない）");
+          fail(
+            `予定と違う量: 予定側が出ていない（何から変わったのか読めない）— 処方の原文: ${setup.prescription}`
+          );
         } else {
           const struck = await planned.first().evaluate(
             (el) => window.getComputedStyle(el).textDecorationLine
