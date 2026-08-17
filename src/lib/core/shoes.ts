@@ -11,6 +11,7 @@
  * 計算できるものは持たない。
  */
 import type { Session, SessionResult } from "./types";
+import { warmupAddedDistanceKm } from "./warmup";
 
 export type ShoeKind = "spike" | "thick" | "thin" | "trainer" | "trail";
 
@@ -94,14 +95,37 @@ export function shoeUsage(
   const sessionById = new Map(sessions.map((s) => [s.id, s]));
   const totals = new Map<string, { km: number; count: number; last?: string }>();
 
-  for (const result of results) {
-    const id = result.shoeId;
-    if (!id) continue;
+  const add = (id: string, km: number, date: string, countsAsSession: boolean) => {
     const current = totals.get(id) ?? { km: 0, count: 0, last: undefined };
-    current.km += distanceOfResult(result, sessionById.get(result.sessionId));
-    current.count += 1;
-    if (!current.last || result.date > current.last) current.last = result.date;
+    current.km += km;
+    if (countsAsSession) current.count += 1;
+    if (!current.last || date > current.last) current.last = date;
     totals.set(id, current);
+  };
+
+  for (const result of results) {
+    if (result.shoeId) {
+      add(
+        result.shoeId,
+        distanceOfResult(result, sessionById.get(result.sessionId)),
+        result.date,
+        true
+      );
+    }
+
+    /*
+     * アップの距離も足す。**履き替えることがある**ので、
+     * アップの靴が指定されていればそちらに足す（トレーナーでアップ→スパイクで主練習）。
+     * 主練習側に既に含まれている場合は0が返るので、二重には足さない。
+     *
+     * 回数は増やさない。アップは主練習の一部で、独立した1回ではない。
+     * 増やすと「この靴で何回練習したか」が実際の倍になる。
+     */
+    const wuKm = warmupAddedDistanceKm(result.warmup);
+    const wuShoe = result.warmup?.shoeId ?? result.shoeId;
+    if (wuShoe && wuKm > 0) {
+      add(wuShoe, wuKm, result.date, false);
+    }
   }
 
   return shoes.map((shoe) => {

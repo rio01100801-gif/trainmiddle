@@ -6,6 +6,11 @@ import type { CoverageReview } from "@/lib/core/coverage";
 import type { SessionCategory } from "@/lib/core/types";
 import type { TimelineDay } from "@/lib/core/timeline";
 import { describeAbortSummary, type AbortSummary } from "@/lib/core/abortSummary";
+import { WARMUP_LEGS_LABELS } from "@/lib/core/warmup";
+import {
+  WARMUP_SHAPE_LABELS,
+  type WarmupInsight as WarmupInsightView,
+} from "@/lib/core/warmupInsight";
 import {
   formatPeriodRange,
   PERIOD_LABELS,
@@ -167,6 +172,7 @@ export default function AnalysisPage() {
         <PerformancePanel periods={data.performance ?? []} />
         <BalanceCard balance={data.balance} />
         <AbortBreakdownCard summary={data.abortBreakdown} />
+        <WarmupInsightCard />
         <ConditionCard />
         <TimelineCard days={data.timeline ?? []} />
       </div>
@@ -429,6 +435,122 @@ function ConditionCard() {
  * 理由ごとに扱いが違う（設定を緩める材料になるもの／ならないもの）ので、
  * 数と扱いを並べて出す。
  */
+/**
+ * アップと主練習の相性。
+ *
+ * **結論だけを出して、根拠はたたむ**——既存の作法に合わせてある。
+ *
+ * ここで守っているのは、件数が足りないときに何も言わないこと。
+ * 判断は `core/warmupInsight.ts` が持っていて、この画面は出すだけ。
+ * 画面側で「3回未満でも参考までに」と出してしまうと、
+ * せっかく分けた閾値が意味を失う。
+ */
+function WarmupInsightCard() {
+  const [insight, setInsight] = useState<WarmupInsightView | null>(null);
+  useEffect(() => {
+    fetch("/api/warmup")
+      .then((r) => r.json())
+      .then((d) => setInsight(d.insight ?? null))
+      .catch(() => {
+        /* 参考情報。取れなくても分析の他は出る */
+      });
+  }, []);
+
+  if (!insight) return null;
+  // 記録がゼロなら案内だけ。空の表を並べない
+  if (insight.samples.length === 0) {
+    return (
+      <Card title="アップと主練習">
+        <p className="text-[11.5px] leading-relaxed" style={{ color: "var(--text-3)" }}>
+          {insight.emptyNote}
+        </p>
+      </Card>
+    );
+  }
+
+  const waiting = insight.groups.filter((g) => g.note);
+
+  return (
+    <Card title="アップと主練習">
+      {insight.readouts.length > 0 ? (
+        <div className="flex flex-col gap-1.5 mb-2">
+          {insight.readouts.map((line, i) => (
+            <p
+              key={i}
+              className="text-[12px] leading-relaxed"
+              style={{ color: i === insight.readouts.length - 1 ? "var(--text-3)" : "var(--text-1)" }}
+            >
+              {line}
+            </p>
+          ))}
+        </div>
+      ) : (
+        <p className="text-[11.5px] leading-relaxed mb-2" style={{ color: "var(--text-3)" }}>
+          まだ傾向を出せる回数がたまっていません。いまは記録だけしています。
+        </p>
+      )}
+
+      {/*
+        自動では何も変えない。ここは読むための材料で、
+        アップを変えるかどうかは本人が決める。
+      */}
+      <p className="text-[11px] leading-relaxed mb-2" style={{ color: "var(--text-3)" }}>
+        ここで設定やアップが自動で変わることはありません。
+      </p>
+
+      <Collapsible label={`記録と件数を見る（${insight.samples.length}件）`} className="mt-1">
+        <div className="mt-2 flex flex-col gap-1">
+          {waiting.map((g) => (
+            <div
+              key={`${g.category}-${g.shape}`}
+              className="text-[11.5px]"
+              style={{ color: "var(--text-3)" }}
+            >
+              {CATEGORY_LABELS[g.category] ?? g.category} × {WARMUP_SHAPE_LABELS[g.shape]}: {g.note}
+            </div>
+          ))}
+        </div>
+        <div className="overflow-x-auto mt-2">
+          <table className="w-full text-[12px]" style={{ borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                {["日付", "種目", "アップ", "1本目の差", "脚"].map((h) => (
+                  <th
+                    key={h}
+                    className="metric-label text-left py-1 pr-2 whitespace-nowrap"
+                    style={{ borderBottom: "1px solid var(--border)" }}
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {insight.samples.map((s, i) => (
+                <tr key={`${s.date}-${i}`}>
+                  <td className="py-1 pr-2 num whitespace-nowrap">{s.date.slice(5)}</td>
+                  <td className="py-1 pr-2 whitespace-nowrap">
+                    {CATEGORY_LABELS[s.category] ?? s.category}
+                  </td>
+                  <td className="py-1 pr-2">{s.segments}</td>
+                  <td className="py-1 pr-2 num whitespace-nowrap">
+                    {s.firstRepGapSec === undefined
+                      ? "—"
+                      : `${s.firstRepGapSec > 0 ? "+" : ""}${s.firstRepGapSec}秒`}
+                  </td>
+                  <td className="py-1 pr-2 whitespace-nowrap">
+                    {s.legs ? WARMUP_LEGS_LABELS[s.legs] : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Collapsible>
+    </Card>
+  );
+}
+
 function AbortBreakdownCard({ summary }: { summary?: AbortSummary | null }) {
   // 1回も無いなら出さない（空のカードを並べても読むものが増えるだけ）
   if (!summary || summary.total === 0) return null;

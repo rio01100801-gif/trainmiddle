@@ -83,6 +83,9 @@ npm run verify
 直前に入れたシューズ推薦は、**先に機能を足してテストが後になり、閾値を割った**。
 `npm run test:coverage` はコミット前に通すこと（`npm run verify` には入っていない）。
 
+アップ（forge-v106）は主練習の子データ。**流す先と流さない先の境界**が全部なので、
+`tests/warmupAggregation.test.ts` を先に読む。
+
 **次に手を付けるのは `src/lib/service/workflow.ts`。** 未検証の分岐が突出して多く、
 生成と波及の中心なので**一番慎重さが要る**。頭が新しいときにやること。
 

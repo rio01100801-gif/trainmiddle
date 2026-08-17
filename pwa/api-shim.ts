@@ -64,6 +64,8 @@ import {
   listShoes,
   saveShoe,
   shoeAdviceFor,
+  warmupAnalysis,
+  warmupOptionsFor,
   shoeUsageList,
   contactTimeStatus,
   abortBreakdown,
@@ -178,6 +180,23 @@ const routes: Record<string, Partial<Record<string, Handler>>> = {
       const out = deleteShoe(repo, shoeId);
       if (!out.deleted) return { error: out.reason };
       return { ok: true, shoes: listShoes(repo), usage: shoeUsageList(repo) };
+    },
+  },
+
+  /*
+   * アップ（主練習の子データ）。app/api/warmup と対。
+   * 読むだけ——保存は /api/results を通る。アップは結果の一部なので、
+   * 別の保存口を作るとアップだけ残って主練習が残らない状態が作れてしまう。
+   */
+  "/api/warmup": {
+    GET: (repo, _b, params) => {
+      const sessionId = params?.get("sessionId");
+      if (sessionId) {
+        // 二重計上の判断に要る。持続走はファイル全体を1本として扱う
+        const mainIsContinuous = params?.get("mode") === "continuous";
+        return { options: warmupOptionsFor(repo, sessionId, { mainIsContinuous }) };
+      }
+      return { insight: warmupAnalysis(repo) };
     },
   },
 

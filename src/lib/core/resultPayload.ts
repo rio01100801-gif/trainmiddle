@@ -17,6 +17,7 @@ import { avgPaceSecPerKm, buildRepResults } from "./workoutLog";
 import { parseRest } from "./bulkImport";
 import type { NextDayLegs, RestType, Subjective } from "./types";
 import type { AbortCause } from "./abortCause";
+import type { WarmupRecord } from "./warmup";
 
 // ---------------------------------------------------------------------------
 // 入力の書き方をほどく
@@ -85,6 +86,12 @@ export interface ResultPayloadCommon {
   shoeId?: string;
   abortCause?: AbortCause;
   abortNote?: string;
+  /**
+   * ポイント練習前のアップ。**主練習の子データ**なので、
+   * 別の保存口ではなく結果と一緒に送る。
+   * どちらのモードでも同じように付く（インターバルでもジョグでもアップはする）。
+   */
+  warmup?: WarmupRecord;
 }
 
 export interface ContinuousDraft {
@@ -266,5 +273,7 @@ function environmentOf(common: ResultPayloadCommon): Record<string, unknown> {
     shoeId: common.shoeId,
     abortCause: common.abortCause,
     abortNote: common.abortNote,
+    // アップは主練習の子データ。どちらのモードでも同じように付く
+    warmup: common.warmup,
   };
 }

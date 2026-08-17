@@ -59,6 +59,17 @@ import {
   parseRestInput,
 } from "@/lib/core/resultPayload";
 import { shoeChoices, type ShoeUsage } from "@/lib/core/shoes";
+import {
+  WARMUP_BREATHING_LABELS,
+  WARMUP_LEGS_LABELS,
+  WARMUP_SEGMENT_KINDS,
+  WARMUP_SEGMENT_LABELS,
+  WARMUP_SOURCE_LABELS,
+  summarizeWarmup,
+  type WarmupBreathing,
+  type WarmupLegs,
+  type WarmupRecord,
+} from "@/lib/core/warmup";
 import { PAIN_MAX, PAIN_MIN, RPE_MAX, RPE_MIN, isValidRpe } from "@/lib/core/rpe";
 import type {
   FitnessMarkerPurpose,
@@ -1338,6 +1349,309 @@ function ConditionFields({
 }
 
 
+/** `/api/warmup?sessionId=` が返す選択肢。前回・型・FITから */
+interface WarmupOptionsData {
+  previous?: { date: string; warmup: WarmupRecord };
+  templates: { key: string; label: string; warmup: WarmupRecord }[];
+  fromFit: { fitId: string; fileName: string; date?: string; warmup: WarmupRecord }[];
+}
+
+const WARMUP_LEGS_OPTIONS = (Object.keys(WARMUP_LEGS_LABELS) as WarmupLegs[]).map((v) => ({
+  value: v,
+  label: WARMUP_LEGS_LABELS[v],
+}));
+
+const WARMUP_BREATHING_OPTIONS = (
+  Object.keys(WARMUP_BREATHING_LABELS) as WarmupBreathing[]
+).map((v) => ({ value: v, label: WARMUP_BREATHING_LABELS[v] }));
+
+/**
+ * ポイント練習前のアップ（任意）。
+ *
+ * **既定では畳んである。** アップは毎回同じことが多く、
+ * 全部の欄を常に開いておくと主練習の入力が画面の下に押し出される。
+ * 畳んだ状態では「何をやったか」の1行だけを出し、
+ * 直す必要があるときだけ開く。
+ *
+ * 中身もさらに二段にしてある——合計と区間までが上、
+ * 心拍・主練習までの間隔・脚・呼吸・靴は「詳しく」の中。
+ * 測っていない項目のほうが多いので、全部を最初から見せると
+ * 「埋めないといけない」ように見えてしまう。
+ *
+ * ⚠️ ここでコンポーネントを定義しないこと（再描画のたびに作り直され、
+ * iOSでは1文字打つたびにキーボードが閉じる）。`npm run ci:nested` が見張っている。
+ */
+function WarmupFields({
+  warmup,
+  setWarmup,
+  options,
+  shoes,
+}: {
+  warmup?: WarmupRecord;
+  setWarmup: (w: WarmupRecord | undefined) => void;
+  options?: WarmupOptionsData;
+  shoes: ShoeUsage[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState(false);
+
+  const w: WarmupRecord = warmup ?? { segments: [], source: "manual" };
+  const patch = (over: Partial<WarmupRecord>) => setWarmup({ ...w, ...over });
+  const numOrUndef = (v: string) => {
+    const t = v.trim();
+    if (!t) return undefined;
+    const n = Number(t);
+    return isFinite(n) ? n : undefined;
+  };
+  const str = (v: number | undefined) => (v === undefined ? "" : String(v));
+  const summary = summarizeWarmup(warmup);
+
+  return (
+    <div className="border-t pt-3 mt-3" style={{ borderColor: "var(--border)" }}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between gap-2 min-h-[44px] text-left"
+        data-testid="warmup-toggle"
+      >
+        <span className="text-[13px] font-semibold">アップ（任意）</span>
+        <span className="text-[11.5px] flex-1 text-right" style={{ color: "var(--text-3)" }}>
+          {summary ?? "未記録"}
+        </span>
+        <span className="text-[11px]" style={{ color: "var(--text-3)" }}>
+          {open ? "閉じる" : "開く"}
+        </span>
+      </button>
+
+      {open ? (
+        <div className="mt-3 flex flex-col gap-3" data-testid="warmup-fields">
+          <p className="text-[11.5px] leading-relaxed" style={{ color: "var(--text-3)" }}>
+            主練習の一部として記録します。距離・時間・負荷・シューズの走行距離には足しますが、
+            週の練習回数やカテゴリ配分、CFEには使いません。
+          </p>
+
+          {/* 毎回ゼロから入力させない。押した中身はそのまま直せる */}
+          <div className="flex flex-wrap gap-2" data-testid="warmup-presets">
+            {options?.previous ? (
+              <button
+                type="button"
+                className="text-[11.5px] rounded-lg border px-2.5 min-h-[36px]"
+                style={{ borderColor: "var(--border-2)" }}
+                onClick={() => setWarmup(options.previous!.warmup)}
+              >
+                前回と同じ（{options.previous.date}）
+              </button>
+            ) : null}
+            {(options?.templates ?? []).map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                className="text-[11.5px] rounded-lg border px-2.5 min-h-[36px]"
+                style={{ borderColor: "var(--border-2)" }}
+                onClick={() => setWarmup(t.warmup)}
+              >
+                {t.label}
+              </button>
+            ))}
+            {(options?.fromFit ?? []).map((f) => (
+              <button
+                key={f.fitId}
+                type="button"
+                className="text-[11.5px] rounded-lg border px-2.5 min-h-[36px]"
+                style={{ borderColor: "var(--forge)", color: "var(--forge)" }}
+                onClick={() => setWarmup(f.warmup)}
+              >
+                FITから（{f.fileName}）
+              </button>
+            ))}
+            {warmup ? (
+              <button
+                type="button"
+                className="text-[11.5px] rounded-lg border px-2.5 min-h-[36px]"
+                style={{ borderColor: "var(--border-2)", color: "var(--text-3)" }}
+                onClick={() => setWarmup(undefined)}
+                data-testid="warmup-clear"
+              >
+                消す
+              </button>
+            ) : null}
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <Stepper
+              label="合計距離"
+              unit="km"
+              inputMode="decimal"
+              step={0.1}
+              value={str(w.totalDistanceKm)}
+              onChange={(v) => patch({ totalDistanceKm: numOrUndef(v) })}
+            />
+            <Stepper
+              label="合計時間"
+              unit="分"
+              value={str(w.totalDurationMin)}
+              onChange={(v) => patch({ totalDurationMin: numOrUndef(v) })}
+            />
+          </div>
+
+          {/* 区間。押した種別だけ足す。最初から全部の欄を出さない */}
+          <div>
+            <div className="text-[11.5px] mb-1" style={{ color: "var(--text-3)" }}>
+              区間（やったものだけ）
+            </div>
+            <div className="flex flex-wrap gap-2 mb-2" data-testid="warmup-segment-add">
+              {WARMUP_SEGMENT_KINDS.map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  className="text-[11.5px] rounded-lg border px-2.5 min-h-[36px]"
+                  style={{ borderColor: "var(--border-2)" }}
+                  onClick={() => patch({ segments: [...w.segments, { kind: k }] })}
+                >
+                  ＋{WARMUP_SEGMENT_LABELS[k]}
+                </button>
+              ))}
+            </div>
+            {w.segments.map((seg, i) => (
+              <div
+                key={`${seg.kind}-${i}`}
+                className="rounded-lg border p-2 mb-2"
+                style={{ borderColor: "var(--border)" }}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[12px] font-semibold">
+                    {WARMUP_SEGMENT_LABELS[seg.kind]}
+                  </span>
+                  <button
+                    type="button"
+                    className="text-[11px] min-h-[36px] px-2"
+                    style={{ color: "var(--text-3)" }}
+                    onClick={() =>
+                      patch({ segments: w.segments.filter((_, j) => j !== i) })
+                    }
+                  >
+                    削除
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Stepper
+                    label="距離"
+                    unit="m"
+                    step={50}
+                    value={str(seg.distanceM)}
+                    onChange={(v) =>
+                      patch({
+                        segments: w.segments.map((s, j) =>
+                          j === i ? { ...s, distanceM: numOrUndef(v) } : s
+                        ),
+                      })
+                    }
+                  />
+                  <Stepper
+                    label="本数"
+                    value={str(seg.reps)}
+                    onChange={(v) =>
+                      patch({
+                        segments: w.segments.map((s, j) =>
+                          j === i ? { ...s, reps: numOrUndef(v) } : s
+                        ),
+                      })
+                    }
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setDetail(!detail)}
+            className="text-[11.5px] text-left min-h-[36px]"
+            style={{ color: "var(--forge)" }}
+            data-testid="warmup-detail-toggle"
+          >
+            {detail ? "詳しい記録を閉じる" : "詳しく記録する（心拍・脚・呼吸・靴）"}
+          </button>
+
+          {detail ? (
+            <div className="flex flex-col gap-3" data-testid="warmup-detail">
+              <div className="grid grid-cols-2 gap-2">
+                <Stepper
+                  label="平均心拍"
+                  unit="bpm"
+                  value={str(w.avgHr)}
+                  onChange={(v) => patch({ avgHr: numOrUndef(v) })}
+                />
+                <Stepper
+                  label="最大心拍"
+                  unit="bpm"
+                  value={str(w.maxHr)}
+                  onChange={(v) => patch({ maxHr: numOrUndef(v) })}
+                />
+              </div>
+              <Stepper
+                label="アップ終了から主練習開始まで"
+                unit="分"
+                value={str(w.gapToMainMin)}
+                onChange={(v) => patch({ gapToMainMin: numOrUndef(v) })}
+              />
+              <ChipGroup
+                label="アップ後の脚"
+                value={w.legs}
+                onChange={(v) => patch({ legs: v })}
+                options={WARMUP_LEGS_OPTIONS}
+                allowEmpty
+                emptyLabel="未入力"
+                testId="warmup-legs"
+              />
+              <ChipGroup
+                label="呼吸"
+                value={w.breathing}
+                onChange={(v) => patch({ breathing: v })}
+                options={WARMUP_BREATHING_OPTIONS}
+                allowEmpty
+                emptyLabel="未入力"
+                testId="warmup-breathing"
+              />
+              {shoes.length > 0 ? (
+                <ChipGroup
+                  label="アップのシューズ"
+                  value={w.shoeId}
+                  onChange={(v) => patch({ shoeId: v })}
+                  options={shoes.map((u) => ({ value: u.shoe.id, label: u.shoe.name }))}
+                  allowEmpty
+                  emptyLabel="主練習と同じ"
+                  columns={2}
+                  testId="warmup-shoe"
+                />
+              ) : null}
+              {/*
+                FITを丸ごと取り込んだ日は、主練習の距離にアップが既に入っている。
+                そのまま足すと距離が倍になるので、ここで断れるようにしておく。
+              */}
+              <label className="flex items-start gap-2 text-[11.5px]">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={!!w.includedInMainTotals}
+                  onChange={(e) => patch({ includedInMainTotals: e.target.checked || undefined })}
+                  data-testid="warmup-included"
+                />
+                <span style={{ color: "var(--text-3)" }}>
+                  この距離・時間は主練習側にも入っている（合計に二重で足さない）
+                </span>
+              </label>
+              <div className="text-[11px]" style={{ color: "var(--text-3)" }}>
+                入力元: {WARMUP_SOURCE_LABELS[w.source]}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ResultForm({
   session,
   existing,
@@ -1555,6 +1869,14 @@ function ResultForm({
   const [rain, setRain] = useState(!!existing?.rain);
 
   /*
+   * ポイント練習前のアップ（任意・主練習の子データ）。
+   * 既に記録があればその値。**既定値は入れない**——
+   * やっていないアップが記録に残ると、あとで相性を見るときに数が合わなくなる。
+   */
+  const [warmup, setWarmup] = useState<WarmupRecord | undefined>(existing?.warmup);
+  const [warmupOptions, setWarmupOptions] = useState<WarmupOptionsData | undefined>(undefined);
+
+  /*
    * 途中でやめた理由。天候タグと違い、これは判定に効く。
    * 既定値は置かない——なぜ止めたかは本人にしか分からない。
    */
@@ -1708,6 +2030,26 @@ function ResultForm({
       });
   }, [session.id]);
 
+  /*
+   * アップの選択肢（前回と同じ・型・FITから）。
+   *
+   * `mode` を送るのは**二重計上の判断に要る**から。
+   * 持続走はファイル全体を1本として取り込むので、主練習の距離に
+   * アップが既に入っている。インターバルはメインの周だけなので入っていない。
+   */
+  useEffect(() => {
+    fetch(
+      `/api/warmup?sessionId=${encodeURIComponent(session.id)}&mode=${
+        mode === "continuous" ? "continuous" : "interval"
+      }`
+    )
+      .then((r) => r.json())
+      .then((d) => setWarmupOptions(d.options))
+      .catch(() => {
+        /* 選択肢は補助。取れなくても手で入れられる */
+      });
+  }, [session.id, mode]);
+
   const envNotes = environmentNote({
     tempC: tempC ? Number(tempC) : undefined,
     humidityPct: humidity ? Number(humidity) : undefined,
@@ -1784,6 +2126,8 @@ function ResultForm({
          */
         abortCause: cause,
         abortNote: cause === "other" ? causeNote.trim() || undefined : undefined,
+        // アップは主練習の子データ。結果と一緒に送る（別の保存口を作らない）
+        warmup,
       };
 
       /*
@@ -2314,6 +2658,17 @@ function ResultForm({
               setShoeId={setShoeId}
               shoes={shoes}
               recommendedShoeId={recommendedShoeId}
+            />
+            {/*
+              アップ（任意）。主練習の子データなので、独立した記録にはしない。
+              既定では畳んである——毎回同じことが多く、
+              常に開いておくと主練習の入力が画面の下に押し出される。
+            */}
+            <WarmupFields
+              warmup={warmup}
+              setWarmup={setWarmup}
+              options={warmupOptions}
+              shoes={shoes}
             />
           </div>
 

@@ -11,6 +11,7 @@
  * 値ごとに違うので、綴りの間違いを型で止めたい。
  */
 import type { AbortCause } from "./abortCause";
+import type { WarmupRecord } from "./warmup";
 
 // ---------------------------------------------------------------------------
 // 3-1. 選手プロフィール
@@ -433,6 +434,14 @@ export interface SessionResult {
   conditions?: string[];
   /** 履いた靴（）。製品ごとの使用距離はここから足し上げる */
   shoeId?: string;
+  /**
+   * ポイント練習前の走種目のアップ。**主練習の子データ**。
+   *
+   * カレンダーに独立したセッションとして出さない。
+   * 距離・時間・負荷・シューズの走行距離には足すが、
+   * 週間の刺激回数・カテゴリ配分・CFE・進行段階には流さない（`core/warmup.ts`）。
+   */
+  warmup?: WarmupRecord;
   skipReason?: SkipReason;
   note?: string;
   durationMin?: number;

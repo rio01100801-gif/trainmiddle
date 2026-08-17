@@ -5,18 +5,29 @@
 import type { Session, SessionResult, StrengthSession } from "./types";
 import { addDays, diffDays } from "./dates";
 import { sessionLoadEstimate } from "./rules";
+import { warmupLoad } from "./warmup";
 
 /** 補強の負荷換算: light→RPE3 / moderate→RPE5 / heavy→RPE7 相当 */
 const STRENGTH_RPE: Record<string, number> = { light: 3, moderate: 5, heavy: 7 };
 
-/** セッション負荷 = RPE × 実施時間（分） */
+/**
+ * セッション負荷 = RPE × 実施時間（分）。
+ *
+ * アップを記録してあれば、そのぶんを足す（`warmupLoad`）。
+ * **主練習のRPEでアップの時間を掛けない。** 掛けると、きつい主練習の日だけ
+ * アップの負荷が跳ね上がり、「アップの内容が変わった」と区別が付かなくなる。
+ *
+ * ここに足すのは、ACWRが**実際にやった総量**を見る指標だから。
+ * 週間の刺激回数やカテゴリ配分には足さない（あちらは回数を数えるもので、
+ * アップを1回として数えるとポイント練習が増えたことになる）。
+ */
 export function sessionLoad(
   session: Session,
   result?: SessionResult
 ): number {
   if (result) {
     const dur = result.durationMin ?? session.durationMin ?? 45;
-    return result.rpe * dur;
+    return result.rpe * dur + warmupLoad(result.warmup);
   }
   return sessionLoadEstimate(session);
 }

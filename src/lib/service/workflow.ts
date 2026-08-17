@@ -122,6 +122,16 @@ import {
   type ShoeRecommendation,
 } from "../core/shoeRecommend";
 import {
+  checkWarmup,
+  normalizeWarmup,
+  warmupAddedDistanceKm,
+  warmupAddedDurationMin,
+  warmupFromFitLaps,
+  WARMUP_TEMPLATES,
+  type WarmupRecord,
+} from "../core/warmup";
+import { warmupInsight, type WarmupInsight } from "../core/warmupInsight";
+import {
   abortCauseLabel,
   describeAbortCause,
   needsInjuryLog,
@@ -1075,8 +1085,19 @@ function processResultCore(
    * 痛みや時間で止めた場合、設定から外れていないので M-3 は反応しない。
    */
   const abortCause = normalizeAbortCause(result.abortCause);
+
+  /*
+   * アップは主練習の子データ。**画面を通さない経路でも必ずここを通す。**
+   * 復元・FIT・APIから直接来た値をそのまま保存すると、
+   * 知らない区間種別が残り、分析でそれをジョグとして数えることになる。
+   */
+  const warmup = normalizeWarmup(result.warmup);
+  const warmupProblem = checkWarmup(warmup);
+  if (warmupProblem) throw new Error(warmupProblem);
+
   result = {
     ...result,
+    warmup,
     id: existing?.id ?? result.id,
     heatFlagged: env?.isHeatFlagged ?? result.heatFlagged,
     achievement: inferred ?? result.achievement,
@@ -1705,6 +1726,12 @@ export function dashboard(repo: Store, today: string) {
       if (!r && s.status !== "completed") continue;
       distanceKm += r?.continuous?.distanceKm ?? s.distanceKm ?? 0;
       durationMin += r?.durationMin ?? s.durationMin ?? 0;
+      /*
+       * アップは主練習の一部だが、走った距離と時間としては実在する。
+       * 主練習側に既に含まれていれば0が返るので、二重には足さない。
+       */
+      distanceKm += warmupAddedDistanceKm(r?.warmup);
+      durationMin += warmupAddedDurationMin(r?.warmup);
     }
     let load = 0;
     for (let d = weekFrom; d <= weekTo; d = addDays(d, 1)) load += loads.get(d) ?? 0;
@@ -3587,6 +3614,90 @@ export function shoeUsageList(repo: Store): ShoeUsage[] {
  *   ・直近の状態（疲労・痛み）
  *   ・同じ狙いで実際に履いたときの結果
  */
+// ---------------------------------------------------------------------------
+// アップ（主練習の子データ）
+// ---------------------------------------------------------------------------
+
+export interface WarmupFitCandidate {
+  fitId: string;
+  fileName: string;
+  date?: string;
+  warmup: WarmupRecord;
+}
+
+export interface WarmupOptions {
+  /** 同じカテゴリで最後に記録したアップ。「前回と同じ」の中身 */
+  previous?: { date: string; warmup: WarmupRecord };
+  /** 固定の型。実績から作らない */
+  templates: { key: string; label: string; warmup: WarmupRecord }[];
+  /** その日のFITから拾えるアップ区間 */
+  fromFit: WarmupFitCandidate[];
+}
+
+/**
+ * 記録画面のアップ欄に出す選択肢。
+ *
+ * **毎回ゼロから入力させない**ための材料を集めるだけで、
+ * どれかを既定で選んだ状態にはしない。
+ * 既定で入れてしまうと、実際にはやっていないアップが記録に残る。
+ *
+ * `mainIsContinuous` は二重計上の判断に要る（`warmupFromFitLaps` を参照）。
+ * 画面が「いま持続走として入力しているか」を知っているので、そこから渡す。
+ */
+export function warmupOptionsFor(
+  repo: Store,
+  sessionId: string,
+  opts: { mainIsContinuous: boolean }
+): WarmupOptions {
+  const session = repo.getSession(sessionId);
+
+  /*
+   * 前回は**同じカテゴリ**から探す。
+   * ポイント練習のアップをジョグの日に持ってきても意味が無い。
+   */
+  let previous: WarmupOptions["previous"];
+  if (session) {
+    const sessionById = new Map(repo.listSessions().map((s) => [s.id, s]));
+    const candidate = trustedResults(repo)
+      .filter((r) => r.warmup && r.sessionId !== sessionId)
+      .filter((r) => sessionById.get(r.sessionId)?.category === session.category)
+      .sort((a, b) => b.date.localeCompare(a.date))[0];
+    if (candidate?.warmup) previous = { date: candidate.date, warmup: candidate.warmup };
+  }
+
+  const fromFit: WarmupFitCandidate[] = [];
+  for (const record of repo.listFitImports()) {
+    const kinds =
+      record.confirmedKinds?.length
+        ? record.confirmedKinds
+        : record.autoClassification?.laps?.map((l) => l.kind) ?? [];
+    const w = warmupFromFitLaps(record.parse?.laps ?? [], kinds, opts);
+    if (!w) continue;
+    fromFit.push({
+      fitId: record.id,
+      fileName: record.fileName,
+      date: record.parse?.activityTimestampUtc?.slice(0, 10),
+      warmup: w,
+    });
+  }
+
+  return {
+    previous,
+    templates: WARMUP_TEMPLATES.map((t) => ({ key: t.key, label: t.label, warmup: t.build() })),
+    fromFit,
+  };
+}
+
+/**
+ * アップと主練習の相性。
+ *
+ * **ここでは何も変えない。** 返すのは読むための材料だけで、
+ * 設定やアップを自動で書き換える口は用意していない。
+ */
+export function warmupAnalysis(repo: Store): WarmupInsight {
+  return warmupInsight(trustedResults(repo), repo.listSessions());
+}
+
 export function shoeAdviceFor(
   repo: Store,
   sessionId: string,

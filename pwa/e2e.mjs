@@ -6031,6 +6031,210 @@ if ((await fitRebuildCard.count()) === 0) {
   }
 }
 
+// ---- アップ（主練習の子データ） ----
+/*
+ * 見るのは6つ。
+ *   ・折りたたんであり、開くまで入力欄を出さないこと
+ *   ・詳しい欄はさらにもう一段たたんであること
+ *   ・保存され、開き直すと戻ってくること
+ *   ・カレンダーに**独立したセッションとして出ない**こと
+ *   ・距離の合計には足されること
+ *   ・書き出して復元しても残ること
+ *
+ * カレンダーの検査が一番大事。アップが独立セッションになると、
+ * 週の練習回数が増えて生成器が休養を挟み、
+ * **記録を細かく付けた週ほど練習が減る**という逆のことが起きる。
+ */
+{
+  const warmupBefore = failCount;
+
+  const wuTarget = await page.evaluate(async () => {
+    const d = await fetch("/api/sessions").then((r) => r.json());
+    const s = (d.sessions ?? [])
+      .filter((x) => x.status === "planned" && x.category === "aerobic")
+      .sort((a, b) => a.date.localeCompare(b.date))[0];
+    return s ? { id: s.id, date: s.date, name: s.name } : null;
+  });
+
+  if (!wuTarget) fail("アップ: 対象のジョグが無い");
+  else {
+    const countSessions = async () =>
+      page.evaluate(async (date) => {
+        const d = await fetch("/api/sessions").then((r) => r.json());
+        return (d.sessions ?? []).filter((x) => x.date === date).length;
+      }, wuTarget.date);
+    const weekTotals = async () =>
+      page.evaluate(
+        async (date) =>
+          (await fetch(`/api/dashboard?date=${date}`).then((r) => r.json()))?.weekTotals ?? null,
+        wuTarget.date
+      );
+
+    const sessionsBefore = await countSessions();
+    const weekBefore = await weekTotals();
+
+    await page.goto(`http://localhost:8791/#/results?date=${wuTarget.date}`);
+    await page.waitForTimeout(900);
+    await page.getByRole("button", { name: /練習結果/ }).first().click();
+    await page.waitForTimeout(500);
+    const pick = page.locator('button:has-text("有酸素")').first();
+    if ((await pick.count()) === 0) fail("アップ: 対象のジョグを選べない");
+    else {
+      await pick.click();
+      await page.waitForTimeout(500);
+    }
+    await page.getByRole("button", { name: "ジョグ・持続走", exact: true }).click();
+    await page.waitForTimeout(300);
+
+    // 1) 畳んである
+    const toggle = page.locator('[data-testid="warmup-toggle"]');
+    if ((await toggle.count()) === 0) fail("アップ: 記録画面にアップの欄が無い");
+    else {
+      if ((await page.locator('[data-testid="warmup-fields"]').count()) > 0) {
+        fail("アップ: 最初から開いている（主練習の入力が下に押し出される）");
+      }
+      await toggle.click();
+      await page.waitForTimeout(400);
+      if ((await page.locator('[data-testid="warmup-fields"]').count()) === 0) {
+        fail("アップ: 開いても入力欄が出ない");
+      }
+
+      // 2) 詳しい欄は、さらに押すまで出さない
+      if ((await page.locator('[data-testid="warmup-detail"]').count()) > 0) {
+        fail("アップ: 詳しい欄まで最初から出ている");
+      }
+
+      // 3) 型を押して入れる（毎回ゼロから入力させない）
+      const preset = page
+        .locator('[data-testid="warmup-presets"] button', { hasText: "ジョグ＋流し" })
+        .first();
+      if ((await preset.count()) === 0) fail("アップ: 型が出ていない（毎回ゼロから入力になる）");
+      else {
+        await preset.click();
+        await page.waitForTimeout(500);
+      }
+
+      await page.locator('[data-testid="warmup-detail-toggle"]').click();
+      await page.waitForTimeout(400);
+      if ((await page.locator('[data-testid="warmup-detail"]').count()) === 0) {
+        fail("アップ: 詳しい欄が開かない");
+      }
+      const legs = page.locator('[data-testid="warmup-legs"] button', { hasText: "弾む" }).first();
+      if ((await legs.count()) === 0) fail("アップ: アップ後の脚を選べない");
+      else {
+        await legs.click();
+        await page.waitForTimeout(300);
+      }
+    }
+
+    // 主練習を埋めて保存する
+    await page.getByPlaceholder("11.2").fill("10");
+    await page.getByPlaceholder("50", { exact: true }).fill("50");
+    await page.waitForTimeout(400);
+    // RPEと主観は本人にしか分からないので既定値が無い。入れないと保存が止まる
+    /*
+     * 未入力のときスライダーは真ん中を指しているので、**同じ値を入れても変化にならない**
+     * （Reactが値の変化なしと判断して onChange が走らない）。真ん中と違う値を入れる。
+     */
+    await setSlider(page.getByTestId("rpe-slider"), 7);
+    await page.waitForTimeout(300);
+    if (((await page.getByTestId("rpe-slider-value").textContent()) ?? "").trim() !== "7") {
+      fail("アップ: RPEが入らない（この先の保存が検証できない）");
+    }
+    await page.getByRole("button", { name: "主観 普通" }).click();
+    await page.waitForTimeout(300);
+    await page.getByRole("button", { name: /登録して補正を実行/ }).click();
+    await page.waitForTimeout(600);
+    await page.evaluate(() => { window.__posts=[]; const of=window.fetch; window.fetch=async(u,o)=>{ try{ if(String(u).includes("/api/results") && o && o.method==="POST"){ window.__posts.push(String(o.body).slice(0,400)); } }catch(e){} return of(u,o); }; });
+    // 保存が止まったら理由を出す（alertはPlaywrightが黙って閉じるので拾っておく）
+    let alertMsg = "";
+    page.on("dialog", async (d) => { alertMsg = d.message(); await d.dismiss().catch(() => {}); });
+    const runBtn = page.getByRole("button", { name: "実行する" }).first();
+    await runBtn.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
+    await runBtn.click();
+    await page.waitForTimeout(2000);
+    if (alertMsg) fail("アップ: 保存が止まった（" + alertMsg + "）");
+
+    // 4) 保存されているか
+    /*
+     * 画面がどのセッションを開いたかは決め打ちしない（同じ日に2本あることがある）。
+     * **アップが付いた記録**から辿って、そのidで以降を確かめる。
+     */
+    const savedRef = await page.evaluate(async (date) => {
+      const d = await fetch("/api/results").then((r) => r.json());
+      const r = (d.results ?? []).find((x) => x.date === date && x.warmup);
+      return r ? { sessionId: r.sessionId, warmup: r.warmup } : null;
+    }, wuTarget.date);
+    const stored = savedRef?.warmup ?? null;
+
+    if (!stored) fail("アップ: 保存されていない");
+    else {
+      if (stored.legs !== "bouncy") fail(`アップ: 脚が保存されていない（${stored.legs}）`);
+      if (!(stored.segments ?? []).some((x) => x.kind === "strides")) {
+        fail("アップ: 区間が保存されていない");
+      }
+
+      // 5) カレンダーに独立したセッションとして出ない
+      const sessionsAfter = await countSessions();
+      if (sessionsAfter !== sessionsBefore) {
+        fail(
+          `アップ: カレンダーのセッションが増えた（${sessionsBefore} → ${sessionsAfter}）。週の練習回数が狂う`
+        );
+      }
+
+      // 6) 距離の合計には足される
+      const weekAfter = await weekTotals();
+      if (weekBefore && weekAfter) {
+        const grew = weekAfter.distanceKm - weekBefore.distanceKm;
+        // ジョグ10km ＋ アップ3.4km。アップぶんが乗っていなければ10のまま
+        if (!(grew > 10.5)) {
+          fail(
+            `アップ: 週間距離に足されていない（+${grew}km。主練習だけなら+10km）`
+          );
+        }
+      }
+
+      // 7) 開き直すと戻ってくる
+      await page.goto(`http://localhost:8791/#/results?date=${wuTarget.date}`);
+      await page.waitForTimeout(900);
+      await page.getByRole("button", { name: /練習結果/ }).first().click();
+      await page.waitForTimeout(500);
+      const pick2 = page.locator('button:has-text("有酸素")').first();
+      if (await pick2.count()) {
+        await pick2.click();
+        await page.waitForTimeout(700);
+      }
+      const summaryText =
+        (await page.locator('[data-testid="warmup-toggle"]').first().textContent()) ?? "";
+      if (summaryText.includes("未記録")) {
+        fail("アップ: 開き直すと消えている（入れ直しになる）");
+      }
+      if (!summaryText.includes("流し")) {
+        fail(`アップ: 折りたたみの1行に中身が出ていない（${summaryText}）`);
+      }
+
+      // 8) 書き出して復元しても残る
+      const survived = await page.evaluate(async (id) => {
+        const file = await fetch("/api/backup?download=1").then((r) => r.json());
+        await fetch("/api/backup", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ file, mode: "merge" }),
+        }).then((r) => r.json());
+        const d = await fetch("/api/results").then((r) => r.json());
+        const r = (d.results ?? []).find((x) => x.sessionId === id);
+        return r?.warmup?.legs ?? null;
+      }, savedRef.sessionId);
+      if (survived !== "bouncy") fail(`アップ: 書き出して復元すると消える（${survived}）`);
+    }
+  }
+
+  if (failCount === warmupBefore) {
+    step("アップOK（畳んである／保存され戻る／独立セッションにならない／合計に足す／復元で残る）");
+  }
+}
+
 if (errors.length) {
   console.log("JS ERRORS:", errors.slice(0, 5));
   process.exitCode = 1;
