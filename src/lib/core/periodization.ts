@@ -18,7 +18,8 @@ import type {
 } from "./types";
 import { addDays, diffDays, fmtPacePerKm, fmtTime, weekStart } from "./dates";
 import { guardedBaseTime } from "./cfe";
-import { AerobicProfile, specificPace } from "./pace";
+import {
+  neuralPace, AerobicProfile, specificPace } from "./pace";
 import { rationaleFor } from "./rationale";
 import { buildSessionSpec, type TemplateHistoryEntry } from "./progression";
 import { isHighLoadCategory, isSpecificCategory } from "./trainingClassification";
@@ -80,7 +81,15 @@ export function phaseForDate(date: string, raceDate: string): Phase {
 interface DayTemplate {
   category: SessionCategory;
   name: string;
-  buildPrescription: (grpBase: number, aerobic: AerobicProfile) => {
+  /**
+   * @param pb400mSec 400mPB（秒）。神経系の設定タイムの基準。
+   *   無ければ神経系だけ目標800m基準へ落とす（推定として印を付ける）。
+   */
+  buildPrescription: (
+    grpBase: number,
+    aerobic: AerobicProfile,
+    pb400mSec?: number
+  ) => {
     prescription: string;
     targetPaces: TargetPace[];
     distanceKm?: number;
@@ -177,9 +186,14 @@ const hillSprints = (reps: number): DayTemplate => ({
 const strides = (reps: number, dist = 150): DayTemplate => ({
   category: "neural",
   name: "流し",
-  buildPrescription: (g) => ({
+  /*
+   * 流しの基準は**400mPB**。目標800mではない（`neuralPace` のコメント参照）。
+   * 目標基準だと 150m 18秒台＝400mレースペースそのものになり、
+   * 「流し」として全力を処方していた。
+   */
+  buildPrescription: (g, _a, pb400) => ({
     prescription: `${dist}m流し × ${reps}本（完全休息）`,
-    targetPaces: [specificPace(g, "neural", dist)],
+    targetPaces: [neuralPace(dist, "stride", { pb400mSec: pb400, fallbackBase800Sec: g })],
     durationMin: 15,
     distanceKm: 1,
   }),
@@ -444,7 +458,8 @@ function weekTemplate(
         strides(4, 120),
         off(),
         jog(20),
-        strides(3, 100),
+        // レース直前は距離を詰める（動きを作るだけで、疲労を残さない）
+        strides(3, 80),
       ];
   }
 }
@@ -1041,9 +1056,11 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
           tpl = {
             category: "neural",
             name: "刺激入れ（流し）",
-            buildPrescription: (g) => ({
+            buildPrescription: (g, _a, pb400) => ({
               prescription: "100m流し × 3本（完全休息）",
-              targetPaces: [specificPace(g, "neural", 100)],
+              targetPaces: [
+                neuralPace(100, "stride", { pb400mSec: pb400, fallbackBase800Sec: g }),
+              ],
               durationMin: 10,
               distanceKm: 1,
             }),
@@ -1220,7 +1237,8 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
             durationMin: 60,
             paceSecPerKm: undefined,
           }
-        : buildFromProgression(tpl, date) ?? tpl.buildPrescription(grpBase, aerobicProfile);
+        : buildFromProgression(tpl, date) ??
+          tpl.buildPrescription(grpBase, aerobicProfile, input.athlete.pb400mSec);
 
       // RULE-02対応: 高乳酸の翌日に60分超のロングランを置く場合、
       // ペースを通常ジョグ +20〜30秒/km 遅くする（生成段階で織り込む）
@@ -1362,7 +1380,9 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
         const amBuilt: ReturnType<DayTemplate["buildPrescription"]> & {
           name?: string;
           generation?: Session["generation"];
-        } = buildFromProgression(amTpl, date) ?? amTpl.buildPrescription(grpBase, aerobicProfile);
+        } =
+          buildFromProgression(amTpl, date) ??
+          amTpl.buildPrescription(grpBase, aerobicProfile, input.athlete.pb400mSec);
         sessions.push({
           id: generatedSessionId(date, subTimeOfDay),
           date,
@@ -1394,7 +1414,11 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
        */
       if (!custom && tpl.combinedJogMin && !amPlaced) {
         const jogTpl = jog(tpl.combinedJogMin);
-        const jogBuilt = jogTpl.buildPrescription(grpBase, aerobicProfile);
+        const jogBuilt = jogTpl.buildPrescription(
+          grpBase,
+          aerobicProfile,
+          input.athlete.pb400mSec
+        );
         const jogTimeOfDay: Session["timeOfDay"] = timeOfDay === "am" ? "pm" : "am";
         sessions.push({
           id: generatedSessionId(date, jogTimeOfDay),

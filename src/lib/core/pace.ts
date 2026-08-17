@@ -62,6 +62,66 @@ export function specificPace(
 }
 
 // ---------------------------------------------------------------------------
+// 神経系（400mPBから算出）
+// ---------------------------------------------------------------------------
+
+/**
+ * 神経系の用途。同じ「神経系」でも、流しとレペでは狙う速度が違う。
+ *
+ * stride: 80〜150m。動きを作る。**全力ではない**
+ * rep:    150〜300m。速度そのものを出す。完全休息で本数は少なく
+ */
+export type NeuralPurpose = "stride" | "rep";
+
+/**
+ * 用途ごとの、400mレースペースに対する比。
+ * 1.0 より大きい = 400mペースより遅い。
+ */
+const NEURAL_RATIOS: Record<NeuralPurpose, { fast: number; slow: number }> = {
+  // 流しは400mペースより 5〜12% 遅い。速すぎると「流し」ではなくなる
+  stride: { fast: 1.05, slow: 1.12 },
+  // レペは400mペース前後（2%速い〜5%遅い）。完全休息で1本ずつ出し切る
+  rep: { fast: 0.98, slow: 1.05 },
+};
+
+/**
+ * 神経系の設定タイム。
+ *
+ * **基準は400mPB。目標800mではない。**
+ *
+ * 以前は目標800m（GRP）の 0.88〜0.92 倍で出していた。これには2つの問題があった。
+ *
+ *   1. **流しが全力になっていた。**
+ *      目標1:48.9 で 150m 18.0〜18.8秒。400mPB 49.0 の150m通過が18.4秒なので、
+ *      400mレースペースそのものを「流し」として処方していた。
+ *
+ *   2. **目標を速くすると流しも速くなる**という逆転があった。
+ *      流しは今の走力に紐づくもので、目標に紐づくものではない。
+ *      目標を1:47に書き換えただけで流しが速くなるのは、根拠の無い変化。
+ *
+ * 400mPBが無いときだけ、これまでどおり目標800m基準へ落とす。
+ * そのときは `isEstimated` を立てて、推定であることを画面に出す。
+ */
+export function neuralPace(
+  distanceM: number,
+  purpose: NeuralPurpose,
+  opts: { pb400mSec?: number; fallbackBase800Sec: number }
+): TargetPace {
+  const pb = opts.pb400mSec;
+  if (pb === undefined || pb <= 0) {
+    // 400mPBが無い。これまでどおり目標800m基準（精度が出ないことを明示する）
+    return { ...specificPace(opts.fallbackBase800Sec, "neural", distanceM), isEstimated: true };
+  }
+  const secPerM = pb / 400;
+  const r = NEURAL_RATIOS[purpose];
+  return {
+    distanceM,
+    targetSecFast: distanceM * secPerM * r.fast,
+    targetSecSlow: distanceM * secPerM * r.slow,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // 有酸素系（実測から算出）
 // ---------------------------------------------------------------------------
 
