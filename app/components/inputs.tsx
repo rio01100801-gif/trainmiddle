@@ -10,6 +10,7 @@ import {
 } from "@/lib/core/rpe";
 import { CONDITION_TAGS } from "@/lib/core/conditions";
 import { ABORT_CAUSES, describeAbortCause, type AbortCause } from "@/lib/core/abortCause";
+import { stepperNext } from "@/lib/core/inputFormat";
 
 /**
  * 入力の部品。
@@ -249,7 +250,7 @@ export function Stepper({
   const bump = (delta: number) => {
     const n = Number(value);
     const base = Number.isFinite(n) && value.trim() !== "" ? n : min;
-    onChange(String(Math.min(max, Math.max(min, base + delta))));
+    onChange(String(stepperNext(base, delta, min, max, step)));
   };
   return (
     <div className="w-full">
@@ -279,6 +280,12 @@ export function Stepper({
           style={{ minWidth: 56 }}
           value={value}
           inputMode={inputMode}
+          /*
+            小数を入れる欄では `pattern` も添える。
+            iOSは `inputMode="decimal"` だけだと**小数点キーの無いテンキー**を
+            出すことがあり、`2.2` を手で打てなかった（実際に指摘された）。
+          */
+          pattern={inputMode === "decimal" ? "[0-9]*[.,]?[0-9]*" : undefined}
           aria-label={label}
           onChange={(e) => onChange(e.target.value)}
           data-stepper-input="1"

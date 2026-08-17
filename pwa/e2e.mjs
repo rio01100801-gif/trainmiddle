@@ -6288,7 +6288,7 @@ if ((await fitRebuildCard.count()) === 0) {
       }
       const summaryText =
         (await page.locator('[data-testid="warmup-toggle"]').first().textContent()) ?? "";
-      if (summaryText.includes("未記録")) {
+      if (summaryText.includes("タップして入力")) {
         fail("アップ: 開き直すと消えている（入れ直しになる）");
       }
       if (!summaryText.includes("流し")) {
@@ -6752,6 +6752,138 @@ if ((await fitRebuildCard.count()) === 0) {
 
   if (failCount === purposeBefore) {
     step("靴の用途OK（複数選べる・保存され戻る・「決めていない」は単独）");
+  }
+}
+
+// ---- アップ: ペースから合計を計算する ----
+/*
+ * 指摘は3つ。
+ *   ・「アップ（任意）」が押せるのか分からない
+ *   ・合計距離が 2.199999999 になる
+ *   ・合計距離に小数点を打てない／区間のペースを入れられない
+ *
+ * ここで見るのは4つ。
+ *   ・押せる形（枠と開閉のしるし）になっていること
+ *   ・−を押しても桁が増えないこと（実寸の文字列で見る）
+ *   ・小数を打てる欄になっていること（inputMode と pattern）
+ *   ・ペースを入れると**合計時間が計算されて入る**こと
+ */
+{
+  const paceBefore = failCount;
+
+  const t = await page.evaluate(async () => {
+    const d = await fetch("/api/sessions").then((r) => r.json());
+    const s = (d.sessions ?? [])
+      .filter((x) => x.status === "planned" && x.category === "aerobic")
+      .sort((a, b) => a.date.localeCompare(b.date))[0];
+    return s ? { date: s.date } : null;
+  });
+
+  if (!t) fail("アップのペース: 対象のジョグが無い");
+  else {
+    await page.goto(`http://localhost:8791/#/results?date=${t.date}`);
+    await page.waitForTimeout(900);
+    await page.getByRole("button", { name: /練習結果/ }).first().click();
+    await page.waitForTimeout(500);
+    const pick = page.locator('button:has-text("有酸素")').first();
+    if (await pick.count()) {
+      await pick.click();
+      await page.waitForTimeout(500);
+    }
+    await page.getByRole("button", { name: "ジョグ・持続走", exact: true }).click();
+    await page.waitForTimeout(300);
+
+    const toggle = page.locator('[data-testid="warmup-toggle"]').first();
+    if ((await toggle.count()) === 0) fail("アップのペース: アップの欄が無い");
+    else {
+      // 1) 押せる形になっている（枠がある・開閉のしるしがある）
+      const look = await toggle.evaluate((el) => {
+        const cs = window.getComputedStyle(el);
+        return {
+          hasBorder: cs.borderTopWidth !== "0px",
+          expanded: el.getAttribute("aria-expanded"),
+          text: (el.textContent || "").trim(),
+        };
+      });
+      if (!look.hasBorder) fail("アップのペース: 押せる面（枠）が無い");
+      if (look.expanded !== "false") fail("アップのペース: 開閉の状態が読めない");
+      if (!/[▸▾]/.test(look.text)) fail("アップのペース: 開閉のしるしが無い");
+
+      await toggle.click();
+      await page.waitForTimeout(400);
+
+      // 型を入れて区間を作る
+      await page
+        .locator('[data-testid="warmup-presets"] button', { hasText: "ジョグ＋流し" })
+        .first()
+        .click();
+      await page.waitForTimeout(500);
+
+      /*
+       * 2) ペースを入れると合計時間が計算される。
+       *
+       * **桁の検査より先にやる。** 合計を手で触ると
+       * 「手で入れた合計を使う」状態に切り替わる（仕様）ので、
+       * 先に − を押してしまうと計算されなくなり、
+       * **実装が正しくても落ちる検査**になる（実際に一度これで落ちた）。
+       */
+      const pace0 = page.locator('[data-testid="warmup-pace-0"]');
+      if ((await pace0.count()) === 0) fail("アップのペース: ペースの欄が無い");
+      else {
+        await pace0.fill("5:00");
+        await page.waitForTimeout(600);
+        const pace1 = page.locator('[data-testid="warmup-pace-1"]');
+        if (await pace1.count()) {
+          await pace1.fill("3:20");
+          await page.waitForTimeout(600);
+        }
+        const timeInput = page.getByRole("textbox", { name: "合計時間" }).first();
+        const mins = Number(await timeInput.inputValue());
+        /*
+         * ジョグ3km@5:00 = 15分、流し100m×4=0.4km@3:20 = 1.3分 → 16.3分。
+         * 計算されていなければ型の既定（25分）のまま。
+         */
+        if (!(mins > 15 && mins < 18)) {
+          fail(`アップのペース: ペースから合計時間が計算されていない（${mins}分）`);
+        }
+        const body = (await page.textContent("body")) ?? "";
+        if (!body.includes("区間から計算")) {
+          fail("アップのペース: 計算で入ったことが画面に出ていない");
+        }
+      }
+
+      // 3) 合計距離の欄。小数を打てること
+      const distInput = page.getByRole("textbox", { name: "合計距離" }).first();
+      if ((await distInput.count()) === 0) fail("アップのペース: 合計距離の欄が無い");
+      else {
+        if ((await distInput.getAttribute("inputmode")) !== "decimal") {
+          fail("アップのペース: 合計距離が小数を打てる欄になっていない");
+        }
+        if (!(await distInput.getAttribute("pattern"))) {
+          fail("アップのペース: 小数点キーが出る指定（pattern）が無い");
+        }
+
+        // 4) −を押しても桁が増えない
+        const minus = page.getByRole("button", { name: /合計距離 を .* 減らす/ }).first();
+        for (let i = 0; i < 4; i++) {
+          await minus.click();
+          await page.waitForTimeout(120);
+        }
+        const shown = await distInput.inputValue();
+        if (shown.length > 5) {
+          fail(`アップのペース: −を押すと桁が増える（${shown}）`);
+        }
+        // 手で触ったら計算をやめる（仕様）ことも見る
+        const afterManual = (await page.textContent("body")) ?? "";
+        if (!afterManual.includes("手で入れた合計")) {
+          fail("アップのペース: 手で直しても計算が続いている（実測が書き換わる）");
+        }
+      }
+    }
+  }
+
+  if (failCount === paceBefore) {
+    step("アップのペースOK（押せる形・桁が増えない・小数が打てる・ペースから時間を計算）");
   }
 }
 

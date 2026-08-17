@@ -89,6 +89,16 @@ export interface WarmupSegment {
   restSec?: number;
   /** レストをジョグの距離で取った場合（m） */
   restDistanceM?: number;
+  /**
+   * その区間のペース（秒/km）。
+   *
+   * 距離と本数だけだと**合計時間を手で計算して入れる**ことになる。
+   * ペースが分かれば時間は出せるので、入れたぶんだけ計算に使う。
+   *
+   * 入っていない区間は時間に寄与しない。**推測で埋めない**——
+   * 「だいたい5分/km」で埋めると、実際より速い/遅い時間が合計に混ざる。
+   */
+  paceSecPerKm?: number;
   note?: string;
 }
 
@@ -141,6 +151,55 @@ export function segmentDistanceKm(seg: WarmupSegment): number {
   if (seg.distanceM === undefined) return 0;
   const reps = seg.reps ?? 1;
   return (seg.distanceM * reps) / 1000;
+}
+
+/**
+ * 区間1つぶんの時間（秒）。
+ *
+ * 距離とペースが両方あるときだけ出す。片方でも欠けたら 0
+ * （**分からないものを0分として合計に混ぜない**）。
+ * レストは含めない——アップのレストは歩きや立ち止まりで、
+ * 走った時間として数えるものではない。
+ */
+export function segmentDurationSec(seg: WarmupSegment): number {
+  const km = segmentDistanceKm(seg);
+  if (km <= 0 || seg.paceSecPerKm === undefined || seg.paceSecPerKm <= 0) return 0;
+  return km * seg.paceSecPerKm;
+}
+
+export interface WarmupTotals {
+  distanceKm: number;
+  durationMin: number;
+  /** 時間を出せなかった区間の数。**出せなかったことを黙って隠さない** */
+  missingPace: number;
+}
+
+/**
+ * 区間から合計を出す。
+ *
+ * 画面はこれを合計欄に入れる。**手で直した合計は上書きしない**のは画面側の責任で、
+ * ここは「区間から計算するとこうなる」だけを返す。
+ *
+ * ペースの無い区間があれば missingPace に数える。
+ * 合計時間が短く出ているのに理由が分からない状態を作らないため。
+ */
+export function warmupTotalsFromSegments(segments: WarmupSegment[]): WarmupTotals {
+  let km = 0;
+  let sec = 0;
+  let missingPace = 0;
+  for (const seg of segments) {
+    const segKm = segmentDistanceKm(seg);
+    km += segKm;
+    const segSec = segmentDurationSec(seg);
+    if (segSec > 0) sec += segSec;
+    else if (segKm > 0) missingPace += 1;
+  }
+  return {
+    // 桁を増やさない（0.1km・0.1分まで）
+    distanceKm: Math.round(km * 10) / 10,
+    durationMin: Math.round((sec / 60) * 10) / 10,
+    missingPace,
+  };
 }
 
 /**
@@ -298,6 +357,7 @@ export function normalizeWarmup(x: unknown): WarmupRecord | undefined {
         timesSec: times && times.length > 0 ? times : undefined,
         restSec: num(s.restSec),
         restDistanceM: num(s.restDistanceM),
+        paceSecPerKm: num(s.paceSecPerKm),
         note: typeof s.note === "string" && s.note.trim() ? s.note.trim() : undefined,
       });
     }

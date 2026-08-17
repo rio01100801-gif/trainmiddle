@@ -17,7 +17,12 @@ import {
 import { apiRequest } from "../components/api-client";
 import { localToday } from "@/lib/core/dates";
 import { useQueryParam } from "../components/route-query";
-import { completeRunTriple, formatTimeInput } from "@/lib/core/inputFormat";
+import {
+  completeRunTriple,
+  fmtPaceSecPerKm,
+  formatTimeInput,
+  parsePaceToSecPerKm,
+} from "@/lib/core/inputFormat";
 import { parseRest } from "@/lib/core/bulkImport";
 import { avgPaceSecPerKm, buildRepResults, REST_LABELS } from "@/lib/core/workoutLog";
 import { evaluateEnvironment, environmentNote, WIND_LABELS } from "@/lib/core/environment";
@@ -66,6 +71,7 @@ import {
   WARMUP_SEGMENT_LABELS,
   WARMUP_SOURCE_LABELS,
   summarizeWarmup,
+  warmupTotalsFromSegments,
   type WarmupBreathing,
   type WarmupLegs,
   type WarmupRecord,
@@ -1395,8 +1401,51 @@ function WarmupFields({
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState(false);
 
+  /*
+   * 合計を手で直したか。
+   *
+   * **手で入れた値を計算で上書きしない。** 区間を足しただけで
+   * 本人が測った合計が書き換わると、どちらが実測なのか分からなくなる。
+   * 区間から計算して入れたときだけ、次も計算で更新する。
+   */
+  const [totalsAuto, setTotalsAuto] = useState(true);
+  /*
+   * ペースは打っている途中が数値にならない（"4:" など）。
+   * 打った文字をそのまま持っておかないと、コロンを打った瞬間に消える。
+   */
+  const [paceDrafts, setPaceDrafts] = useState<Record<number, string>>({});
+
   const w: WarmupRecord = warmup ?? { segments: [], source: "manual" };
   const patch = (over: Partial<WarmupRecord>) => setWarmup({ ...w, ...over });
+
+  /**
+   * 区間を変えたときの更新。
+   *
+   * 区間から合計を出して入れる（totalsAuto のときだけ）。
+   * 距離とペースが分かっていれば時間まで出るので、
+   * **合計時間を手で計算して入れる必要がなくなる**。
+   */
+  const patchSegments = (segments: WarmupRecord["segments"]) => {
+    if (!totalsAuto) {
+      setWarmup({ ...w, segments });
+      return;
+    }
+    const t = warmupTotalsFromSegments(segments);
+    setWarmup({
+      ...w,
+      segments,
+      totalDistanceKm: t.distanceKm > 0 ? t.distanceKm : undefined,
+      totalDurationMin: t.durationMin > 0 ? t.durationMin : undefined,
+    });
+  };
+
+  /** 合計を手で直したら、そこから先は計算で触らない */
+  const patchTotal = (over: Partial<WarmupRecord>) => {
+    setTotalsAuto(false);
+    patch(over);
+  };
+
+  const segTotals = warmupTotalsFromSegments(w.segments);
   const numOrUndef = (v: string) => {
     const t = v.trim();
     if (!t) return undefined;
@@ -1408,18 +1457,41 @@ function WarmupFields({
 
   return (
     <div className="border-t pt-3 mt-3" style={{ borderColor: "var(--border)" }}>
+      {/*
+        押せる場所だと分かる形にする（forge-v110）。
+        以前は文字が並んでいるだけで、**タップできるのかどうか分からなかった**
+        （実際に指摘された）。枠と開閉のしるしを付け、押せる面を見せる。
+      */}
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between gap-2 min-h-[44px] text-left"
+        aria-expanded={open}
+        className="w-full flex items-center gap-2 min-h-[48px] text-left rounded-lg border px-3 py-2"
+        style={{
+          borderColor: open ? "var(--forge)" : "var(--border-2)",
+          background: "var(--surface-2)",
+        }}
         data-testid="warmup-toggle"
       >
-        <span className="text-[13px] font-semibold">アップ（任意）</span>
-        <span className="text-[11.5px] flex-1 text-right" style={{ color: "var(--text-3)" }}>
-          {summary ?? "未記録"}
+        <span
+          aria-hidden
+          className="text-[13px] flex-shrink-0"
+          style={{ color: "var(--forge)" }}
+        >
+          {open ? "▾" : "▸"}
         </span>
-        <span className="text-[11px]" style={{ color: "var(--text-3)" }}>
-          {open ? "閉じる" : "開く"}
+        <span className="text-[13px] font-semibold flex-shrink-0">アップ</span>
+        <span
+          className="text-[10px] px-1.5 py-0.5 rounded flex-shrink-0"
+          style={{ background: "var(--surface-3)", color: "var(--text-3)" }}
+        >
+          任意
+        </span>
+        <span
+          className="text-[11.5px] flex-1 text-right truncate min-w-0"
+          style={{ color: summary ? "var(--text-2)" : "var(--text-3)" }}
+        >
+          {summary ?? "タップして入力"}
         </span>
       </button>
 
@@ -1484,15 +1556,52 @@ function WarmupFields({
               inputMode="decimal"
               step={0.1}
               value={str(w.totalDistanceKm)}
-              onChange={(v) => patch({ totalDistanceKm: numOrUndef(v) })}
+              onChange={(v) => patchTotal({ totalDistanceKm: numOrUndef(v) })}
             />
             <Stepper
               label="合計時間"
               unit="分"
+              inputMode="decimal"
+              step={0.1}
               value={str(w.totalDurationMin)}
-              onChange={(v) => patch({ totalDurationMin: numOrUndef(v) })}
+              onChange={(v) => patchTotal({ totalDurationMin: numOrUndef(v) })}
             />
           </div>
+
+          {/*
+            計算で入ったのか手で入れたのかを出す。
+            **黙って数値を書き換えない**——あとで合わないときに、
+            どちらの値を疑えばいいのか分かるようにしておく。
+          */}
+          {w.segments.length > 0 ? (
+            <div className="flex items-center justify-between gap-2 -mt-1">
+              <span className="text-[11px]" style={{ color: "var(--text-3)" }}>
+                {totalsAuto
+                  ? segTotals.missingPace > 0
+                    ? `区間から計算（ペース未入力が${segTotals.missingPace}区間あるので時間は短めです）`
+                    : "区間から計算しています"
+                  : "手で入れた合計を使っています"}
+              </span>
+              {!totalsAuto ? (
+                <button
+                  type="button"
+                  className="text-[11px] min-h-[36px] px-2 flex-shrink-0"
+                  style={{ color: "var(--forge)" }}
+                  onClick={() => {
+                    setTotalsAuto(true);
+                    const t = warmupTotalsFromSegments(w.segments);
+                    patch({
+                      totalDistanceKm: t.distanceKm > 0 ? t.distanceKm : undefined,
+                      totalDurationMin: t.durationMin > 0 ? t.durationMin : undefined,
+                    });
+                  }}
+                  data-testid="warmup-recalc"
+                >
+                  区間から計算し直す
+                </button>
+              ) : null}
+            </div>
+          ) : null}
 
           {/* 区間。押した種別だけ足す。最初から全部の欄を出さない */}
           <div>
@@ -1506,7 +1615,7 @@ function WarmupFields({
                   type="button"
                   className="text-[11.5px] rounded-lg border px-2.5 min-h-[36px]"
                   style={{ borderColor: "var(--border-2)" }}
-                  onClick={() => patch({ segments: [...w.segments, { kind: k }] })}
+                  onClick={() => patchSegments([...w.segments, { kind: k }])}
                 >
                   ＋{WARMUP_SEGMENT_LABELS[k]}
                 </button>
@@ -1526,9 +1635,7 @@ function WarmupFields({
                     type="button"
                     className="text-[11px] min-h-[36px] px-2"
                     style={{ color: "var(--text-3)" }}
-                    onClick={() =>
-                      patch({ segments: w.segments.filter((_, j) => j !== i) })
-                    }
+                    onClick={() => patchSegments(w.segments.filter((_, j) => j !== i))}
                   >
                     削除
                   </button>
@@ -1540,25 +1647,50 @@ function WarmupFields({
                     step={50}
                     value={str(seg.distanceM)}
                     onChange={(v) =>
-                      patch({
-                        segments: w.segments.map((s, j) =>
+                      patchSegments(
+                        w.segments.map((s, j) =>
                           j === i ? { ...s, distanceM: numOrUndef(v) } : s
-                        ),
-                      })
+                        )
+                      )
                     }
                   />
                   <Stepper
                     label="本数"
                     value={str(seg.reps)}
                     onChange={(v) =>
-                      patch({
-                        segments: w.segments.map((s, j) =>
-                          j === i ? { ...s, reps: numOrUndef(v) } : s
-                        ),
-                      })
+                      patchSegments(
+                        w.segments.map((s, j) => (j === i ? { ...s, reps: numOrUndef(v) } : s))
+                      )
                     }
                   />
                 </div>
+                {/*
+                  ペース。入れると合計時間が計算される。
+                  「4:30」でも「270」でも読む（`parsePaceToSecPerKm`）。
+                  **入れなくてよい**——入っていない区間は時間に入らないだけ。
+                */}
+                <label className="block mt-2">
+                  <span className="metric-label block mb-1">
+                    ペース<span style={{ color: "var(--text-3)" }}>（分:秒/km・任意）</span>
+                  </span>
+                  <input
+                    className="w-full min-h-[44px]"
+                    inputMode="numeric"
+                    placeholder="例 4:30"
+                    aria-label={`${WARMUP_SEGMENT_LABELS[seg.kind]}のペース`}
+                    value={paceDrafts[i] ?? (seg.paceSecPerKm !== undefined ? fmtPaceSecPerKm(seg.paceSecPerKm) : "")}
+                    onChange={(e) => {
+                      const text = e.target.value;
+                      setPaceDrafts((prev) => ({ ...prev, [i]: text }));
+                      patchSegments(
+                        w.segments.map((s, j) =>
+                          j === i ? { ...s, paceSecPerKm: parsePaceToSecPerKm(text) } : s
+                        )
+                      );
+                    }}
+                    data-testid={`warmup-pace-${i}`}
+                  />
+                </label>
               </div>
             ))}
           </div>

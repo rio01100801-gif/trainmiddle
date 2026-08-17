@@ -188,3 +188,27 @@ export function completeRunTriple(input: RunTriple): RunTripleResult {
   }
   return { ...input };
 }
+
+/**
+ * ステッパーの ＋／− を押したあとの値。
+ *
+ * **刻みの桁で丸める。** 二進小数のせいで `2.3 - 0.1` が
+ * `2.1999999999999997` になり、入力欄に `2.19999` と出ていた（実際に指摘された）。
+ *
+ * **表示だけ丸めない。** 表示を丸めても保存される値は端数のままで、
+ * 画面の 2.2 と保存された 2.1999… が食い違う。値そのものを丸める。
+ */
+export function stepperNext(
+  base: number,
+  delta: number,
+  min: number,
+  max: number,
+  step: number
+): number {
+  // 刻みの小数桁。0.1 → 1桁、1 → 0桁、50 → 0桁
+  const s = String(step);
+  const dot = s.indexOf(".");
+  const digits = dot < 0 ? 0 : s.length - dot - 1;
+  const next = Math.min(max, Math.max(min, base + delta));
+  return Number(next.toFixed(digits));
+}

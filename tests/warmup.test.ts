@@ -24,6 +24,7 @@ import {
   warmupDurationMin,
   warmupLoad,
   warmupFromFitLaps,
+  warmupTotalsFromSegments,
   WARMUP_TEMPLATES,
   type WarmupRecord,
 } from "@/lib/core/warmup";
@@ -374,5 +375,110 @@ describe("FITのアップ区間から組み立てる", () => {
       { mainIsContinuous: false }
     );
     expect(w?.totalDurationMin).toBeCloseTo(10);
+  });
+});
+
+describe("区間から合計を出す", () => {
+  /*
+   * 距離と本数だけだと、合計時間を手で計算して入れることになる。
+   * ペースを入れれば時間は出せるので、入れたぶんだけ計算に使う。
+   *
+   * **入っていない区間は時間に寄与しない。** 「だいたい5分/km」で埋めると、
+   * 実際より速い/遅い時間が合計に混ざる。
+   */
+  it("距離とペースから時間が出る", () => {
+    // 3km を 5:00/km → 15分
+    const out = warmupTotalsFromSegments([
+      { kind: "easy_jog", distanceM: 3000, paceSecPerKm: 300 },
+    ]);
+    expect(out.distanceKm).toBeCloseTo(3);
+    expect(out.durationMin).toBeCloseTo(15);
+    expect(out.missingPace).toBe(0);
+  });
+
+  it("本数ぶん掛ける", () => {
+    // 100m×4 = 0.4km を 3:20/km(200秒) → 80秒 = 1.3分
+    const out = warmupTotalsFromSegments([
+      { kind: "strides", distanceM: 100, reps: 4, paceSecPerKm: 200 },
+    ]);
+    expect(out.distanceKm).toBeCloseTo(0.4);
+    expect(out.durationMin).toBeCloseTo(1.3);
+  });
+
+  it("複数の区間を足し上げる", () => {
+    const out = warmupTotalsFromSegments([
+      { kind: "easy_jog", distanceM: 3000, paceSecPerKm: 300 },
+      { kind: "strides", distanceM: 100, reps: 4, paceSecPerKm: 200 },
+    ]);
+    expect(out.distanceKm).toBeCloseTo(3.4);
+    expect(out.durationMin).toBeCloseTo(16.3);
+  });
+
+  it("ペースが無い区間は時間に入れず、数えて出す", () => {
+    const out = warmupTotalsFromSegments([
+      { kind: "easy_jog", distanceM: 3000, paceSecPerKm: 300 },
+      { kind: "strides", distanceM: 100, reps: 4 },
+    ]);
+    // 距離は両方入る
+    expect(out.distanceKm).toBeCloseTo(3.4);
+    // 時間はジョグのぶんだけ
+    expect(out.durationMin).toBeCloseTo(15);
+    // 出せなかったことを隠さない
+    expect(out.missingPace).toBe(1);
+  });
+
+  it("距離が無い区間は数にも入れない（何も分からない区間）", () => {
+    const out = warmupTotalsFromSegments([{ kind: "easy_jog" }]);
+    expect(out.distanceKm).toBe(0);
+    expect(out.durationMin).toBe(0);
+    expect(out.missingPace).toBe(0);
+  });
+
+  it("区間が無ければ全部0", () => {
+    expect(warmupTotalsFromSegments([])).toEqual({
+      distanceKm: 0,
+      durationMin: 0,
+      missingPace: 0,
+    });
+  });
+
+  it("桁が増えない（0.1km・0.1分まで）", () => {
+    const out = warmupTotalsFromSegments([
+      { kind: "easy_jog", distanceM: 2600, paceSecPerKm: 307 },
+    ]);
+    expect(String(out.distanceKm).length).toBeLessThan(6);
+    expect(String(out.durationMin).length).toBeLessThan(6);
+  });
+
+  it("ペースが0以下なら時間を出さない（0秒/kmは成立しない）", () => {
+    const out = warmupTotalsFromSegments([
+      { kind: "easy_jog", distanceM: 3000, paceSecPerKm: 0 },
+    ]);
+    expect(out.durationMin).toBe(0);
+    expect(out.missingPace).toBe(1);
+  });
+
+  it("レストは走った時間に入れない", () => {
+    const withRest = warmupTotalsFromSegments([
+      { kind: "strides", distanceM: 100, reps: 4, paceSecPerKm: 200, restSec: 60 },
+    ]);
+    const without = warmupTotalsFromSegments([
+      { kind: "strides", distanceM: 100, reps: 4, paceSecPerKm: 200 },
+    ]);
+    expect(withRest.durationMin).toBeCloseTo(without.durationMin);
+  });
+
+  it("ペースは保存される（正規化で落ちない）", () => {
+    const w = normalizeWarmup({
+      segments: [{ kind: "easy_jog", distanceM: 3000, paceSecPerKm: 300 }],
+    });
+    expect(w?.segments[0].paceSecPerKm).toBe(300);
+  });
+
+  it("ペースが数値でなければ捨てる", () => {
+    const w = normalizeWarmup({
+      segments: [{ kind: "easy_jog", distanceM: 3000, paceSecPerKm: "5:00" }],
+    });
+    expect(w?.segments[0].paceSecPerKm).toBeUndefined();
   });
 });
