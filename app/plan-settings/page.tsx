@@ -14,12 +14,15 @@ import {
   DOW_LABELS,
   SLOT_LABELS,
   SOURCE_LABELS,
+  cycleMainTimeOfDayOf,
   cycleModeOf,
   cycleWeekdayDrift,
   emptyCycle,
   emptyWeekTemplate,
+  mainTimeOfDayOf,
   modeOf,
   normalizeWeekTemplate,
+  TIME_OF_DAY_LABELS,
   validateWeekTemplate,
   type CustomMenu,
   type CustomMenuSource,
@@ -76,12 +79,14 @@ function SlotRow({
   slot,
   mode,
   amSlot,
+  mainTimeOfDay,
   isLongRun,
   longRunGroup,
   disabled,
   onSlot,
   onMode,
   onAmSlot,
+  onMainTimeOfDay,
   onLongRun,
 }: {
   id: string;
@@ -90,12 +95,15 @@ function SlotRow({
   slot: WeekdaySlot;
   mode: WeekdayPreferenceMode;
   amSlot: WeekdaySlot;
+  /** 主練習をどちらの時間帯に置くか */
+  mainTimeOfDay: "am" | "pm";
   isLongRun: boolean;
   longRunGroup: string;
   disabled: boolean;
   onSlot: (slot: WeekdaySlot) => void;
   onMode: (mode: WeekdayPreferenceMode) => void;
   onAmSlot: (slot: WeekdaySlot) => void;
+  onMainTimeOfDay: (v: "am" | "pm") => void;
   onLongRun: () => void;
 }) {
   const cat =
@@ -136,7 +144,36 @@ function SlotRow({
           時間帯は行の「上」に置く。横に並べると 320px幅（iPhone SE）で
           セレクトが押し出されて画面からはみ出す（E2Eで18px検出）。
         */}
-        <div className="metric-label mb-0.5">午後（主）</div>
+        {/*
+          主練習の時間帯を選べるようにした（forge-v108）。
+          これまで午後で固定だったが、授業やグラウンドの都合で
+          午前にポイント練習をやる日がある。
+
+          **枠の中身は動かさない。** 選ぶのは時間帯だけなので、
+          入れ替えてもどちらが主練習だったかが分かる。
+        */}
+        <div className="flex items-center justify-between gap-2 mb-0.5">
+          <span className="metric-label">主練習</span>
+          <span className="flex gap-1" role="group" aria-label={`${id}の主練習の時間帯`}>
+            {(["am", "pm"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                className={
+                  mainTimeOfDay === v
+                    ? "btn-volt !py-1 !px-2 !text-[11px]"
+                    : "btn-ghost !py-1 !px-2 !text-[11px]"
+                }
+                disabled={disabled}
+                aria-pressed={mainTimeOfDay === v}
+                aria-label={`${id} 主練習 ${TIME_OF_DAY_LABELS[v]}`}
+                onClick={() => onMainTimeOfDay(v)}
+              >
+                {TIME_OF_DAY_LABELS[v]}
+              </button>
+            ))}
+          </span>
+        </div>
         <div className="flex items-center gap-2">
           <span
             aria-hidden="true"
@@ -181,12 +218,14 @@ function SlotRow({
           2部練習の午前枠。既定は「なし」。
           午前を自動で埋めないのは、頼んでいない量が勝手に乗るのを避けるため。
         */}
-        <div className="metric-label mb-0.5 mt-1.5">午前（2部）</div>
+        <div className="metric-label mb-0.5 mt-1.5">
+          補助・2部（{TIME_OF_DAY_LABELS[mainTimeOfDay === "am" ? "pm" : "am"]}）
+        </div>
         <div className="flex items-center gap-2">
           <span aria-hidden="true" className="w-1 h-6 flex-shrink-0" />
           <select
             className="flex-1 min-h-[44px] !text-[12px]"
-            aria-label={`${id}の午前（2部練習）`}
+            aria-label={`${id}の補助枠（2部練習）`}
             disabled={disabled}
             value={amSlot}
             onChange={(e) => onAmSlot(e.target.value as WeekdaySlot)}
@@ -393,7 +432,33 @@ function WeekTemplateCard() {
       },
     }));
 
-  /** 2部練習の午前枠。"auto"（なし）は保存しない＝1部に戻す */
+  /**
+   * 主練習の時間帯。
+   *
+   * **枠の中身は動かさない。** 選ぶのは時間帯だけ。
+   * 中身を移し替えると、入れ替えた瞬間にどちらが主練習だったか分からなくなる。
+   * 既定（午後）は保存しない（normalizeWeekTemplate と同じ考え）。
+   */
+  const setMainTimeOfDay = (dow: Dow, v: "am" | "pm") => {
+    setT((prev) => {
+      const next = { ...(prev.mainTimeOfDay ?? {}) };
+      if (v === "pm") delete next[dow];
+      else next[dow] = v;
+      return { ...prev, mainTimeOfDay: next };
+    });
+  };
+
+  const setCycleMainTimeOfDay = (position: number, v: "am" | "pm") => {
+    setT((prev) => {
+      const c = prev.cycle ?? emptyCycle(todayISO());
+      const next = { ...(c.mainTimeOfDay ?? {}) };
+      if (v === "pm") delete next[position];
+      else next[position] = v;
+      return { ...prev, cycle: { ...c, mainTimeOfDay: next } };
+    });
+  };
+
+  /** 2部練習の補助枠。"auto"（なし）は保存しない＝1部に戻す */
   const setAmSlot = (dow: Dow, slot: WeekdaySlot) =>
     setT((prev) => {
       const amSlots = { ...(prev.amSlots ?? {}) };
@@ -586,12 +651,14 @@ function WeekTemplateCard() {
                   slot={cycle?.slots?.[position] ?? "auto"}
                   mode={cycleModeOf(cycle, position)}
                   amSlot={cycle?.amSlots?.[position] ?? "auto"}
+                  mainTimeOfDay={cycleMainTimeOfDayOf(cycle, position)}
                   isLongRun={cycle?.longRunIndex === position}
                   longRunGroup="longrun-cycle"
                   disabled={!t.enabled}
                   onSlot={(slot) => setCycleSlot(position, slot)}
                   onMode={(mode) => setCycleMode(position, mode)}
                   onAmSlot={(slot) => setCycleAmSlot(position, slot)}
+                  onMainTimeOfDay={(v) => setCycleMainTimeOfDay(position, v)}
                   onLongRun={() => patchCycle({ longRunIndex: position })}
                 />
               );
@@ -611,12 +678,14 @@ function WeekTemplateCard() {
                 slot={t.slots[dow] ?? "auto"}
                 mode={modeOf(t, dow)}
                 amSlot={t.amSlots?.[dow] ?? "auto"}
+                mainTimeOfDay={mainTimeOfDayOf(t, dow)}
                 isLongRun={t.longRunDow === dow}
                 longRunGroup="longrun-dow"
                 disabled={!t.enabled}
                 onSlot={(slot) => setSlot(dow, slot)}
                 onMode={(mode) => setMode(dow, mode)}
                 onAmSlot={(slot) => setAmSlot(dow, slot)}
+                onMainTimeOfDay={(v) => setMainTimeOfDay(dow, v)}
                 onLongRun={() => setT({ ...t, longRunDow: dow })}
               />
             ))}

@@ -253,8 +253,8 @@ await page.getByRole("button", { name: "水曜 指定なし", exact: true }).cli
  * 生成してからルールエンジンに拾わせると、なぜそう置いたのかが分からなくなる。
  */
 {
-  const amSelect = (label) => page.getByLabel(`${label}曜の午前（2部練習）`);
-  if ((await amSelect("火").count()) === 0) fail("2部練習: 午前枠の選択が無い");
+  const amSelect = (label) => page.getByLabel(`${label}曜の補助枠（2部練習）`);
+  if ((await amSelect("火").count()) === 0) fail("2部練習: 補助枠の選択が無い");
   else {
     // 午前・午後とも高負荷 → その場でERROR
     await amSelect("火").selectOption("point");
@@ -6499,6 +6499,120 @@ if ((await fitRebuildCard.count()) === 0) {
 
   if (failCount === homeBefore) {
     step("ホームOK（形と設定を先に出す／理由は畳むが消さない）");
+  }
+}
+
+// ---- 主練習の時間帯を選べる ----
+/*
+ * これまで主練習は午後で固定だった。
+ * 授業やグラウンドの都合で午前にポイント練習をやる日があるので選べるようにした。
+ *
+ * ここで見るのは3つ。
+ *   ・選択が出ていて、押すと保存されること
+ *   ・**枠の中身が動かない**こと（選ぶのは時間帯だけ）
+ *   ・生成すると主練習が午前に入り、補助が午後に回ること
+ */
+{
+  const todBefore = failCount;
+
+  await page.goto("http://localhost:8791/#/plan-settings");
+  await page.waitForTimeout(1000);
+  /*
+   * 前のブロックで周期モードにしてある。周期では行が「1日目」になるので、
+   * 曜日で見るために戻す（戻さないと検査が空振りする）。
+   */
+  const byDow = page.getByRole("button", { name: "曜日で決める" });
+  if ((await byDow.count()) > 0 && (await byDow.getAttribute("aria-pressed")) !== "true") {
+    await byDow.click();
+    await page.waitForTimeout(500);
+  }
+
+  const amBtn = page.getByRole("button", { name: "火曜 主練習 午前" });
+  const pmBtn = page.getByRole("button", { name: "火曜 主練習 午後" });
+  if ((await amBtn.count()) === 0 || (await pmBtn.count()) === 0) {
+    fail("主練習の時間帯: 選択が出ていない");
+  } else {
+    // 既定は午後（設定していない曜日の予定が黙って動かないように）
+    if ((await pmBtn.getAttribute("aria-pressed")) !== "true") {
+      fail("主練習の時間帯: 既定が午後になっていない");
+    }
+
+    // 中身を先に読んでおく。時間帯を変えても動いてはいけない
+    const beforeSlots = await page.evaluate(async () => {
+      const d = await fetch("/api/plan-settings").then((r) => r.json());
+      const t = d.template ?? d.weekTemplate ?? {};
+      return { main: t.slots?.["2"] ?? t.slots?.[2], sub: t.amSlots?.["2"] ?? t.amSlots?.[2] };
+    });
+
+    await amBtn.click();
+    await page.waitForTimeout(400);
+    if ((await amBtn.getAttribute("aria-pressed")) !== "true") {
+      fail("主練習の時間帯: 午前を押しても切り替わらない");
+    }
+
+    // 補助枠の見出しが反対側になること（どちらに入るのかが読めないと選べない）
+    const subLabel = (await page.textContent("body")) ?? "";
+    if (!subLabel.includes("補助・2部（午後）")) {
+      fail("主練習の時間帯: 補助枠が反対側と書かれていない");
+    }
+
+    // 保存する
+    const saveBtn = page.getByRole("button", { name: /保存/ }).first();
+    if (await saveBtn.count()) {
+      await saveBtn.click();
+      await page.waitForTimeout(1000);
+      const dlg = page.getByRole("button", { name: "実行する" });
+      if (await dlg.count()) {
+        await dlg.first().click();
+        await page.waitForTimeout(1200);
+      }
+    }
+
+    const saved = await page.evaluate(async () => {
+      const d = await fetch("/api/plan-settings").then((r) => r.json());
+      const t = d.template ?? d.weekTemplate ?? {};
+      return {
+        tod: t.mainTimeOfDay?.["2"] ?? t.mainTimeOfDay?.[2] ?? null,
+        main: t.slots?.["2"] ?? t.slots?.[2],
+        sub: t.amSlots?.["2"] ?? t.amSlots?.[2],
+      };
+    });
+    if (saved.tod !== "am") {
+      fail(`主練習の時間帯: 保存されていない（${JSON.stringify(saved)}）`);
+    }
+    // **枠の中身は動かさない。** 移し替えると、どちらが主練習だったか分からなくなる
+    if (saved.main !== beforeSlots.main || saved.sub !== beforeSlots.sub) {
+      fail(
+        `主練習の時間帯: 枠の中身が動いた（前 ${JSON.stringify(beforeSlots)} → 後 ${JSON.stringify(saved)}）`
+      );
+    }
+
+    // 生成すると、火曜の主練習が午前に入る
+    const placed = await page.evaluate(async () => {
+      await fetch("/api/plan", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      const d = await fetch("/api/sessions").then((r) => r.json());
+      const tue = (d.sessions ?? []).filter(
+        (x) => new Date(x.date + "T00:00:00Z").getUTCDay() === 2 && x.category !== "off"
+      );
+      const dates = [...new Set(tue.filter((x) => x.timeOfDay === "am").map((x) => x.date))];
+      return {
+        amCount: tue.filter((x) => x.timeOfDay === "am").length,
+        sample: dates.slice(0, 2).map((date) =>
+          tue
+            .filter((x) => x.date === date)
+            .map((x) => x.timeOfDay + ":" + x.category)
+            .sort()
+            .join(" / ")
+        ),
+      };
+    });
+    if (placed.amCount === 0) {
+      fail("主練習の時間帯: 午前にしても午前のセッションが生成されない");
+    }
+  }
+
+  if (failCount === todBefore) {
+    step("主練習の時間帯OK（選べる・保存される・枠の中身は動かない・午前に生成される）");
   }
 }
 

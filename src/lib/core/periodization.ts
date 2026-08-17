@@ -32,6 +32,8 @@ import {
   type WeekdayPreferenceMode,
   type WeekdaySlot,
   amSlotOf,
+  cycleMainTimeOfDayOf,
+  mainTimeOfDayOf,
   cycleAmSlotOf,
   cycleModeOf,
   cycleOf,
@@ -1240,7 +1242,20 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
           : built.distanceKm;
         built.prescription += `（高乳酸翌日のため通常ジョグ+20〜30秒/kmに減速: 目安 ${fmtPacePerKm(slowed)}）`;
       }
-      const timeOfDay = tpl.timeOfDay ?? "pm";
+      /*
+       * 主練習の時間帯。
+       *
+       * これまで午後で固定だった。授業やグラウンドの都合で午前にポイント練習を
+       * やる日があるので、曜日（周期なら位置）ごとに選べるようにした。
+       *
+       * テンプレート側が時間帯を持っている場合（複合メニューの分割など）は
+       * そちらを優先する——あちらは中身の都合で決まっていて、設定より具体的。
+       */
+      const configuredMain =
+        cyclePosition !== undefined
+          ? cycleMainTimeOfDayOf(cycle, cyclePosition)
+          : mainTimeOfDayOf(input.weekTemplate, dow);
+      const timeOfDay = tpl.timeOfDay ?? configuredMain;
       /*
        * 固定枠かどうかは、周期モードでは**曜日ではなく周期の位置**で見る。
        * ここを曜日のままにすると、周期で固定した日が固定として扱われず、
@@ -1309,11 +1324,13 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
         cyclePosition !== undefined
           ? cycleAmSlotOf(cycle, cyclePosition)
           : amSlotOf(input.weekTemplate, dow);
-      const amPlaced =
-        amSlot !== undefined &&
-        amSlot !== "off" &&
-        tpl.category !== "off" &&
-        timeOfDay !== "am";
+      /*
+       * 補助枠は**主練習の反対側**に置く。
+       * 以前は「午前」に固定していたので、主練習を午前にすると
+       * 同じ時間帯に2本入って id が衝突し、片方が消えていた。
+       */
+      const subTimeOfDay: Session["timeOfDay"] = timeOfDay === "am" ? "pm" : "am";
+      const amPlaced = amSlot !== undefined && amSlot !== "off" && tpl.category !== "off";
       if (amPlaced) {
         /*
          * 午前の量を、その日の午後と本人の状態に合わせる。
@@ -1340,14 +1357,14 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
          */
         const amTpl =
           amSlot === "aerobic"
-            ? jog(amMin, "ジョグ（午前）")
+            ? jog(amMin, subTimeOfDay === "am" ? "ジョグ（午前）" : "ジョグ（午後）")
             : templateForSlot(amSlot!, jog(amMin), phase, economyWeek, 0, weekIndex % 2, false);
         const amBuilt: ReturnType<DayTemplate["buildPrescription"]> & {
           name?: string;
           generation?: Session["generation"];
         } = buildFromProgression(amTpl, date) ?? amTpl.buildPrescription(grpBase, aerobicProfile);
         sessions.push({
-          id: generatedSessionId(date, "am"),
+          id: generatedSessionId(date, subTimeOfDay),
           date,
           category: amTpl.category,
           name: amBuilt.name ?? amTpl.name,
@@ -1361,7 +1378,7 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
           status: "planned",
           origin: "generated",
           isFixed: false,
-          timeOfDay: "am",
+          timeOfDay: subTimeOfDay,
           distanceKm: amBuilt.distanceKm,
           durationMin: amBuilt.durationMin,
           paceSecPerKm: amBuilt.paceSecPerKm,

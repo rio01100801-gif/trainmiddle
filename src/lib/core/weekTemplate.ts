@@ -89,6 +89,19 @@ export interface WeekTemplate {
    * 800mで効くのは量ではないので、増やすなら本人が明示する。
    */
   amSlots?: Partial<Record<Dow, WeekdaySlot>>;
+  /**
+   * 主練習をどちらの時間帯に置くか。未設定は "pm"。
+   *
+   * これまで主練習は午後で固定だった。授業や学校のグラウンドの都合で
+   * **午前にポイント練習をやる日がある**ので、曜日ごとに選べるようにした。
+   *
+   * 枠の中身（`slots` / `amSlots`）と時間帯を**分けて持つ**。
+   * 「午前の枠」ではなく「主練習の枠」「補助の枠」として持ち、
+   * 時間帯だけをここで振り替える。
+   * 一緒にすると、時間帯を入れ替えるたびに中身を移し替えることになり、
+   * 入れ替えた瞬間にどちらが主練習だったのか分からなくなる。
+   */
+  mainTimeOfDay?: Partial<Record<Dow, "am" | "pm">>;
   /** ロングランを置く曜日（aerobic のうち長い方）。未設定なら自動 */
   longRunDow?: Dow;
   enabled: boolean;
@@ -117,6 +130,8 @@ export interface TrainingCycle {
   slots?: Partial<Record<number, WeekdaySlot>>;
   modes?: Partial<Record<number, WeekdayPreferenceMode>>;
   amSlots?: Partial<Record<number, WeekdaySlot>>;
+  /** 主練習の時間帯。未設定は "pm"（`WeekTemplate.mainTimeOfDay` と同じ意味） */
+  mainTimeOfDay?: Partial<Record<number, "am" | "pm">>;
   longRunIndex?: number;
 }
 
@@ -187,15 +202,51 @@ export function amSlotOf(t: WeekTemplate | undefined, dow: Dow): WeekdaySlot | u
   return slot && slot !== "auto" ? slot : undefined;
 }
 
-/** 2部練習の日か（午前枠が入っていて、午後が休養でない） */
+/** 2部練習の日か（補助枠が入っていて、主練習が休養でない） */
 export function isDoubleDay(t: WeekTemplate | undefined, dow: Dow): boolean {
   return amSlotOf(t, dow) !== undefined && slotOf(t, dow) !== "off";
 }
+
+/**
+ * 主練習をどちらの時間帯に置くか。未設定は午後。
+ *
+ * 既定を午後にしているのは、これまでそうだったから。
+ * **既定を変えると、設定していない曜日の予定が黙って動く。**
+ */
+export function mainTimeOfDayOf(t: WeekTemplate | undefined, dow: Dow): "am" | "pm" {
+  return t?.mainTimeOfDay?.[dow] === "am" ? "am" : "pm";
+}
+
+/** 補助（2部）の時間帯。主練習の反対側 */
+export function subTimeOfDayOf(t: WeekTemplate | undefined, dow: Dow): "am" | "pm" {
+  return mainTimeOfDayOf(t, dow) === "am" ? "pm" : "am";
+}
+
+export function cycleMainTimeOfDayOf(
+  c: TrainingCycle | undefined,
+  position: number
+): "am" | "pm" {
+  return c?.mainTimeOfDay?.[position] === "am" ? "am" : "pm";
+}
+
+export function cycleSubTimeOfDayOf(
+  c: TrainingCycle | undefined,
+  position: number
+): "am" | "pm" {
+  return cycleMainTimeOfDayOf(c, position) === "am" ? "pm" : "am";
+}
+
+/** 時間帯の表示名。画面ごとに違う呼び方をしないよう1か所に置く */
+export const TIME_OF_DAY_LABELS: Record<"am" | "pm", string> = {
+  am: "午前",
+  pm: "午後",
+};
 
 export function normalizeWeekTemplate(t: WeekTemplate): WeekTemplate {
   const slots: WeekTemplate["slots"] = {};
   const modes: NonNullable<WeekTemplate["modes"]> = {};
   const amSlots: NonNullable<WeekTemplate["amSlots"]> = {};
+  const mainTimeOfDay: NonNullable<WeekTemplate["mainTimeOfDay"]> = {};
   for (const dow of [0, 1, 2, 3, 4, 5, 6] as Dow[]) {
     const slot = t.slots?.[dow] ?? "auto";
     const mode = modeOf(t, dow);
@@ -204,13 +255,19 @@ export function normalizeWeekTemplate(t: WeekTemplate): WeekTemplate {
       modes[dow] = mode;
     }
     const am = t.amSlots?.[dow];
-    // 午前は「指定されたものだけ」を残す。"auto" は指定なしと同じ
+    // 補助枠は「指定されたものだけ」を残す。"auto" は指定なしと同じ
     if (am && am !== "auto") amSlots[dow] = am;
+    /*
+     * 主練習の時間帯。**既定（午後）は保存しない。**
+     * 保存すると、あとで既定を変えたときに古い設定が既定を上書きし続ける。
+     */
+    if (t.mainTimeOfDay?.[dow] === "am") mainTimeOfDay[dow] = "am";
   }
   return {
     slots,
     modes,
     amSlots,
+    mainTimeOfDay,
     longRunDow: t.longRunDow,
     enabled: t.enabled,
     cycle: t.cycle ? normalizeCycle(t.cycle) : undefined,
@@ -222,6 +279,7 @@ export function normalizeCycle(c: TrainingCycle): TrainingCycle {
   const slots: NonNullable<TrainingCycle["slots"]> = {};
   const modes: NonNullable<TrainingCycle["modes"]> = {};
   const amSlots: NonNullable<TrainingCycle["amSlots"]> = {};
+  const mainTimeOfDay: NonNullable<TrainingCycle["mainTimeOfDay"]> = {};
   for (let i = 0; i < lengthDays; i++) {
     const slot = c.slots?.[i] ?? "auto";
     const mode = cycleModeOf(c, i);
@@ -231,6 +289,7 @@ export function normalizeCycle(c: TrainingCycle): TrainingCycle {
     }
     const am = c.amSlots?.[i];
     if (am && am !== "auto") amSlots[i] = am;
+    if (c.mainTimeOfDay?.[i] === "am") mainTimeOfDay[i] = "am";
   }
   return {
     enabled: c.enabled,
@@ -239,6 +298,7 @@ export function normalizeCycle(c: TrainingCycle): TrainingCycle {
     slots,
     modes,
     amSlots,
+    mainTimeOfDay,
     // 周期が短くなって位置が消えたら、ロングランの指定も落とす
     longRunIndex:
       c.longRunIndex !== undefined && c.longRunIndex < lengthDays ? c.longRunIndex : undefined,
@@ -285,7 +345,7 @@ export function validateWeekTemplate(t: WeekTemplate): RuleViolation[] {
       out.push({
         rule: "RULE-03",
         level: "ERROR",
-        message: `${DOW_LABELS[dow]}曜は午前・午後とも高負荷（${SLOT_LABELS[am] ?? am}／${SLOT_LABELS[pm] ?? pm}）です。同じ日に高負荷を2本置くと回復が間に合いません。`,
+        message: `${DOW_LABELS[dow]}曜は${TIME_OF_DAY_LABELS[subTimeOfDayOf(t, dow)]}・${TIME_OF_DAY_LABELS[mainTimeOfDayOf(t, dow)]}とも高負荷（${SLOT_LABELS[am] ?? am}／${SLOT_LABELS[pm] ?? pm}）です。同じ日に高負荷を2本置くと回復が間に合いません。`,
         dates: [],
         sessionIds: [],
         suggestion:
@@ -296,11 +356,11 @@ export function validateWeekTemplate(t: WeekTemplate): RuleViolation[] {
       out.push({
         rule: "RULE-04",
         level: "WARN",
-        message: `${DOW_LABELS[dow]}曜は午後が休養なのに午前枠（${SLOT_LABELS[am] ?? am}）が入っています。`,
+        message: `${DOW_LABELS[dow]}曜は主練習が休養なのに補助枠（${SLOT_LABELS[am] ?? am}・${TIME_OF_DAY_LABELS[subTimeOfDayOf(t, dow)]}）が入っています。`,
         dates: [],
         sessionIds: [],
         suggestion:
-          "休養日にするなら午前枠も外してください。半日だけ走るなら午後側を「自動」か「ジョグ」にしてください。",
+          "休養日にするなら補助枠も外してください。半日だけ走るなら主練習側を「自動」か「ジョグ」にしてください。",
       });
     }
   }
@@ -476,7 +536,7 @@ export function validateCycle(c: TrainingCycle): RuleViolation[] {
       out.push({
         rule: "RULE-03",
         level: "ERROR",
-        message: `${label(i)}は午前・午後とも高負荷（${SLOT_LABELS[am] ?? am}／${SLOT_LABELS[pm] ?? pm}）です。同じ日に高負荷を2本置くと回復が間に合いません。`,
+        message: `${label(i)}は${TIME_OF_DAY_LABELS[cycleSubTimeOfDayOf(c, i)]}・${TIME_OF_DAY_LABELS[cycleMainTimeOfDayOf(c, i)]}とも高負荷（${SLOT_LABELS[am] ?? am}／${SLOT_LABELS[pm] ?? pm}）です。同じ日に高負荷を2本置くと回復が間に合いません。`,
         dates: [],
         sessionIds: [],
         suggestion:
@@ -487,11 +547,11 @@ export function validateCycle(c: TrainingCycle): RuleViolation[] {
       out.push({
         rule: "RULE-04",
         level: "WARN",
-        message: `${label(i)}は午後が休養なのに午前枠（${SLOT_LABELS[am] ?? am}）が入っています。`,
+        message: `${label(i)}は主練習が休養なのに補助枠（${SLOT_LABELS[am] ?? am}・${TIME_OF_DAY_LABELS[cycleSubTimeOfDayOf(c, i)]}）が入っています。`,
         dates: [],
         sessionIds: [],
         suggestion:
-          "休養日にするなら午前枠も外してください。半日だけ走るなら午後側を「自動」か「ジョグ」にしてください。",
+          "休養日にするなら補助枠も外してください。半日だけ走るなら主練習側を「自動」か「ジョグ」にしてください。",
       });
     }
   }

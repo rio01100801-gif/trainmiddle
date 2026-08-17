@@ -110,14 +110,18 @@ describe("危ない組み合わせは生成前に言う", () => {
     expect(v.some((x) => x.message.includes("午前・午後とも高負荷"))).toBe(false);
   });
 
-  it("午後が休養なのに午前枠があればWARN", () => {
+  /*
+   * 主練習の時間帯を選べるようにしたので（forge-v108）、文は主/補助で言う。
+   * 「午後が休養」と固定で書いていたときは、午前に主練習を置いた日の警告が逆さまになった。
+   */
+  it("主練習が休養なのに補助枠があればWARN", () => {
     const v = validateWeekTemplate({
       enabled: true,
       slots: { 4: "off" },
       modes: { 4: "fixed" },
       amSlots: { 4: "aerobic" },
     });
-    expect(v.some((x) => x.message.includes("午後が休養なのに"))).toBe(true);
+    expect(v.some((x) => x.message.includes("主練習が休養なのに"))).toBe(true);
   });
 });
 
