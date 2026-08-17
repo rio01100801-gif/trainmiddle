@@ -7,6 +7,8 @@ import type { SessionCategory } from "@/lib/core/types";
 import type { TimelineDay } from "@/lib/core/timeline";
 import { describeAbortSummary, type AbortSummary } from "@/lib/core/abortSummary";
 import { WARMUP_LEGS_LABELS } from "@/lib/core/warmup";
+import { analysisHeadline } from "@/lib/core/analysisHeadline";
+import { MIN_SPLIT_SAMPLES } from "@/lib/core/split600";
 import {
   WARMUP_SHAPE_LABELS,
   type WarmupInsight as WarmupInsightView,
@@ -164,6 +166,7 @@ export default function AnalysisPage() {
       </div>
 
       {seg === "race" ? <RaceAnalysis /> : null}
+      {seg === "now" ? <HeadlineCard acwrNow={data.acwrNow} /> : null}
       {seg === "now" ? <GapPanel /> : null}
       {seg === "now" ? <CoveragePanel /> : null}
       {seg === "now" ? <ReviewPanel /> : null}
@@ -1775,6 +1778,161 @@ function HrRow({ line }: { line: HrLine }) {
   );
 }
 
+/**
+ * 分析の一番上。**結論 → 行動 → リスク**の3つだけを出す。
+ *
+ * これまで「課題」「判定材料」「4週間の変更」「不足データ」が同じ強さで並んでいて、
+ * どれが結論なのかが分からなかった。
+ * 分析は練習前に3秒で読むものではないが、**結論を先に把握できる**必要はある。
+ *
+ * 根拠（400m/1500mからの推定・変更理由・使った記録・信頼度）は畳む。
+ * 数字を疑うときにだけ開けばいい。
+ *
+ * 並べ方と言い方は `core/analysisHeadline.ts` が決める。
+ * ここで書くと、同じことを2か所で決めることになる。
+ */
+function HeadlineCard({ acwrNow }: { acwrNow?: { rating: string; label: string } }) {
+  const d = useInsights();
+  const [coverage, setCoverage] = useState<CoverageReview | null>(null);
+  useEffect(() => {
+    fetch("/api/coverage")
+      .then((r) => r.json())
+      .then((x) => setCoverage(x.review ?? null))
+      .catch(() => setCoverage(null));
+  }, []);
+
+  if (!d || d.empty) return null;
+
+  const lim = d.limiter?.assessment;
+  const head = analysisHeadline({
+    limiterLabel: lim ? LIMITER_JP[lim.limiter] ?? lim.limiter : undefined,
+    targets: coverage?.targets,
+    categoryLabels: CATEGORY_LABELS,
+    acwr: acwrNow,
+    split: d.split
+      ? { enough: !!d.split.enough, have: (d.split.samples ?? []).length, need: MIN_SPLIT_SAMPLES }
+      : undefined,
+    hasContactSamples: d.contact ? !d.contact.narrative?.includes("記録がありません") : undefined,
+    hasHrMaxReference: d.hr ? !!d.hr.reference : undefined,
+  });
+
+  const riskColor =
+    head.riskLevel === "high"
+      ? "var(--red)"
+      : head.riskLevel === "watch"
+      ? "var(--amber)"
+      : head.riskLevel === "ok"
+      ? "var(--forge)"
+      : "var(--text-3)";
+
+  return (
+    <Card title="いまの結論">
+      <div className="flex flex-col gap-3" data-analysis-headline>
+        <div>
+          <div className="metric-label">最大の課題</div>
+          <div className="text-[22px] font-bold leading-tight" data-headline-problem>
+            {head.problem}
+          </div>
+        </div>
+
+        <div>
+          <div className="metric-label">今週変えること</div>
+          {head.actions.length === 0 ? (
+            <div className="text-[13px]" style={{ color: "var(--text-2)" }}>
+              配分は足りています。いまの組み方を続けます。
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-x-3 gap-y-1" data-headline-actions>
+              {head.actions.map((a) => (
+                <span key={a} className="text-[14px] font-semibold num">
+                  {a}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className="metric-label">現在のリスク</div>
+          {/* 色だけに頼らない。文でも同じことを言う */}
+          <div className="text-[14px] font-semibold" style={{ color: riskColor }} data-headline-risk>
+            {head.risk}
+          </div>
+        </div>
+      </div>
+
+      {/*
+        根拠は畳む。**開くまで DOM に出さない**——
+        `<details>` で畳むと閉じていても箱が残り、最下部がタブバーの裏に入る（P-4）。
+      */}
+      <Collapsible label="判定の根拠を見る" className="mt-3">
+        <div className="mt-2 flex flex-col gap-2">
+          {lim ? (
+            <>
+              <div>
+                <div className="metric-label">400m・1500mからの推定</div>
+                <LimiterScale
+                  from400={lim.from400}
+                  from1500={lim.from1500}
+                  pb800Sec={lim.pb800Sec}
+                  targetSec={d.limiter.targetSec}
+                />
+              </div>
+              <p className="text-[12px] leading-relaxed" style={{ color: "var(--text-2)" }}>
+                {lim.narrative}
+              </p>
+              <p className="text-[11.5px] leading-relaxed" style={{ color: "var(--text-3)" }}>
+                {d.limiter.appliedNote}
+              </p>
+            </>
+          ) : null}
+          {coverage?.narrative ? (
+            <div>
+              <div className="metric-label">変更の理由</div>
+              <p className="text-[12px] leading-relaxed" style={{ color: "var(--text-2)" }}>
+                {coverage.narrative}
+              </p>
+            </div>
+          ) : null}
+          {acwrNow ? (
+            <div>
+              <div className="metric-label">負荷の信頼度</div>
+              <p className="text-[11.5px] leading-relaxed" style={{ color: "var(--text-3)" }}>
+                {(acwrNow as { note?: string }).note ?? acwrNow.label}
+              </p>
+            </div>
+          ) : null}
+        </div>
+      </Collapsible>
+
+      {/*
+        足りていないデータは**1つにまとめる**。
+        以前は「600m通過の材料があと2本」「接地時間なし」「最大心拍の基準なし」が
+        別々の大きなカードで並び、結論と同じ強さで目に入っていた。
+      */}
+      {head.missing.length > 0 ? (
+        <div
+          className="mt-3 pt-2.5 border-t"
+          style={{ borderColor: "var(--border)" }}
+          data-headline-missing
+        >
+          <div className="metric-label mb-1">データ不足</div>
+          <div className="flex flex-col gap-0.5">
+            {head.missing.map((m) => (
+              <div key={m.label} className="text-[12px] flex justify-between gap-2">
+                <span style={{ color: "var(--text-2)" }}>{m.label}</span>
+                <span className="num" style={{ color: "var(--text-3)" }}>
+                  {m.detail}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
 function GapPanel() {
   const d = useInsights();
   if (!d) return <p className="text-[13px]">読み込み中…</p>;
@@ -1786,38 +1944,10 @@ function GapPanel() {
 
   return (
     <div className="grid md:grid-cols-2 gap-3">
-      <Card title="制限因子">
-        {lim ? (
-          <>
-            <div className="metric-label">いま足りていないのは</div>
-            <div className="metric" style={{ fontSize: 26 }}>
-              {LIMITER_JP[lim.limiter] ?? lim.limiter}
-            </div>
-            {/*
-              妥当域とPB・目標を同じ数直線に置く。
-              以前は「1:48.00〜1:51.00」という2つの数字と、それを言い直した
-              長い文だけだった。数字の並びからは、PBがその中のどこにいるのか、
-              目標が域の内側なのか外側なのかが読み取れない。
-            */}
-            <LimiterScale
-              from400={lim.from400}
-              from1500={lim.from1500}
-              pb800Sec={lim.pb800Sec}
-              targetSec={d.limiter.targetSec}
-            />
-            {/* 根拠の文は畳む。同じ数字を言い直しているので毎回は読まない */}
-            <Collapsible label="この判定の根拠" className="mt-2.5">
-              <p className="text-[12px] leading-relaxed mt-1.5" style={{ color: "var(--text-2)" }}>
-                {lim.narrative}
-              </p>
-            </Collapsible>
-            <p className="text-[11.5px] leading-relaxed mt-2" style={{ color: "var(--text-3)" }}>
-              {d.limiter.appliedNote}
-            </p>
-          </>
-        ) : null}
-      </Card>
-
+      {/*
+        制限因子は「いまの結論」カードへ移した。
+        同じ判定を2か所に出すと、どちらが結論なのかが分からなくなる。
+      */}
       <Card title="600m通過からの残り200m">
         {split?.enough ? (
           <>
@@ -1869,8 +1999,13 @@ function GapPanel() {
             </Collapsible>
           </>
         ) : (
-          <p className="text-[12px] leading-relaxed" style={{ color: "var(--text-2)" }}>
-            {split?.narrative}
+          /*
+            材料が足りないときは**ここに大きく出さない**。
+            「あと何本」は上の「データ不足」に1行でまとめてある。
+            同じことを2か所に出すと、結論と足りない話が同じ強さで並ぶ。
+          */
+          <p className="text-[11.5px] leading-relaxed" style={{ color: "var(--text-3)" }}>
+            材料がたまると、ここに通過タイムと残り200mが出ます。
           </p>
         )}
       </Card>

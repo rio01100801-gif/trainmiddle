@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, type ReactNode } from "react";
 import { BottomTabs, MobileHeader, Sidebar } from "./nav";
-import { RecordFab } from "./fab";
 import { authRedirectLanding } from "@/lib/core/sync";
 import { captureAuthRedirect, isHashNavigationRuntime } from "./supabase";
 import { LaunchSplash } from "./launch-splash";
@@ -72,7 +71,6 @@ export function AppShell({ children, footer }: { children: ReactNode; footer?: b
           </footer>
         ) : null}
       </div>
-      <RecordFab />
       <BottomTabs />
     </div>
   );

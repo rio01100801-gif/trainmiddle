@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { localToday } from "@/lib/core/dates";
+import { prescriptionParts } from "@/lib/core/prescriptionSummary";
 import { Card, Sparkline, StatusText, fmtSec } from "./components/ui";
 import { withQuery } from "./components/route-query";
 import { SessionEditSheet } from "./components/session-edit-sheet";
@@ -716,6 +717,88 @@ function Notices({ today }: { today: string }) {
 // ① TODAY（A-3）
 // ---------------------------------------------------------------------------
 
+/**
+ * 今日のメニュー。**数字と結論を先に、説明を奥に。**
+ *
+ * 走る前に要るのは3つ。
+ *   1. 何を（ジョグ40分 / 400m×3）
+ *   2. どのペースで（4:42〜5:02/km）
+ *   3. どのくらいの体感で（RPE 3〜4）
+ *
+ * 理由の文はその場では読まないので畳む。**消してはいない**——
+ * 「なぜこの設定なのか」は後から必ず要る（設定が下がったのか実力が落ちたのかを
+ * 判別するために、当時の理由が残っている必要がある）。
+ *
+ * 読み取れない処方は原文をそのまま出す。組み立てた文字列と原文が
+ * 食い違ったまま気づけない状態を作らない。
+ */
+function TodayPrescription({ name, prescription }: { name: string; prescription?: string }) {
+  const [open, setOpen] = useState(false);
+  const parts = prescription ? prescriptionParts(prescription) : {};
+  const readable = !!(parts.shape || parts.targets?.length);
+
+  return (
+    <div className="mb-3">
+      <p
+        className="font-extrabold leading-none mb-1.5"
+        style={{ fontSize: "var(--num-lg)", letterSpacing: "-.02em" }}
+        data-today-shape
+      >
+        {parts.shape ?? name}
+      </p>
+
+      {readable ? (
+        <>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13.5px] font-semibold num mb-1">
+            {(parts.targets ?? []).map((t, i) => (
+              <span key={i} data-today-target>
+                {t}
+              </span>
+            ))}
+            {parts.targets?.length && (parts.rpe || parts.rest) ? (
+              <span style={{ color: "var(--text-3)" }}>｜</span>
+            ) : null}
+            {parts.rpe ? <span data-today-rpe>RPE {parts.rpe}</span> : null}
+            {parts.rest ? <span data-today-rest>{parts.rest}</span> : null}
+          </div>
+          {parts.heatNote ? (
+            <p className="text-[12px] mb-1" style={{ color: "var(--amber)" }}>
+              {parts.heatNote}
+            </p>
+          ) : null}
+          {/* 理由は畳む。開くまでDOMに出さない（閉じても箱が残ると最下部が隠れる） */}
+          {parts.note ? (
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className="text-[11.5px] text-left min-h-[36px]"
+              style={{ color: "var(--text-3)" }}
+              aria-expanded={open}
+              data-today-note-toggle
+            >
+              {open ? "▾ 狙いと注意点" : "▸ 狙いと注意点"}
+            </button>
+          ) : null}
+          {open && parts.note ? (
+            <p
+              className="text-[12px] leading-relaxed mt-1"
+              style={{ color: "var(--text-2)" }}
+              data-today-note
+            >
+              {parts.note}
+            </p>
+          ) : null}
+        </>
+      ) : (
+        // 読み取れない処方は原文をそのまま出す
+        <p className="text-[12.5px] leading-relaxed" style={{ color: "var(--text-2)" }}>
+          {prescription}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function Today({ d, today, onChanged }: { d: any; today: string; onChanged: () => void }) {
   const s = d.todaySession;
   const r = d.readiness;
@@ -818,13 +901,17 @@ function Today({ d, today, onChanged }: { d: any; today: string; onChanged: () =
             ) : null}
           </div>
 
-          {/* メニュー本文は1回だけ（E-4: 現行の二重表示を解消） */}
-          <p className="font-extrabold leading-none mb-2.5" style={{ fontSize: "var(--num-lg)", letterSpacing: "-.02em" }}>
-            {s.name}
-          </p>
-          <p className="text-[12.5px] leading-relaxed mb-3" style={{ color: "var(--text-2)" }}>
-            {s.prescription}
-          </p>
+          {/*
+            数字と結論を先に出す（forge-v107）。
+            これまでは処方の原文をそのまま置いていた。
+
+              40分有酸素ジョグ @4:42/km〜5:02/km（会話可能な呼吸・RPE 3〜4を優先。
+              暑熱時はペースを強制しない）
+
+            走る前に要るのは「何を・どのペースで・どのくらいの体感で」の3つで、
+            理由の文はその場では読まない。**消すのではなく奥へ移す。**
+          */}
+          <TodayPrescription name={s.name} prescription={s.prescription} />
 
           {/*
             準備度はカードに出さない。見出しの RECOVERY と同じ値で、

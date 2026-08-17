@@ -9,7 +9,7 @@ import {
   prescriptionPayload,
   usePrescriptionFields,
 } from "../components/prescription-fields";
-import { shortPrescription } from "@/lib/core/prescriptionSummary";
+import { isRedundantName, prescriptionParts } from "@/lib/core/prescriptionSummary";
 import { SessionEditSheet } from "../components/session-edit-sheet";
 import {
   loadCalendarAnchor,
@@ -731,6 +731,8 @@ function DayRow({
 }) {
   const timer = useRef<any>(null);
   const longFired = useRef(false);
+  /** 変更・移動・削除・足すの操作。押すまで出さない（予定を読む幅を奪わない） */
+  const [openOps, setOpenOps] = useState(false);
   const isToday = date === today;
   const mark = STATE_MARK[state];
   /*
@@ -833,10 +835,22 @@ function DayRow({
                   const abortText = describeAbort(result);
                   // 確定範囲の外は設定ペースを出さない（素案。horizon.ts が唯一の判断）
                   const view = sessionView(s, today);
+                  const label =
+                    CATEGORY_LABELS[s.category as keyof typeof CATEGORY_LABELS] ?? s.category;
+                  /*
+                   * 処方を「切ってよい部分」と「切ってはいけない部分」に分ける。
+                   * 1本の文字列を CSS で切っていたときは、前から残るので
+                   * **一番見たい設定タイムが真っ先に消えていた**。
+                   */
+                  const parts = view.prescription ? prescriptionParts(view.prescription) : {};
+                  // 読めない形は原文を出す（中途半端に組み立てたものと原文が食い違わないように）
+                  const rawFallback =
+                    view.prescription && !parts.shape && !parts.target ? view.prescription : undefined;
+                  const nameShown = !isRedundantName(s.name, label) ? s.name : undefined;
                   return (
                     <span
                       key={s.id}
-                      className="block text-[12.5px] truncate"
+                      className="block text-[12.5px]"
                       /*
                         1日の行は1つのリンクの中に複数セッションが並ぶ。
                         並び順（午前が先）を検査するために、1件ずつ目印を付ける。
@@ -851,11 +865,10 @@ function DayRow({
                       style={{ WebkitTouchCallout: "none" } as any}
                     >
                       {/*
-                        強度は形で示す（色だけに頼らない）。
-                        カテゴリ名は色つきの文字で残す——形は4段階しかなく、
-                        「高乳酸」と「経済走」の区別は形からは付かないため。
+                        1段目: 種目｜距離×本数。
+                        **距離×本数は縮めない**（`flex-shrink-0`）。縮んでよいのは名前だけ。
                       */}
-                      <span className="inline-flex items-center gap-1.5 align-middle mr-1.5">
+                      <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 min-w-0">
                         {/*
                           2部練習の日だけ「午前」を出す。
                           普段の練習は午後なので、午後側には何も付けない——
@@ -863,65 +876,127 @@ function DayRow({
                         */}
                         {s.timeOfDay === "am" ? (
                           <span
-                            className="text-[10px] px-1 py-0.5 rounded"
+                            className="text-[10px] px-1 py-0.5 rounded flex-shrink-0"
                             style={{ background: "var(--surface-2)", color: "var(--text-2)" }}
                           >
                             午前
                           </span>
                         ) : null}
-                        <IntensityShape mark={intensityMark(s.category)} />
-                        <b style={{ color: CATEGORY_COLORS[s.category as keyof typeof CATEGORY_COLORS] }}>
-                          {CATEGORY_LABELS[s.category as keyof typeof CATEGORY_LABELS] ?? s.category}
-                        </b>
-                      </span>
-                      <span
-                        style={{ color: "var(--text-2)" }}
-                        className={diverged ? "line-through" : undefined}
-                      >
-                        {s.name}
-                      </span>
-                      {s.isFixed ? (
-                        <span className="text-[10px] ml-1" style={{ color: "var(--text-3)" }}>
-                          固定
+                        {/*
+                          強度は形で示す（色だけに頼らない）。
+                          カテゴリ名は色つきの文字で残す——形は4段階しかなく、
+                          「高乳酸」と「経済走」の区別は形からは付かないため。
+                        */}
+                        <span className="flex-shrink-0 inline-flex items-center">
+                          <IntensityShape mark={intensityMark(s.category)} />
                         </span>
-                      ) : null}
-                      {view.badge ? (
-                        <span className="text-[10px] ml-1" style={{ color: "var(--text-3)" }}>
-                          {view.badge}
-                        </span>
-                      ) : null}
-                      {/*
-                        途中でやめた日は、予定どおり終えた日と見分けが付くようにする。
-                        **失敗の印ではない**ので赤にしない。琥珀で「ここで切った」とだけ言う。
-                      */}
-                      {abortText ? (
-                        <span
-                          className="text-[10px] ml-1 px-1 py-0.5 rounded"
-                          style={{ background: "var(--surface-2)", color: "var(--amber)" }}
+                        <b
+                          className="flex-shrink-0"
+                          style={{
+                            color: CATEGORY_COLORS[s.category as keyof typeof CATEGORY_COLORS],
+                          }}
                         >
-                          {abortText}
-                        </span>
-                      ) : null}
+                          {label}
+                        </b>
+                        {parts.shape ? (
+                          <b
+                            className="num flex-shrink-0"
+                            style={{ color: "var(--text)" }}
+                            data-calendar-shape
+                          >
+                            {parts.shape}
+                          </b>
+                        ) : null}
+                        {/*
+                          名前は**カテゴリと重複していなければ**出す。
+                          「高乳酸」の行に「高乳酸セッション（300m）」を並べても情報が増えない。
+                          固定枠のチーム練習や自作メニューの名前は他に出ないので残す。
+                          縮んでよいのはここだけ。
+                        */}
+                        {nameShown ? (
+                          <span
+                            className={`truncate min-w-0 ${diverged ? "line-through" : ""}`}
+                            style={{ color: "var(--text-3)" }}
+                          >
+                            {nameShown}
+                          </span>
+                        ) : null}
+                        {s.isFixed ? (
+                          <span
+                            className="text-[10px] flex-shrink-0"
+                            style={{ color: "var(--text-3)" }}
+                          >
+                            固定
+                          </span>
+                        ) : null}
+                        {view.badge ? (
+                          <span
+                            className="text-[10px] flex-shrink-0"
+                            style={{ color: "var(--text-3)" }}
+                          >
+                            {view.badge}
+                          </span>
+                        ) : null}
+                        {/*
+                          途中でやめた日は、予定どおり終えた日と見分けが付くようにする。
+                          **失敗の印ではない**ので赤にしない。琥珀で「ここで切った」とだけ言う。
+                        */}
+                        {abortText ? (
+                          <span
+                            className="text-[10px] px-1 py-0.5 rounded flex-shrink-0"
+                            style={{ background: "var(--surface-2)", color: "var(--amber)" }}
+                          >
+                            {abortText}
+                          </span>
+                        ) : null}
+                      </span>
+
+                      {/*
+                        2段目: 設定｜レスト。**どちらも縮めない。**
+                        予定と違うことをやった日は、予定ではなく実際を出す。
+                      */}
                       {diverged && actualText ? (
                         <span
-                          className="block text-[10.5px] truncate"
+                          className="block text-[11px] num"
                           style={{ color: "var(--forge)" }}
+                          data-calendar-detail
                         >
                           実際: {actualText}
                         </span>
-                      ) : view.prescription ? (
+                      ) : parts.target || parts.rest ? (
                         <span
-                          className="block text-[10.5px] truncate"
-                          style={{ color: "var(--text-3)" }}
+                          className="flex flex-wrap items-center gap-x-1.5 text-[11px] num"
+                          style={{ color: "var(--text-2)" }}
+                          data-calendar-detail
                         >
                           {/*
-                            距離×本数と設定タイムだけに詰める。
-                            原文をそのまま置いて CSS で切ると、
-                            `@300m 41.2〜41.6秒` の手前で切れて
-                            **一番見たい設定タイムが真っ先に消える**。
-                            読み取れない形なら原文をそのまま出す。
+                            設定は**区間ごとに別の塊**にする。
+                            1本の文字列にすると狭い幅で折り返せず、
+                            切らないと決めたぶんが横にはみ出す。
                           */}
-                          {shortPrescription(view.prescription) ?? view.prescription}
+                          {(parts.targets ?? []).map((t, ti) => (
+                            <span key={ti} className="flex-shrink-0" data-calendar-target>
+                              {t}
+                            </span>
+                          ))}
+                          {parts.targets?.length && parts.rest ? (
+                            <span className="flex-shrink-0" style={{ color: "var(--text-3)" }}>
+                              ｜
+                            </span>
+                          ) : null}
+                          {parts.rest ? (
+                            <span className="flex-shrink-0" data-calendar-rest>
+                              {parts.rest}
+                            </span>
+                          ) : null}
+                        </span>
+                      ) : rawFallback ? (
+                        <span
+                          className="block text-[11px] truncate"
+                          style={{ color: "var(--text-3)" }}
+                          data-calendar-detail
+                        >
+                          {rawFallback}
                         </span>
                       ) : null}
                     </span>
@@ -942,36 +1017,61 @@ function DayRow({
           </Link>
         ) : null}
 
+        {/*
+          操作は**畳んでおく**。
+          ✎と＋を常に出していたとき、1日に2本ある日はボタンが3つ並び、
+          予定そのものが読める幅を奪っていた（練習前に読むのは予定であって操作ではない）。
+          長押しでも同じ編集シートが開くので、これは取りこぼし用の導線。
+        */}
         {!moving ? (
-          <>
-            {/*
-              長押しはiOSだと取りこぼすことがあるので、押せる場所も置く。
-              セッションが複数ある日は、それぞれに届くようボタンも複数出す
-              （色をカテゴリと揃えて、どの行に対応するか分かるようにする）。
-            */}
-            {editableSessions.map((s) => (
-              <button
-                key={s.id}
-                className="btn-ghost !py-1.5 !px-2 !text-[12px] flex-shrink-0"
-                style={editableSessions.length > 1 ? { borderColor: CATEGORY_COLORS[s.category as keyof typeof CATEGORY_COLORS], color: CATEGORY_COLORS[s.category as keyof typeof CATEGORY_COLORS] } : undefined}
-                onClick={() => onLongPress(s)}
-                aria-label={`「${s.name}」を変更`}
-                title={`「${s.name}」の変更・移動・削除`}
-              >
-                ✎
-              </button>
-            ))}
-            <button
-              className="btn-ghost !py-1.5 !px-2 !text-[12px] flex-shrink-0"
-              onClick={() => onAdd(date)}
-              aria-label="この日に練習を足す"
-              title="この日に練習を足す"
-            >
-              ＋
-            </button>
-          </>
+          <button
+            className="btn-ghost !py-1.5 !px-2 !text-[12px] flex-shrink-0"
+            onClick={() => setOpenOps((v) => !v)}
+            aria-expanded={openOps}
+            aria-label={`${date} の操作`}
+            title="変更・移動・削除・足す"
+            data-calendar-ops-toggle
+          >
+            {openOps ? "×" : "⋯"}
+          </button>
         ) : null}
       </div>
+
+      {openOps && !moving ? (
+        <div className="flex items-center gap-2 flex-wrap mt-1.5 pl-[52px]" data-calendar-ops>
+          {/*
+            セッションが複数ある日は、それぞれに届くようボタンも複数出す
+            （色をカテゴリと揃えて、どの行に対応するか分かるようにする）。
+          */}
+          {editableSessions.map((s) => (
+            <button
+              key={s.id}
+              className="btn-ghost !py-1.5 !px-2.5 !text-[12px]"
+              style={
+                editableSessions.length > 1
+                  ? {
+                      borderColor: CATEGORY_COLORS[s.category as keyof typeof CATEGORY_COLORS],
+                      color: CATEGORY_COLORS[s.category as keyof typeof CATEGORY_COLORS],
+                    }
+                  : undefined
+              }
+              onClick={() => onLongPress(s)}
+              aria-label={`「${s.name}」を変更`}
+              title={`「${s.name}」の変更・移動・削除`}
+            >
+              ✎ {CATEGORY_LABELS[s.category as keyof typeof CATEGORY_LABELS] ?? s.category}
+            </button>
+          ))}
+          <button
+            className="btn-ghost !py-1.5 !px-2.5 !text-[12px]"
+            onClick={() => onAdd(date)}
+            aria-label="この日に練習を足す"
+            title="この日に練習を足す"
+          >
+            ＋ 足す
+          </button>
+        </div>
+      ) : null}
 
       {/*
         中止した予定。一覧からは外してあるが、押し間違いに気づけるよう

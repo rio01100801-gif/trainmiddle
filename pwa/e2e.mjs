@@ -52,6 +52,24 @@ async function setSlider(locator, value) {
   }, value);
 }
 
+/**
+ * カレンダーの行の操作（✎・＋）を開く。
+ *
+ * 操作は畳んである——常に出していたとき、1日に2本ある日はボタンが3つ並び、
+ * **予定そのものが読める幅を奪っていた**。
+ * 検査は操作を使うので、先に開ける。
+ */
+async function openAllDayOps(page) {
+  const toggles = page.locator("[data-calendar-ops-toggle]");
+  const n = await toggles.count();
+  for (let i = 0; i < n; i += 1) {
+    const t = toggles.nth(i);
+    if ((await t.getAttribute("aria-expanded")) === "true") continue;
+    await t.click();
+  }
+  await page.waitForTimeout(200);
+}
+
 const errors = [];
 page.on("pageerror", (e) => errors.push("pageerror: " + e));
 page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
@@ -2280,6 +2298,7 @@ step("N-3 本文からのカテゴリ判定OK（根拠つき・断定しない�
 // 編集シートで本文を書き換えると欄が組み変わること
 await page.goto("http://localhost:8791/#/calendar");
 await page.waitForTimeout(900);
+await openAllDayOps(page);
 await page.getByRole("button", { name: /を変更/ }).first().click();
 await page.waitForTimeout(600);
 const ta = page.locator("textarea").first();
@@ -2446,6 +2465,7 @@ step("カレンダー: 日付タップで記録画面へ行くOK");
 // ＋ を押したら追加シートが開き、画面の上に出ること
 await page.goto("http://localhost:8791/#/calendar");
 await page.waitForTimeout(900);
+await openAllDayOps(page);
 await page.getByRole("button", { name: "この日に練習を足す" }).nth(3).click();
 await page.waitForTimeout(700);
 let calAddText = await page.textContent("body");
@@ -2470,6 +2490,7 @@ if (!calAddText.includes("朝ジョグ（テスト）")) fail("＋から追加�
 step("カレンダー: ＋から練習を足せるOK（シートが画面内に出る・記録するリンクあり）");
 
 // ✎ を押したら編集シートが開くこと（ラベルはセッション名を含む形に変わった）
+await openAllDayOps(page);
 await page.getByRole("button", { name: /を変更/ }).first().click();
 await page.waitForTimeout(700);
 calAddText = await page.textContent("body");
@@ -2479,27 +2500,29 @@ if (editBox && editBox.y > 844) fail(`編集シートが画面外に出ている
 const calendarEditSheet = page.locator("section.card", { hasText: "メニュー本文" }).first();
 const calendarEditBody = calendarEditSheet.locator("textarea").first();
 /*
- * 末尾に印を足す形だと、カレンダーの行が短い形（距離×本数と設定）を
- * 出すようになった時点で見えなくなる——**行が詰まったのか、
- * 保存が効いていないのかを区別できない**。
- * 行が必ず残すもの（距離）を書き換えて、それが出ることで確かめる。
+ * **行が必ず残すもの**を書き換えて、それが出ることで確かめる。
+ *
+ * 以前は括弧で印を足していたが、行は括弧の中を落とすようになった
+ * （自作メニューの説明が形に混ざり、切れない長い塊になって
+ * 320px幅で横にはみ出したため）。印が消えると
+ * 「行が詰まったのか、保存が効いていないのか」を区別できない。
+ *
+ * 設定は行が絶対に切らない場所なので、そこを書き換える。
+ * これで**保存の反映**と**設定が表示に残ること**を同時に見られる。
  */
 const calendarEditBefore = await calendarEditBody.inputValue();
-// 印は `@`（設定の始まり）より前に入れる。そこが行に残る側
+const MARK_PACE = "9:59/km";
 await calendarEditBody.fill(
-  calendarEditBefore.includes("@")
-    ? calendarEditBefore.replace("@", "（カレンダー反映テスト）@")
-    : `${calendarEditBefore}（カレンダー反映テスト）`
+  calendarEditBefore.replace(/@[^（]*/, `@${MARK_PACE} `)
 );
 await page.waitForTimeout(900);
 await calendarEditSheet.getByRole("button", { name: "保存する", exact: true }).click();
 await page.waitForTimeout(1200);
-const reflectedCalendarRow = page.locator("div.card a.flex-1", {
-  hasText: "カレンダー反映テスト",
-});
+const reflectedCalendarRow = page.locator("div.card a.flex-1", { hasText: MARK_PACE });
 if ((await reflectedCalendarRow.count()) === 0) {
+  const rowText = (await page.locator("div.card a.flex-1").first().textContent()) ?? "";
   fail(
-    `カレンダーで保存したメニュー本文が一覧へ反映されない（元: ${calendarEditBefore.slice(0, 40)}）`
+    `カレンダーで保存したメニュー本文が一覧へ反映されない（元: ${calendarEditBefore.slice(0, 40)} / 行: ${rowText.slice(0, 60)}）`
   );
 }
 step("カレンダー: 編集保存→一覧・再取得への反映OK");
@@ -2529,6 +2552,7 @@ await page.waitForTimeout(400);
 await page.goto("http://localhost:8791/#/calendar");
 await page.waitForTimeout(900);
 const multiRow = page.locator("div.card", { hasText: "流し（複数セッションE2E）" }).first();
+await openAllDayOps(page);
 const multiEditButtons = multiRow.getByRole("button", { name: /を変更/ });
 const multiEditCount = await multiEditButtons.count();
 if (multiEditCount < 2) {
@@ -2626,6 +2650,7 @@ await page.goto("http://localhost:8791/#/calendar");
 await page.waitForTimeout(900);
 
 const fixedRow = page.locator("div.card", { hasText: "チーム練習（固定枠E2E）" }).first();
+await openAllDayOps(page);
 const fixedEdit = fixedRow.getByRole("button", { name: /チーム練習（固定枠E2E）」を変更/ });
 if ((await fixedEdit.count()) === 0) {
   fail("固定枠に✎が出ない（やらなかったことを記録する導線が無い）");
@@ -2673,6 +2698,7 @@ await page.goto("http://localhost:8791/#/");
 await page.waitForTimeout(400);
 await page.goto("http://localhost:8791/#/calendar");
 await page.waitForTimeout(900);
+await openAllDayOps(page);
 await page.getByRole("button", { name: "この日に練習を足す" }).nth(5).click();
 await page.waitForTimeout(700);
 // 判定も欄も「追加シートの中」を見る（編集シートの欄を数えてしまわないように）
@@ -3192,33 +3218,47 @@ else {
 
   const runBtn = page.getByRole("button", { name: "実行する", exact: true }).first();
   /*
-   * 見るべきは「ボタンが覆われているか」ではなく「FABがモーダルより前に出ていないか」。
+   * 固定の「＋」は削除した（forge-v107）。
+   * カレンダーの日付・分析の文章・下部ナビの上に重なっていて、
+   * しかもホームの「記録する」・各日の＋・記録画面の入力と機能が重複していた。
    *
-   * ボタンとFABが実際に重なるかは画面の高さとセーフエリアで変わるので、
-   * 特定の端末でだけ押せなくなる。E2Eの画面幅でたまたま重なっていないと素通りする。
-   * ダイアログが開いている間はFABが暗幕の裏に回っていること、を不変条件にする。
-   * これが崩れると、重なる端末では確実に押せなくなる。
+   * ここで見るのは2つ。
+   *   ・浮いている「＋」が**戻っていない**こと
+   *   ・確認ボタンの上に浮いているものが無いこと（重なる端末で押せなくなる）
+   *
+   * 「ボタンが押せた」だけを見ると、E2Eの画面幅でたまたま重なっていないときに素通りする。
    */
-  const fabOnTop = await page.evaluate(() => {
-    const fab = document.querySelector('button[aria-label="記録を追加"]');
-    if (!fab) return { checked: false, onTop: false };
-    const r = fab.getBoundingClientRect();
-    const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-    return { checked: true, onTop: !!top && (top === fab || fab.contains(top)) };
-  });
-  if (!fabOnTop.checked) fail("S-5: FABが見つからない（この画面では出るはず）");
-  else if (fabOnTop.onTop) {
-    fail("S-5: ダイアログが開いているのにFABが前面にある（重なる端末では確認ボタンを押せない）");
+  const floatingAdd = await page
+    .locator('button[aria-label="記録を追加"], button[aria-label="閉じる"][class*="rounded-full"]')
+    .count();
+  if (floatingAdd > 0) {
+    fail("固定の「＋」が戻っている（カレンダーや分析の文章に重なる）");
   }
+  const covering = await page.evaluate(() => {
+    const btns = [...document.querySelectorAll("button")].filter(
+      (b) => (b.textContent || "").trim() === "実行する"
+    );
+    if (btns.length === 0) return "確認ボタンが無い";
+    const r = btns[0].getBoundingClientRect();
+    const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    if (!top) return null;
+    if (top === btns[0] || btns[0].contains(top)) return null;
+    // 上に乗っているものが position:fixed なら、画面の高さ次第で押せなくなる
+    const style = window.getComputedStyle(top);
+    return style.position === "fixed"
+      ? (top.tagName + "." + String(top.className || "")).slice(0, 60)
+      : null;
+  });
+  if (covering) fail(`S-5: 確認ボタンの上に浮いているものがある（${covering}）`);
   const clicked = await runBtn
     .click({ timeout: 4000 })
     .then(() => true)
     .catch(() => false);
-  if (!clicked) fail("S-5: 確認ボタンが押せない（FABに隠れている）");
+  if (!clicked) fail("S-5: 確認ボタンが押せない");
   await page.waitForTimeout(700);
   const afterDel = await page.textContent("body");
   if (!/削除しました|元に戻す/.test(afterDel)) fail("S-5: 削除が実行されていない");
-  step("S-5 削除の確認ボタンが押せるOK（FABの上に出る）");
+  step("S-5 削除の確認ボタンが押せるOK（浮いているものに隠れない・固定の＋は無い）");
 }
 
 // ---- 16. Q-2: 足りていないカテゴリの提案 ----
@@ -4529,7 +4569,8 @@ if ((await fitRebuildCard.count()) === 0) {
   await page.waitForFunction(() => !document.getElementById("splash"), { timeout: 15000 });
   await page.waitForTimeout(900);
 
-  // 編集シートを開く
+  // 編集シートを開く（操作は畳んであるので先に開ける）
+  await openAllDayOps(page);
   const pencil = page.locator('button[aria-label="編集"], button:has-text("✎")').first();
   if ((await pencil.count()) === 0) {
     fail("カレンダー写真転記: 編集ボタンが見つからない");
@@ -6232,6 +6273,232 @@ if ((await fitRebuildCard.count()) === 0) {
 
   if (failCount === warmupBefore) {
     step("アップOK（畳んである／保存され戻る／独立セッションにならない／合計に足す／復元で残る）");
+  }
+}
+
+// ---- カレンダーの行: 設定とレストを切らない ----
+/*
+ * 元の不具合は「メニュー名だけでなく設定タイムまで切れている」。
+ * 原文をCSSで切ると前から残るので、**一番見たい数字が真っ先に消える**。
+ *
+ * ここで見るのは4つ。
+ *   ・設定とレストが**省略記号なしで全部出ている**こと（実寸で測る）
+ *   ・距離×本数も切れていないこと
+ *   ・種目名がカテゴリと重複していたら省かれていること
+ *   ・操作（✎・＋）が畳まれていること
+ *
+ * **文字が入っているかだけでは足りない。** `text-overflow: ellipsis` は
+ * DOMのテキストを削らないので、textContent では切れていても分からない。
+ * 要素の実幅と中身の幅を比べる（`scrollWidth > clientWidth` なら切れている）。
+ */
+{
+  const calRowBefore = failCount;
+
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("http://localhost:8791/#/calendar");
+    await page.waitForTimeout(800);
+
+    const cut = await page.evaluate(() => {
+      const out = [];
+      const sel = "[data-calendar-shape],[data-calendar-target],[data-calendar-rest]";
+      document.querySelectorAll(sel).forEach((el) => {
+        // 1pxの丸め誤差は無視する
+        if (el.scrollWidth - el.clientWidth > 1) {
+          out.push(
+            (el.getAttribute("data-calendar-target") !== null
+              ? "設定"
+              : el.getAttribute("data-calendar-rest") !== null
+              ? "レスト"
+              : "距離×本数") +
+              ": " +
+              (el.textContent || "")
+          );
+        }
+      });
+      return out;
+    });
+    if (cut.length > 0) {
+      fail(
+        `カレンダー行（${width}px幅）: 切ってはいけない部分が切れている — ${cut.join(" / ")}`
+      );
+    }
+
+    // 設定が1つは出ていること（そもそも出ていなければ切れようがない＝検査が空振りする）
+    const targetCount = await page.locator("[data-calendar-target]").count();
+    if (targetCount === 0) {
+      fail(`カレンダー行（${width}px幅）: 設定が1つも出ていない（検査が空振りする）`);
+    }
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  // 重複する名称が省かれていること
+  await page.goto("http://localhost:8791/#/calendar");
+  await page.waitForTimeout(700);
+  const calBody = (await page.textContent("body")) ?? "";
+  if (/高乳酸セッション|CVインターバル|レースペース経済走/.test(calBody)) {
+    fail("カレンダー行: カテゴリと重複する名称が省かれていない");
+  }
+
+  // 操作は畳んである（予定を読む幅を奪わない）
+  if ((await page.locator("[data-calendar-ops]").count()) > 0) {
+    fail("カレンダー行: 操作（✎・＋）が最初から出ている");
+  }
+  const opsToggle = page.locator("[data-calendar-ops-toggle]").first();
+  if ((await opsToggle.count()) === 0) {
+    fail("カレンダー行: 操作を開くボタンが無い（編集に辿れない）");
+  } else {
+    await opsToggle.click();
+    await page.waitForTimeout(300);
+    if ((await page.locator("[data-calendar-ops]").count()) === 0) {
+      fail("カレンダー行: 押しても操作が出ない");
+    }
+  }
+
+  if (failCount === calRowBefore) {
+    step("カレンダー行OK（設定とレストを切らない・重複名称を省く・操作は畳む）");
+  }
+}
+
+// ---- 分析: 結論 → 行動 → 根拠 ----
+/*
+ * これまで「課題」「判定材料」「4週間の変更」「不足データ」が同じ強さで並んでいて、
+ * どれが結論なのか分からなかった。
+ *
+ * ここで見るのは3つ。
+ *   ・最上部に結論・行動・リスクの3つが出ていること
+ *   ・**根拠は開くまで出ていない**こと（開くまでDOMに無い）
+ *   ・不足データが1つにまとまっていること（別々の大きなカードにしない）
+ */
+{
+  const anaBefore = failCount;
+  await page.goto("http://localhost:8791/#/analysis");
+  await page.waitForTimeout(1400);
+
+  const head = page.locator("[data-analysis-headline]");
+  if ((await head.count()) === 0) fail("分析: 最上部の結論カードが無い");
+  else {
+    for (const [sel, what] of [
+      ["[data-headline-problem]", "最大の課題"],
+      ["[data-headline-risk]", "現在のリスク"],
+    ]) {
+      const el = page.locator(sel);
+      if ((await el.count()) === 0) fail(`分析: 「${what}」が最上部に無い`);
+      else if (!((await el.first().textContent()) ?? "").trim()) {
+        fail(`分析: 「${what}」が空（空欄を良い状態として出さない）`);
+      }
+    }
+
+    // 根拠は畳んである
+    if ((await page.locator("[data-analysis-headline] ~ * >> text=この判定の根拠").count()) > 0) {
+      fail("分析: 根拠が最初から出ている");
+    }
+    const rationale = page.getByRole("button", { name: /判定の根拠を見る/ });
+    if ((await rationale.count()) === 0) fail("分析: 根拠を開くボタンが無い（数字を疑えない）");
+    else {
+      const bodyBefore = (await page.textContent("body")) ?? "";
+      if (bodyBefore.includes("400m・1500mからの推定")) {
+        fail("分析: 根拠（400m・1500mからの推定）が開く前から出ている");
+      }
+      await rationale.first().click();
+      await page.waitForTimeout(400);
+      const bodyAfter = (await page.textContent("body")) ?? "";
+      if (!bodyAfter.includes("400m・1500mからの推定")) {
+        fail("分析: 根拠を開いても推定が出ない");
+      }
+    }
+
+    /*
+     * 制限因子を2か所に出さない。
+     * 結論カードへ移したので、下に同じ見出しのカードが残っていたら重複。
+     */
+    // 見出しだけを見る（根拠の本文にも「制限因子」の語が出るので body 全体では拾えない）
+    const limiterHeadings = await page.locator("section.card .card-t h2", { hasText: "制限因子" }).count();
+    if (limiterHeadings > 0) {
+      fail("分析: 「制限因子」のカードが残っている（結論カードと二重）");
+    }
+  }
+
+  if (failCount === anaBefore) {
+    step("分析OK（結論・行動・リスクが最上部／根拠は開くまで出さない／制限因子は二重にしない）");
+  }
+}
+
+// ---- ホーム: 数字と結論を先に出す ----
+/*
+ * これまでは処方の原文をそのまま置いていた。
+ * 走る前に要るのは「何を・どのペースで・どの体感で」の3つで、理由の文はその場では読まない。
+ *
+ * **消したのではなく奥へ移した**ことを確かめる——
+ * 消してしまうと「なぜこの設定なのか」があとから追えなくなる。
+ */
+{
+  const homeBefore = failCount;
+
+  /*
+   * 注記つきの処方を今日の予定に入れてから見る。
+   *
+   * 「注記があれば見る」だけにしていたとき、その日の処方に注記が無くて
+   * **検査ごと飛んでいた**（理由を最初から出す実装に変えても落ちなかった）。
+   * 検査したい状態は検査の側で作る。
+   */
+  const noteSetup = await page.evaluate(async () => {
+    const d = await fetch("/api/dashboard").then((r) => r.json());
+    const id = d?.todaySession?.id;
+    if (!id) return { ok: false, reason: "今日の予定が無い" };
+    const r = await fetch("/api/sessions", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id,
+        prescription:
+          "40分有酸素ジョグ @4:42/km〜5:02/km（会話可能な呼吸・RPE 3〜4を優先。暑熱時はペースを強制しない）",
+      }),
+    }).then((x) => x.json());
+    return { ok: !r.error, reason: r.error };
+  });
+  if (!noteSetup.ok) fail(`ホーム: 検査の準備に失敗（${noteSetup.reason}）`);
+
+  await page.goto("http://localhost:8791/#/");
+  await page.waitForTimeout(1200);
+
+  const shape = page.locator("[data-today-shape]");
+  if ((await shape.count()) === 0) fail("ホーム: 今日の形（距離×本数・時間）が出ていない");
+
+  const targets = await page.locator("[data-today-target]").count();
+  const noteToggle = page.locator("[data-today-note-toggle]");
+  if (targets === 0 && (await noteToggle.count()) === 0) {
+    // 読めない処方なら原文が出ているはず。何も出ていないのは別の不具合
+    const txt = (await page.locator("[data-today-shape]").first().textContent()) ?? "";
+    if (!txt.trim()) fail("ホーム: 今日のメニューが何も出ていない");
+  }
+
+  /*
+   * 注記のある処方かどうかを先に確かめる。
+   * 「畳んでいるボタンがあれば見る」だけだと、注記の無い日には検査ごと飛ぶ——
+   * 実際に一度これで空振りした（理由を最初から出す実装に変えても落ちなかった）。
+   */
+  const todayHasNote = await page.evaluate(async () => {
+    const d = await fetch("/api/dashboard").then((r) => r.json());
+    return String(d?.todaySession?.prescription ?? "").includes("（");
+  });
+  if (todayHasNote && (await noteToggle.count()) === 0) {
+    fail("ホーム: 注記のある処方なのに「狙いと注意点」が無い（説明を消してしまっている）");
+  }
+  if ((await noteToggle.count()) > 0) {
+    // 理由は開くまで出さない
+    if ((await page.locator("[data-today-note]").count()) > 0) {
+      fail("ホーム: 狙いと注意点が最初から出ている（数字より先に文章が来る）");
+    }
+    await noteToggle.first().click();
+    await page.waitForTimeout(300);
+    if ((await page.locator("[data-today-note]").count()) === 0) {
+      fail("ホーム: 狙いと注意点を開いても出ない（消してしまっている）");
+    }
+  }
+
+  if (failCount === homeBefore) {
+    step("ホームOK（形と設定を先に出す／理由は畳むが消さない）");
   }
 }
 
