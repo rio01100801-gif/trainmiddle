@@ -54,6 +54,26 @@ describe("4-6 プラン自動生成", () => {
     expect(neural.length).toBeGreaterThan(0);
   });
 
+  it("400mPBが未設定でも、流しを含むプランを例外なく生成する", () => {
+    const athleteWithout400mPb = { ...athlete, pb400mSec: undefined };
+    const generated = generatePlan({
+      athlete: athleteWithout400mPb,
+      goal,
+      races: [race],
+      cfeSec: 111.0,
+      aerobicProfile: aerobic,
+      startDate: "2026-06-08",
+    });
+    const neural = generated.sessions.filter((session) => session.category === "neural");
+    const pacedNeural = neural.filter((session) => session.targetPaces.length > 0);
+
+    expect(neural.length).toBeGreaterThan(0);
+    expect(pacedNeural.length).toBeGreaterThan(0);
+    expect(pacedNeural.every((session) => session.targetPaces.every((pace) => pace.isEstimated))).toBe(
+      true
+    );
+  });
+
   describe("不具合対応: 「ジョグ＋坂ダッシュ/流し」の複合メニューを別々のセッションに分ける", () => {
     // 坂ダッシュ・流しは同じ日にジョグ枠を別途自動生成する（combinedJogMin）。
     const hillOrStrides = plan.sessions.filter(

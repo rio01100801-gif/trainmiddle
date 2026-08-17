@@ -1,9 +1,9 @@
 {
   "_comment": "測った現在値をそのまま下限にしてある。下げるときは差分に必ず出る。根拠なく高い値を置かない（通らない閾値は無視されるようになり、結局なにも守らなくなる）。上げるのは、未検証の分岐を実際に埋めたとき。npm run coverage:report が「どこが空白か」を出す。",
   "lines": 94.9,
-  "branches": 86,
+  "branches": 86.2,
   "functions": 94.1,
-  "statements": 93,
+  "statements": 93.1,
   "src/lib/core/cfe.ts": {
     "lines": 100,
     "branches": 96.7,

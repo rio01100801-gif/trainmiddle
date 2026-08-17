@@ -14,7 +14,7 @@ import type {
 } from "./types";
 import { diffDays, fmtTime } from "./dates";
 import { impliedFromInterval } from "./backfill";
-import { GRP_RATIOS } from "./pace";
+import { ABILITY_CONVERSION_RATIOS } from "./pace";
 
 /**
  * RPE 1ポイントあたりの補正（秒/800m）。
@@ -205,7 +205,7 @@ export function updateCfeFromResult(
     }
   }
 
-  if (!GRP_RATIOS[session.category]) {
+  if (!ABILITY_CONVERSION_RATIOS[session.category]) {
     /*
      * 800m相当への換算比率を持たないカテゴリ（CV・閾値）。
      *

@@ -30,6 +30,22 @@ export const GRP_RATIOS: Partial<
 };
 
 /**
+ * 実測から800m能力へ換算してよいカテゴリと比率。
+ *
+ * `GRP_RATIOS` は設定ペース算出用なので neural を残す。400mPBが無いときの
+ * `neuralPace` もこの設定用比率へフォールバックする。一方、神経系の速さは
+ * 800m能力の指標にはしないため、能力換算用のこの表には含めない。
+ * 設定と能力推定の適用範囲を同じ定数の有無で判定すると、両者の目的が混ざる。
+ */
+export const ABILITY_CONVERSION_RATIOS: Partial<
+  Record<SessionCategory, { fast: number; slow: number }>
+> = {
+  modeling: GRP_RATIOS.modeling,
+  high_lactate: GRP_RATIOS.high_lactate,
+  race_economy: GRP_RATIOS.race_economy,
+};
+
+/**
  * 特異的セッションの設定タイムを算出する。
  * @param economyProgressWeek 経済走の導入週番号（0始まり）。導入期は106%から入り
  *   週ごとに段階的に104%へ寄せる（仕様書 4-2 注記）。

@@ -9,6 +9,7 @@ import {
   toSessionAndResult,
   type PastEntry,
 } from "@/lib/core/backfill";
+import { specificPace } from "@/lib/core/pace";
 import { testAthlete } from "./helpers";
 
 const TODAY = "2026-07-25";
@@ -52,6 +53,45 @@ describe("他距離 → 800m 換算", () => {
 });
 
 describe("ポイント練習 → 800m 換算", () => {
+  it("設定どおりなら、距離によらずimplied800はCFEと一致する", () => {
+    const cfeSec = 109.51;
+    for (const distanceM of [200, 300, 400, 600, 800]) {
+      const target = specificPace(cfeSec, "high_lactate", distanceM);
+      const targetMidpoint = (target.targetSecFast + target.targetSecSlow) / 2;
+      const result = impliedFromInterval(
+        entry({
+          kind: "interval",
+          category: "high_lactate",
+          repDistanceM: distanceM,
+          repTimesSec: [targetMidpoint, targetMidpoint, targetMidpoint],
+        })
+      );
+
+      expect(result?.implied800mSec, `${distanceM}m`).toBeCloseTo(cfeSec, 8);
+    }
+  });
+
+  it("換算側だけ標準400mへRiegel補正すると、設定どおりでも距離別に乖離する", () => {
+    const cfeSec = 109.51;
+    const distances = [200, 300, 400, 600, 800];
+    const expectedBroken = [114.16, 111.42, 109.51, 106.88, 105.05];
+
+    const oneSidedCorrection = distances.map((distanceM) => {
+      const target = specificPace(cfeSec, "high_lactate", distanceM);
+      const targetMidpoint = (target.targetSecFast + target.targetSecSlow) / 2;
+      const normalized400m = riegel(targetMidpoint, distanceM, 400);
+      const prescriptionRatio = targetMidpoint / distanceM / (cfeSec / 800);
+      return (normalized400m / 400 / prescriptionRatio) * 800;
+    });
+
+    for (let i = 0; i < distances.length; i++) {
+      expect(oneSidedCorrection[i], `${distances[i]}m`).toBeCloseTo(expectedBroken[i], 2);
+      if (distances[i] !== 400) {
+        expect(oneSidedCorrection[i], `${distances[i]}mがCFEから乖離`).not.toBeCloseTo(cfeSec, 1);
+      }
+    }
+  });
+
   it("高乳酸の設定式を逆算する", () => {
     // 高乳酸の比率は 0.95〜0.97、中央 0.96
     // 300m を 42.0秒平均 → 800m相当 = 42/300/0.96*800 = 116.67
@@ -77,6 +117,20 @@ describe("ポイント練習 → 800m 換算", () => {
       })
     );
     expect(r).toBeUndefined();
+  });
+
+  it("神経系は設定用比率があっても800m能力へ換算しない", () => {
+    const result = impliedFromInterval(
+      entry({
+        kind: "interval",
+        category: "neural",
+        repDistanceM: 200,
+        repTimesSec: [24, 24, 24],
+        rpe: 9,
+      })
+    );
+
+    expect(result).toBeUndefined();
   });
 
   it("標準より長いレストで出したタイムは割り引く", () => {
@@ -186,6 +240,26 @@ describe("現在地の推定", () => {
     );
     expect(a.estimated800mSec).toBeUndefined();
     expect(a.excluded[0].reason).toContain("有酸素");
+  });
+
+  it("神経系は設定ペースに使っても現在地の測定からは除外する", () => {
+    const assessment = assessCurrentFitness(
+      [
+        entry({
+          kind: "interval",
+          date: "2026-07-20",
+          category: "neural",
+          repDistanceM: 200,
+          repTimesSec: [24, 24, 24],
+          rpe: 9,
+        }),
+      ],
+      athlete,
+      TODAY
+    );
+
+    expect(assessment.estimated800mSec).toBeUndefined();
+    expect(assessment.excluded[0].reason).toContain("設定ペース用");
   });
 
   it("涼しい実測が2件以上あれば暑熱下のデータを除外する", () => {

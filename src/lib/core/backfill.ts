@@ -31,7 +31,7 @@ import type {
 } from "./types";
 import { diffDays } from "./dates";
 import { estimateWbgt, HEAT_FLAG_WBGT_THRESHOLD, HEAT_FLAG_TEMP_THRESHOLD } from "./environment";
-import { GRP_RATIOS } from "./pace";
+import { ABILITY_CONVERSION_RATIOS } from "./pace";
 
 // ---------------------------------------------------------------------------
 // データ型
@@ -191,7 +191,7 @@ export function impliedFromInterval(
   const times = entry.repTimesSec?.filter((t) => t > 0) ?? [];
   if (!cat || !dist || times.length === 0) return undefined;
 
-  const ratios = GRP_RATIOS[cat];
+  const ratios = ABILITY_CONVERSION_RATIOS[cat];
   if (!ratios) return undefined;
 
   // RPEが低い＝全力ではない。能力の下限しか分からないので採用しない。
@@ -224,7 +224,6 @@ export function impliedFromInterval(
   if (times.length >= 5) reliability = 0.55;
   // 高乳酸・モデリングは800mへの転移が高いので相対的に信用できる
   if (cat === "modeling") reliability += 0.1;
-  if (cat === "cv" || cat === "threshold") reliability -= 0.2;
   reliability = Math.max(0.1, Math.min(0.65, reliability));
 
   return {
@@ -426,7 +425,9 @@ export function assessCurrentFitness(
         reason:
           e.rpe !== undefined && e.rpe < 6
             ? `RPE${e.rpe}（全力でない練習からは能力を測れない）`
-            : e.category && !GRP_RATIOS[e.category]
+            : e.category === "neural"
+              ? "neural の比率は設定ペース用で、800m能力の指標には使いません"
+              : e.category && !ABILITY_CONVERSION_RATIOS[e.category]
               ? `${e.category} は800m相当への換算比率が無いため能力推定に使えません（負荷とLT推定には算入）`
               : "カテゴリ・距離・タイムのいずれかが不足",
       });
