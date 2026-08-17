@@ -71,11 +71,13 @@ describe("ポイント練習 → 800m 換算", () => {
     }
   });
 
-  it("換算側だけ標準400mへRiegel補正すると、設定どおりでも距離別に乖離する", () => {
+  it("片側だけ標準400mへRiegel補正した場合の距離別乖離を測定値として記録する", () => {
     const cfeSec = 109.51;
     const distances = [200, 300, 400, 600, 800];
     const expectedBroken = [114.16, 111.42, 109.51, 106.88, 105.05];
 
+    // これは仮の壊れた式が生む測定値の記録であり、impliedFromInterval の実装を
+    // 見張る回帰テストではない。実装への片側補正を検出するのは直前の不変条件テスト。
     const oneSidedCorrection = distances.map((distanceM) => {
       const target = specificPace(cfeSec, "high_lactate", distanceM);
       const targetMidpoint = (target.targetSecFast + target.targetSecSlow) / 2;
