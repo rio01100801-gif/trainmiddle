@@ -43,13 +43,88 @@ export function describeActualResult(result: SessionResult | undefined): string 
   return undefined;
 }
 
+/**
+ * 「予定と違う」と言ってよい差の大きさ。
+ *
+ * 30分の予定を50分やったら**一目で分かってほしい**。
+ * 一方で 40分 → 42分 のような揺れまで印を付けると、
+ * 印が付いていること自体が情報でなくなる。
+ *
+ * 割合と絶対値の**両方**を満たしたときだけ違うと言う。
+ * 割合だけだと 10分 → 12分（20%）が引っかかり、
+ * 絶対値だけだと 90分 → 95分 が引っかかる。どちらも普通の揺れ。
+ */
+const DIFF_RATIO = 0.15;
+const DIFF_MIN_MINUTES = 5;
+const DIFF_MIN_KM = 1;
+
+function meaningfullyDifferent(planned: number, actual: number, floor: number): boolean {
+  if (planned <= 0) return false;
+  const gap = Math.abs(actual - planned);
+  return gap >= floor && gap / planned >= DIFF_RATIO;
+}
+
+/**
+ * 予定と違うことをやったか。
+ *
+ * 見るのは2つ。
+ *   1. **種目の食い違い**（ジョグの予定でインターバルをやった、など）
+ *   2. **量の食い違い**（30分の予定を50分やった）
+ *
+ * 2を足したのは、種目が同じだと画面に何も出ず、
+ * カレンダーを見ても予定どおりに見えていたため（実際に指摘された）。
+ *
+ * **予定データは書き換えない。** 表示を補うだけ
+ * （黙って数値を書き換えない原則。予定は予定として残す）。
+ */
 export function actualDiffersFromPlan(
   session: Session,
   result: SessionResult | undefined
 ): boolean {
   if (!result) return false;
   const plannedContinuous = session.category === "aerobic";
+
+  // 1. 種目の食い違い
   if (plannedContinuous && result.interval) return true;
   if (!plannedContinuous && result.continuous) return true;
+
+  // 2. 量の食い違い
+  if (result.continuous) {
+    const min = result.continuous.durationMin;
+    if (
+      min !== undefined &&
+      session.durationMin !== undefined &&
+      meaningfullyDifferent(session.durationMin, min, DIFF_MIN_MINUTES)
+    ) {
+      return true;
+    }
+    const km = result.continuous.distanceKm;
+    if (
+      km !== undefined &&
+      session.distanceKm !== undefined &&
+      meaningfullyDifferent(session.distanceKm, km, DIFF_MIN_KM)
+    ) {
+      return true;
+    }
+  }
+
+  /*
+   * インターバルの本数は**打ち切りの印（中止 2/4本）で既に出している**ので、
+   * ここでは数えない。同じことを2つの印で言うと、どちらを見ればいいのか分からなくなる。
+   * 距離を変えた場合（300m予定を400mでやった）だけを見る。
+   */
+  if (result.interval && !plannedContinuous) {
+    const plannedM = session.targetPaces?.[0]?.distanceM;
+    const actualM = result.interval.distanceM;
+    if (
+      plannedM !== undefined &&
+      actualM !== undefined &&
+      plannedM > 0 &&
+      actualM !== plannedM
+    ) {
+      return true;
+    }
+  }
+
   return false;
 }

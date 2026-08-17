@@ -2644,7 +2644,8 @@ await page.waitForTimeout(400);
 await page.goto("http://localhost:8791/#/calendar");
 await page.waitForTimeout(900);
 const divergedText = await page.textContent("body");
-if (!divergedText.includes("実際: 6本 100m")) {
+// 「実際:」の見出しはやめ、予定→実際を並べる形にした（forge-v111）
+if (!divergedText.includes("6本 100m")) {
   fail("不具合2: 予定と違う結果を記録してもカレンダーに実際の内容が出ない");
 }
 step("カレンダー: 予定と違う結果を記録すると「実際:」が表示されるOK（不具合2対応）");
@@ -6884,6 +6885,84 @@ if ((await fitRebuildCard.count()) === 0) {
 
   if (failCount === paceBefore) {
     step("アップのペースOK（押せる形・桁が増えない・小数が打てる・ペースから時間を計算）");
+  }
+}
+
+// ---- カレンダー: 予定と違う量をやった日が一目で分かる ----
+/*
+ * 「30分ジョグの予定を50分にしたら、カレンダーで一目で分かるようにしたい」という指摘。
+ *
+ * 種目が同じ（どちらもジョグ）だと以前は何も出ず、予定どおりに見えていた。
+ *
+ * ここで見るのは3つ。
+ *   ・予定と実際が**並んで**出ること（片方だけだと何から変わったのか読めない）
+ *   ・予定側に取り消し線が付くこと（どちらが実際かを色だけに頼らない）
+ *   ・普通の揺れには印を付けないこと（印が付くこと自体が情報でなくなる）
+ */
+{
+  const diffBefore = failCount;
+
+  const setup = await page.evaluate(async () => {
+    const d = await fetch("/api/sessions").then((r) => r.json());
+    const s = (d.sessions ?? [])
+      .filter((x) => x.status === "planned" && x.category === "aerobic" && x.durationMin)
+      .sort((a, b) => a.date.localeCompare(b.date))[0];
+    if (!s) return { ok: false, reason: "対象のジョグが無い" };
+
+    // 予定の時間から大きく外して記録する（30分 → 50分 のような差）
+    const longer = Math.round(s.durationMin * 2);
+    const res = await fetch("/api/results", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: s.id,
+        date: s.date,
+        continuous: { distanceKm: 10, durationMin: longer },
+        achievement: "achieved",
+        rpe: 5,
+        subjective: "easy",
+        durationMin: longer,
+      }),
+    }).then((r) => r.json());
+    if (res.error) return { ok: false, reason: res.error };
+    return { ok: true, date: s.date, planned: s.durationMin, actual: longer };
+  });
+
+  if (!setup.ok) fail(`予定と違う量: 検査の準備に失敗（${setup.reason}）`);
+  else {
+    await page.goto("http://localhost:8791/#/calendar");
+    await page.waitForTimeout(1000);
+
+    const row = page.locator("div.card").filter({ hasText: setup.date.slice(5).replace("-", "/") }).first();
+    if ((await row.count()) === 0) fail("予定と違う量: その日の行が見つからない");
+    else {
+      const planned = row.locator("[data-calendar-planned]");
+      const actual = row.locator("[data-calendar-actual]");
+      if ((await actual.count()) === 0) {
+        const text = (await row.textContent()) ?? "";
+        fail(`予定と違う量: 実際にやった内容が出ていない（${text.slice(0, 80)}）`);
+      } else {
+        // 予定と実際が並んでいること
+        if ((await planned.count()) === 0) {
+          fail("予定と違う量: 予定側が出ていない（何から変わったのか読めない）");
+        } else {
+          const struck = await planned.first().evaluate(
+            (el) => window.getComputedStyle(el).textDecorationLine
+          );
+          if (!String(struck).includes("line-through")) {
+            fail("予定と違う量: 予定側に取り消し線が無い（色だけに頼っている）");
+          }
+        }
+        const actualText = (await actual.first().textContent()) ?? "";
+        if (!actualText.includes(String(setup.actual))) {
+          fail(`予定と違う量: 実際の時間が出ていない（${actualText}）`);
+        }
+      }
+    }
+  }
+
+  if (failCount === diffBefore) {
+    step("カレンダー: 予定と違う量が一目で分かるOK（予定→実際が並ぶ・取り消し線）");
   }
 }
 

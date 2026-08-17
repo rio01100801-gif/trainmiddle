@@ -956,12 +956,39 @@ function DayRow({
                         予定と違うことをやった日は、予定ではなく実際を出す。
                       */}
                       {diverged && actualText ? (
+                        /*
+                          予定と違うことをやった日。
+                          **予定と実際を並べて出す。**
+
+                          以前は実際だけを出していたので、
+                          「30分の予定を50分やった」ことがカレンダーからは読めなかった
+                          （実際に指摘された）。何から何に変わったのかを1行で見せる。
+                        */
                         <span
-                          className="block text-[11px] num"
-                          style={{ color: "var(--forge)" }}
+                          className="flex flex-wrap items-center gap-x-1.5 text-[11px] num"
                           data-calendar-detail
                         >
-                          実際: {actualText}
+                          {parts.shape ? (
+                            <span
+                              className="line-through flex-shrink-0"
+                              style={{ color: "var(--text-3)" }}
+                              data-calendar-planned
+                            >
+                              {parts.shape}
+                            </span>
+                          ) : null}
+                          {parts.shape ? (
+                            <span className="flex-shrink-0" style={{ color: "var(--text-3)" }}>
+                              →
+                            </span>
+                          ) : null}
+                          <span
+                            className="flex-shrink-0 font-semibold"
+                            style={{ color: "var(--forge)" }}
+                            data-calendar-actual
+                          >
+                            {actualText}
+                          </span>
                         </span>
                       ) : parts.target || parts.rest ? (
                         <span
