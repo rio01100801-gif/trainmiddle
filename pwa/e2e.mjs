@@ -4684,6 +4684,24 @@ if ((await fitRebuildCard.count()) === 0) {
     const pad = (n) => String(n).padStart(2, "0");
     const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
     const d = await fetch("/api/sessions").then((r) => r.json());
+    window.__diag = await (async () => {
+      const g = await fetch("/api/goal").then((r) => r.json()).catch(() => null);
+      const ps = await fetch("/api/plan-settings").then((r) => r.json()).catch(() => null);
+      const future = (d.sessions ?? []).filter((x) => x.date >= today);
+      const phases = Object.entries(
+        future.reduce((acc, x) => {
+          acc[x.phase ?? "なし"] = (acc[x.phase ?? "なし"] ?? 0) + 1;
+          return acc;
+        }, {})
+      ).map(([k, v]) => `${k}:${v}`).join(" ");
+      return {
+        goal: JSON.stringify(g?.goal ?? null).slice(0, 200),
+        weekTemplate: JSON.stringify(ps?.weekTemplate ?? null).slice(0, 500),
+        races: (g?.races ?? []).map((r) => `${r.id}/${r.date ?? r.startDate}/${r.name}`).join(" , ").slice(0, 300),
+        phases,
+        last10: future.slice(-10).map((x) => `${x.date}:${x.category}:${x.phase ?? "-"}`).join(" "),
+      };
+    })();
     const s = (d.sessions ?? [])
       .filter(
         (x) =>
@@ -4807,6 +4825,24 @@ if ((await fitRebuildCard.count()) === 0) {
     const pad = (n) => String(n).padStart(2, "0");
     const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
     const d = await fetch("/api/sessions").then((r) => r.json());
+    window.__diag = await (async () => {
+      const g = await fetch("/api/goal").then((r) => r.json()).catch(() => null);
+      const ps = await fetch("/api/plan-settings").then((r) => r.json()).catch(() => null);
+      const future = (d.sessions ?? []).filter((x) => x.date >= today);
+      const phases = Object.entries(
+        future.reduce((acc, x) => {
+          acc[x.phase ?? "なし"] = (acc[x.phase ?? "なし"] ?? 0) + 1;
+          return acc;
+        }, {})
+      ).map(([k, v]) => `${k}:${v}`).join(" ");
+      return {
+        goal: JSON.stringify(g?.goal ?? null).slice(0, 200),
+        weekTemplate: JSON.stringify(ps?.weekTemplate ?? null).slice(0, 500),
+        races: (g?.races ?? []).map((r) => `${r.id}/${r.date ?? r.startDate}/${r.name}`).join(" , ").slice(0, 300),
+        phases,
+        last10: future.slice(-10).map((x) => `${x.date}:${x.category}:${x.phase ?? "-"}`).join(" "),
+      };
+    })();
     const s = (d.sessions ?? [])
       .filter(
         (x) =>
@@ -4816,13 +4852,50 @@ if ((await fitRebuildCard.count()) === 0) {
           (x.targetPaces?.length ?? 0) > 1
       )
       .sort((a, b) => a.date.localeCompare(b.date))[0];
-    return s
-      ? { date: s.date, prescription: s.prescription, distances: s.targetPaces.map((p) => p.distanceM) }
-      : null;
+    if (s) {
+      return { date: s.date, prescription: s.prescription, distances: s.targetPaces.map((p) => p.distanceM) };
+    }
+    /*
+     * 見つからないときは**何があったのか**を返す。
+     * 「無い」とだけ言う失敗は、生成の形が変わったのか、
+     * 先の検査が完了済みにしたのか、日付で外れたのかを区別できない。
+     */
+    return {
+      missing: true,
+      today,
+      modeling: (d.sessions ?? [])
+        .filter((x) => x.category === "modeling")
+        .map((x) => `${x.date}/${x.status}/paces${x.targetPaces?.length ?? 0}`),
+      total: (d.sessions ?? []).length,
+      maxDate: (d.sessions ?? []).map((x) => x.date).sort().at(-1),
+      futureCats: Object.entries(
+        (d.sessions ?? [])
+          .filter((x) => x.date >= today)
+          .reduce((acc, x) => {
+            acc[x.category] = (acc[x.category] ?? 0) + 1;
+            return acc;
+          }, {})
+      )
+        .map(([k, v]) => `${k}:${v}`)
+        .join(" "),
+    };
   });
 
-  if (!target) {
-    fail("複合の欄: モデリングの予定が無い（生成の形が変わった？）");
+  if (!target || target.missing) {
+    const diag = await page.evaluate(() => window.__diag);
+    /*
+     * 「無い」だけでは、生成の形が変わったのか・先の検査が完了済みにしたのか・
+     * 日付で外れたのかを区別できない。**何があったのか**まで出す。
+     *
+     * 実際にこれで原因を特定した: 曜日を固定した週に3日目の高負荷が入り、
+     * 生成側の保険が毎週1日をCVへ落としていた。どれが落ちるかは
+     * 予定を作り始めた曜日で決まり、水・木からだとレース再現が全部消えた。
+     */
+    fail(
+      `複合の欄: モデリングの予定が無い（今日=${target?.today} / 全${target?.total}件 最終${target?.maxDate}` +
+        ` / 今日以降=${target?.futureCats} / フェーズ=${diag?.phases}` +
+        ` / 曜日=${diag?.weekTemplate} / モデリング=${(target?.modeling ?? []).join(" , ") || "0件"}）`
+    );
   } else {
     // 処方そのものが区間の形になっていること（500m(68.7〜69.4)＋300m(...)）
     if (!/\d+m\([\d.〜]+\)＋/.test(target.prescription)) {
@@ -6229,6 +6302,21 @@ if ((await fitRebuildCard.count()) === 0) {
       if ((await page.locator('[data-testid="warmup-detail"]').count()) === 0) {
         fail("アップ: 詳しい欄が開かない");
       }
+      /*
+       * 流しの各本のタイムを入れる。**わざと2本目を空ける。**
+       * 未計測の本を0秒として詰めてしまうと、位置がずれて
+       * 「何本目が速かったか」が後から読めなくなる。
+       */
+      const repInputs = page.locator('[data-testid^="warmup-time-1-"]');
+      if ((await repInputs.count()) < 3) {
+        fail(`アップ: 流しの本数ぶんのタイム欄が無い（${await repInputs.count()}個）`);
+      } else {
+        await repInputs.nth(0).fill("21.5");
+        await page.waitForTimeout(150);
+        await repInputs.nth(2).fill("20.5");
+        await page.waitForTimeout(300);
+      }
+
       const legs = page.locator('[data-testid="warmup-legs"] button', { hasText: "弾む" }).first();
       if ((await legs.count()) === 0) fail("アップ: アップ後の脚を選べない");
       else {
@@ -6283,6 +6371,17 @@ if ((await fitRebuildCard.count()) === 0) {
       if (stored.legs !== "bouncy") fail(`アップ: 脚が保存されていない（${stored.legs}）`);
       if (!(stored.segments ?? []).some((x) => x.kind === "strides")) {
         fail("アップ: 区間が保存されていない");
+      }
+      /*
+       * 各本のタイムが**位置ごと**に残っていること。
+       * 小数が丸まっていないこと、未計測の2本目が詰められていないこと。
+       */
+      const strideSeg = (stored.segments ?? []).find((x) => x.kind === "strides");
+      const savedTimes = strideSeg?.timesSec ?? null;
+      if (JSON.stringify(savedTimes) !== JSON.stringify([21.5, null, 20.5])) {
+        fail(
+          `アップ: 各本のタイムが位置ごとに残っていない（${JSON.stringify(savedTimes)}）`
+        );
       }
 
       // 5) カレンダーに独立したセッションとして出ない
@@ -6877,27 +6976,107 @@ if ((await fitRebuildCard.count()) === 0) {
       await page.waitForTimeout(500);
 
       /*
-       * 2) ペースを入れると合計時間が計算される。
+       * 2) ジョグのペースと、流しの本数ぶんの実測タイムを入れると
+       * 合計時間が計算される。
        *
        * **桁の検査より先にやる。** 合計を手で触ると
        * 「手で入れた合計を使う」状態に切り替わる（仕様）ので、
        * 先に − を押してしまうと計算されなくなり、
        * **実装が正しくても落ちる検査**になる（実際に一度これで落ちた）。
        */
-      const pace0 = page.locator('[data-testid="warmup-pace-0"]');
-      if ((await pace0.count()) === 0) fail("アップのペース: ペースの欄が無い");
+      const paceMinutes = page.locator('[data-testid="warmup-pace-0-min"]');
+      const paceSeconds = page.locator('[data-testid="warmup-pace-0-sec"]');
+      if ((await paceMinutes.count()) === 0 || (await paceSeconds.count()) === 0) {
+        fail("アップのペース: iPhoneで4:30を入れられる分・秒の欄が無い");
+      }
       else {
-        await pace0.fill("5:00");
+        if (
+          (await paceMinutes.getAttribute("inputmode")) !== "numeric" ||
+          (await paceSeconds.getAttribute("inputmode")) !== "numeric"
+        ) {
+          fail("アップのペース: 分・秒の数字キーボード指定が無い");
+        }
+        const paceGroup = page.locator('[data-testid="warmup-pace-0"]');
+        const paceText = (await paceGroup.textContent()) ?? "";
+        if (!paceText.includes(":") || !paceText.includes("/km")) {
+          fail("アップのペース: 4:30/kmのどこを入力しているか読めない");
+        }
+        await paceMinutes.fill("5");
+        await paceSeconds.fill("0");
         await page.waitForTimeout(600);
-        const pace1 = page.locator('[data-testid="warmup-pace-1"]');
-        if (await pace1.count()) {
-          await pace1.fill("3:20");
+
+        const strideTimes = page.locator('[data-testid^="warmup-time-1-"]');
+        const strideCount = await strideTimes.count();
+        if (strideCount !== 4) {
+          fail(`アップの流し: 4本なのにタイム欄が${strideCount}本分しかない`);
+        } else {
+          for (let i = 0; i < strideCount; i++) {
+            if ((await strideTimes.nth(i).getAttribute("inputmode")) !== "decimal") {
+              fail("アップの流し: 秒を小数で入力できる指定が無い");
+            }
+            await strideTimes.nth(i).fill("20");
+          }
           await page.waitForTimeout(600);
         }
+        /*
+         * 打っている途中で値が丸まらないこと。
+         * 21.5 と打った直後に 21 へ戻ると、打ち直しになって入力が続かない。
+         */
+        await strideTimes.nth(0).fill("21.5");
+        await page.waitForTimeout(700);
+        if ((await strideTimes.nth(0).inputValue()) !== "21.5") {
+          fail(
+            `アップの流し: 小数が打っている途中で戻る（${await strideTimes.nth(0).inputValue()}）`
+          );
+        }
+        await strideTimes.nth(0).fill("20");
+        await page.waitForTimeout(400);
+
+        // 単位が読めること（21が秒なのか分なのか分からない、という指摘）
+        const repLabel = (await page.textContent("body")) ?? "";
+        if (!repLabel.includes("1本目")) {
+          fail("アップの流し: 何本目のどの単位を入れているのか読めない");
+        }
+
+        /*
+         * 本数を変えたら欄も追従すること。
+         * 減らしたときは余分な本のタイムを残さない
+         * （画面から消えた値が保存に混ざると、あとで説明できない）。
+         */
+        const repsInput = page
+          .getByRole("textbox", { name: /流しの本数|本数/ })
+          .last();
+        if ((await repsInput.count()) === 0) {
+          fail("アップの流し: 本数の欄が見つからない（追従の検査ができない）");
+        } else {
+          await repsInput.fill("2");
+          await page.waitForTimeout(700);
+          const after = await page.locator('[data-testid^="warmup-time-1-"]').count();
+          if (after !== 2) {
+            fail(`アップの流し: 本数を2にしてもタイム欄が${after}個のまま`);
+          }
+          await repsInput.fill("4");
+          await page.waitForTimeout(700);
+          const back = await page.locator('[data-testid^="warmup-time-1-"]').count();
+          if (back !== 4) {
+            fail(`アップの流し: 本数を4に戻してもタイム欄が${back}個のまま`);
+          }
+          // 減らしたときに捨てた3・4本目が復活しないこと
+          const revived = await page.locator('[data-testid="warmup-time-1-2"]').inputValue();
+          if (revived !== "") {
+            fail(`アップの流し: 減らして消したはずのタイムが戻る（${revived}）`);
+          }
+          for (let i = 0; i < 4; i++) {
+            await page.locator(`[data-testid="warmup-time-1-${i}"]`).fill("20");
+            await page.waitForTimeout(120);
+          }
+          await page.waitForTimeout(500);
+        }
+
         const timeInput = page.getByRole("textbox", { name: "合計時間" }).first();
         const mins = Number(await timeInput.inputValue());
         /*
-         * ジョグ3km@5:00 = 15分、流し100m×4=0.4km@3:20 = 1.3分 → 16.3分。
+         * ジョグ3km@5:00 = 15分、流し100m×4@20秒 = 80秒 = 1.3分 → 16.3分。
          * 計算されていなければ型の既定（25分）のまま。
          */
         if (!(mins > 15 && mins < 18)) {
@@ -6940,7 +7119,7 @@ if ((await fitRebuildCard.count()) === 0) {
   }
 
   if (failCount === paceBefore) {
-    step("アップのペースOK（押せる形・桁が増えない・小数が打てる・ペースから時間を計算）");
+    step("アップ入力OK（分・秒/km、本数ぶんの実測秒、小数、区間からの時間計算）");
   }
 }
 
