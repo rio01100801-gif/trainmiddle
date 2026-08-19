@@ -83,8 +83,8 @@ export interface WarmupSegment {
   distanceM?: number;
   /** 本数。流しなど繰り返すもの。ジョグは1 */
   reps?: number;
-  /** 1本ずつのタイム（秒）。分かるものだけ入れる */
-  timesSec?: number[];
+  /** 1本ずつのタイム（秒）。測っていない本は null のまま残し、推測で埋めない */
+  timesSec?: (number | null)[];
   /** レスト（秒） */
   restSec?: number;
   /** レストをジョグの距離で取った場合（m） */
@@ -156,12 +156,18 @@ export function segmentDistanceKm(seg: WarmupSegment): number {
 /**
  * 区間1つぶんの時間（秒）。
  *
- * 距離とペースが両方あるときだけ出す。片方でも欠けたら 0
+ * 1本ごとの実測タイムがあればその合計を使う。無ければ、距離とペースが
+ * 両方あるときだけ出す。どちらの経路でも時間が分からなければ 0
  * （**分からないものを0分として合計に混ぜない**）。
  * レストは含めない——アップのレストは歩きや立ち止まりで、
  * 走った時間として数えるものではない。
  */
 export function segmentDurationSec(seg: WarmupSegment): number {
+  const measuredTimes = (seg.timesSec ?? []).filter(
+    (seconds): seconds is number => typeof seconds === "number" && seconds > 0
+  );
+  // 流し等は1本ごとの実測を優先する。距離から1kmペースへ読み替えない。
+  if (measuredTimes.length > 0) return measuredTimes.reduce((sum, seconds) => sum + seconds, 0);
   const km = segmentDistanceKm(seg);
   if (km <= 0 || seg.paceSecPerKm === undefined || seg.paceSecPerKm <= 0) return 0;
   return km * seg.paceSecPerKm;
@@ -180,7 +186,7 @@ export interface WarmupTotals {
  * 画面はこれを合計欄に入れる。**手で直した合計は上書きしない**のは画面側の責任で、
  * ここは「区間から計算するとこうなる」だけを返す。
  *
- * ペースの無い区間があれば missingPace に数える。
+ * タイムまたはペースが足りない区間は missingPace に数える。
  * 合計時間が短く出ているのに理由が分からない状態を作らないため。
  */
 export function warmupTotalsFromSegments(segments: WarmupSegment[]): WarmupTotals {
@@ -192,7 +198,12 @@ export function warmupTotalsFromSegments(segments: WarmupSegment[]): WarmupTotal
     km += segKm;
     const segSec = segmentDurationSec(seg);
     if (segSec > 0) sec += segSec;
-    else if (segKm > 0) missingPace += 1;
+    const measuredTimeCount = (seg.timesSec ?? []).filter(
+      (seconds): seconds is number => typeof seconds === "number" && seconds > 0
+    ).length;
+    const expectedTimeCount = Math.max(1, Math.trunc(seg.reps ?? 1));
+    if (measuredTimeCount > 0 && measuredTimeCount < expectedTimeCount) missingPace += 1;
+    else if (segSec <= 0 && segKm > 0) missingPace += 1;
   }
   return {
     // 桁を増やさない（0.1km・0.1分まで）
@@ -348,8 +359,12 @@ export function normalizeWarmup(x: unknown): WarmupRecord | undefined {
       const kind = s.kind as WarmupSegmentKind;
       if (!WARMUP_SEGMENT_KINDS.includes(kind)) continue;
       const times = Array.isArray(s.timesSec)
-        ? s.timesSec.filter((t): t is number => typeof t === "number" && Number.isFinite(t))
+        ? s.timesSec.map((t) =>
+            typeof t === "number" && Number.isFinite(t) && t > 0 ? t : null
+          )
         : undefined;
+      // 末尾の空欄は保存しない。途中のnullは「その本だけ未計測」なので位置を保つ。
+      while (times?.at(-1) === null) times.pop();
       segments.push({
         kind,
         distanceM: num(s.distanceM),

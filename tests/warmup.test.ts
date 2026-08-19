@@ -17,6 +17,7 @@ import {
   describeSegment,
   normalizeWarmup,
   segmentDistanceKm,
+  segmentDurationSec,
   summarizeWarmup,
   warmupAddedDistanceKm,
   warmupAddedDurationMin,
@@ -279,6 +280,13 @@ describe("外から来た値の正規化", () => {
     expect(none?.segments[0].timesSec).toBeUndefined();
   });
 
+  it("途中だけ未計測のタイムは本の位置を保つ", () => {
+    const w = normalizeWarmup({
+      segments: [{ kind: "strides", distanceM: 150, reps: 3, timesSec: [21, null, 20.5] }],
+    });
+    expect(w?.segments[0].timesSec).toEqual([21, null, 20.5]);
+  });
+
   it("空白だけのメモは残さない", () => {
     expect(normalizeWarmup({ totalDistanceKm: 3, note: "   " })?.note).toBeUndefined();
     expect(normalizeWarmup({ totalDistanceKm: 3, note: " 脚が重い " })?.note).toBe("脚が重い");
@@ -403,6 +411,27 @@ describe("区間から合計を出す", () => {
     ]);
     expect(out.distanceKm).toBeCloseTo(0.4);
     expect(out.durationMin).toBeCloseTo(1.3);
+  });
+
+  it("流しは本数ぶんの実測タイムを足し、1kmペースへ読み替えない", () => {
+    const segment = {
+      kind: "strides" as const,
+      distanceM: 150,
+      reps: 2,
+      timesSec: [21, 20.5],
+    };
+    expect(segmentDurationSec(segment)).toBeCloseTo(41.5);
+    const out = warmupTotalsFromSegments([segment]);
+    expect(out.durationMin).toBeCloseTo(0.7);
+    expect(out.missingPace).toBe(0);
+  });
+
+  it("本数より実測タイムが少なければ、合計が未完成だと示す", () => {
+    const out = warmupTotalsFromSegments([
+      { kind: "strides", distanceM: 150, reps: 2, timesSec: [21] },
+    ]);
+    expect(out.durationMin).toBeCloseTo(0.4);
+    expect(out.missingPace).toBe(1);
   });
 
   it("複数の区間を足し上げる", () => {

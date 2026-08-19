@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Card,
   CategoryBadge,
@@ -19,9 +19,7 @@ import { localToday } from "@/lib/core/dates";
 import { useQueryParam } from "../components/route-query";
 import {
   completeRunTriple,
-  fmtPaceSecPerKm,
   formatTimeInput,
-  parsePaceToSecPerKm,
 } from "@/lib/core/inputFormat";
 import { parseRest } from "@/lib/core/bulkImport";
 import { avgPaceSecPerKm, buildRepResults, REST_LABELS } from "@/lib/core/workoutLog";
@@ -75,6 +73,7 @@ import {
   type WarmupBreathing,
   type WarmupLegs,
   type WarmupRecord,
+  type WarmupSegmentKind,
 } from "@/lib/core/warmup";
 import { PAIN_MAX, PAIN_MIN, RPE_MAX, RPE_MIN, isValidRpe } from "@/lib/core/rpe";
 import type {
@@ -1371,6 +1370,176 @@ const WARMUP_BREATHING_OPTIONS = (
   Object.keys(WARMUP_BREATHING_LABELS) as WarmupBreathing[]
 ).map((v) => ({ value: v, label: WARMUP_BREATHING_LABELS[v] }));
 
+const WARMUP_REP_TIME_KINDS = new Set<WarmupSegmentKind>([
+  "strides",
+  "acceleration",
+  "short_stimulus",
+]);
+
+function WarmupPaceInput({
+  label,
+  valueSec,
+  onChange,
+  testId,
+}: {
+  label: string;
+  valueSec?: number;
+  onChange: (value?: number) => void;
+  testId: string;
+}) {
+  const split = (value: number | undefined) => ({
+    minutes: value === undefined ? "" : String(Math.floor(value / 60)),
+    seconds: value === undefined ? "" : String(Math.round(value % 60)),
+  });
+  const initial = split(valueSec);
+  const [minutes, setMinutes] = useState(initial.minutes);
+  const [seconds, setSeconds] = useState(initial.seconds);
+  const lastCommitted = useRef(valueSec);
+
+  useEffect(() => {
+    if (valueSec === lastCommitted.current) return;
+    const next = split(valueSec);
+    setMinutes(next.minutes);
+    setSeconds(next.seconds);
+    lastCommitted.current = valueSec;
+  }, [valueSec]);
+
+  const commit = (nextMinutes: string, nextSeconds: string) => {
+    if (nextMinutes === "" && nextSeconds === "") {
+      lastCommitted.current = undefined;
+      onChange(undefined);
+      return;
+    }
+    const total = Number(nextMinutes || 0) * 60 + Number(nextSeconds || 0);
+    const next = total > 0 ? total : undefined;
+    lastCommitted.current = next;
+    onChange(next);
+  };
+
+  return (
+    <fieldset className="mt-2" data-testid={testId}>
+      <legend className="metric-label mb-1">
+        ペース<span style={{ color: "var(--text-3)" }}>（1kmあたり・任意）</span>
+      </legend>
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          className="min-h-[44px] min-w-0 flex-1 text-center"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          placeholder="4"
+          aria-label={`${label}のペース（分）`}
+          value={minutes}
+          onChange={(e) => {
+            if (!/^\d*$/.test(e.target.value)) return;
+            setMinutes(e.target.value);
+            commit(e.target.value, seconds);
+          }}
+          data-testid={`${testId}-min`}
+        />
+        <span aria-hidden className="text-lg">:</span>
+        <input
+          type="text"
+          className="min-h-[44px] min-w-0 flex-1 text-center"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          maxLength={2}
+          placeholder="30"
+          aria-label={`${label}のペース（秒）`}
+          value={seconds}
+          onChange={(e) => {
+            if (!/^\d*$/.test(e.target.value)) return;
+            if (e.target.value !== "" && Number(e.target.value) > 59) return;
+            setSeconds(e.target.value);
+            commit(minutes, e.target.value);
+          }}
+          data-testid={`${testId}-sec`}
+        />
+        <span className="text-[12px] flex-shrink-0" style={{ color: "var(--text-3)" }}>
+          /km
+        </span>
+      </div>
+    </fieldset>
+  );
+}
+
+function WarmupRepTimesInput({
+  label,
+  reps,
+  timesSec,
+  onChange,
+  segmentIndex,
+}: {
+  label: string;
+  reps?: number;
+  timesSec?: (number | null)[];
+  onChange: (value?: (number | null)[]) => void;
+  segmentIndex: number;
+}) {
+  const count = Math.max(1, Math.trunc(reps ?? 1));
+  const signature = JSON.stringify(timesSec ?? []);
+  const [drafts, setDrafts] = useState(() =>
+    Array.from({ length: count }, (_, i) =>
+      typeof timesSec?.[i] === "number" ? String(timesSec[i]) : ""
+    )
+  );
+  const lastCommitted = useRef(signature);
+
+  useEffect(() => {
+    if (signature === lastCommitted.current) return;
+    setDrafts(
+      Array.from({ length: count }, (_, i) =>
+        typeof timesSec?.[i] === "number" ? String(timesSec[i]) : ""
+      )
+    );
+    lastCommitted.current = signature;
+  }, [count, signature, timesSec]);
+
+  return (
+    <fieldset className="mt-2">
+      <legend className="metric-label mb-1">
+        1本ごとの実測タイム<span style={{ color: "var(--text-3)" }}>（秒・任意）</span>
+      </legend>
+      <div className="grid grid-cols-2 gap-2">
+        {Array.from({ length: count }, (_, repIndex) => (
+          <label key={repIndex} className="block">
+            <span className="text-[11px] block mb-1" style={{ color: "var(--text-3)" }}>
+              {repIndex + 1}本目（秒）
+            </span>
+            <input
+              type="text"
+              className="w-full min-h-[44px]"
+              inputMode="decimal"
+              pattern="[0-9]*[.,]?[0-9]*"
+              placeholder="例 21.0"
+              aria-label={`${label} ${repIndex + 1}本目のタイム（秒）`}
+              value={drafts[repIndex] ?? ""}
+              onChange={(e) => {
+                const text = e.target.value.replace(",", ".");
+                if (text !== "" && !/^\d+(?:\.\d*)?$/.test(text)) return;
+                setDrafts((current) => {
+                  const nextDrafts = Array.from(
+                    { length: count },
+                    (_, i) => current[i] ?? ""
+                  );
+                  nextDrafts[repIndex] = text;
+                  return nextDrafts;
+                });
+                const next = Array.from({ length: count }, (_, i) => timesSec?.[i] ?? null);
+                next[repIndex] = text === "" ? null : Number(text);
+                while (next.at(-1) === null) next.pop();
+                lastCommitted.current = JSON.stringify(next);
+                onChange(next.length > 0 ? next : undefined);
+              }}
+              data-testid={`warmup-time-${segmentIndex}-${repIndex}`}
+            />
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
 /**
  * ポイント練習前のアップ（任意）。
  *
@@ -1409,12 +1578,6 @@ function WarmupFields({
    * 区間から計算して入れたときだけ、次も計算で更新する。
    */
   const [totalsAuto, setTotalsAuto] = useState(true);
-  /*
-   * ペースは打っている途中が数値にならない（"4:" など）。
-   * 打った文字をそのまま持っておかないと、コロンを打った瞬間に消える。
-   */
-  const [paceDrafts, setPaceDrafts] = useState<Record<number, string>>({});
-
   const w: WarmupRecord = warmup ?? { segments: [], source: "manual" };
   const patch = (over: Partial<WarmupRecord>) => setWarmup({ ...w, ...over });
 
@@ -1578,7 +1741,7 @@ function WarmupFields({
               <span className="text-[11px]" style={{ color: "var(--text-3)" }}>
                 {totalsAuto
                   ? segTotals.missingPace > 0
-                    ? `区間から計算（ペース未入力が${segTotals.missingPace}区間あるので時間は短めです）`
+                    ? `区間から計算（タイムまたはペース未入力が${segTotals.missingPace}区間あるので時間は短めです）`
                     : "区間から計算しています"
                   : "手で入れた合計を使っています"}
               </span>
@@ -1659,38 +1822,46 @@ function WarmupFields({
                     value={str(seg.reps)}
                     onChange={(v) =>
                       patchSegments(
-                        w.segments.map((s, j) => (j === i ? { ...s, reps: numOrUndef(v) } : s))
+                        w.segments.map((s, j) => {
+                          if (j !== i) return s;
+                          const reps = numOrUndef(v);
+                          return {
+                            ...s,
+                            reps,
+                            timesSec:
+                              reps !== undefined && reps > 0
+                                ? s.timesSec?.slice(0, Math.trunc(reps))
+                                : s.timesSec,
+                          };
+                        })
                       )
                     }
                   />
                 </div>
-                {/*
-                  ペース。入れると合計時間が計算される。
-                  「4:30」でも「270」でも読む（`parsePaceToSecPerKm`）。
-                  **入れなくてよい**——入っていない区間は時間に入らないだけ。
-                */}
-                <label className="block mt-2">
-                  <span className="metric-label block mb-1">
-                    ペース<span style={{ color: "var(--text-3)" }}>（分:秒/km・任意）</span>
-                  </span>
-                  <input
-                    className="w-full min-h-[44px]"
-                    inputMode="numeric"
-                    placeholder="例 4:30"
-                    aria-label={`${WARMUP_SEGMENT_LABELS[seg.kind]}のペース`}
-                    value={paceDrafts[i] ?? (seg.paceSecPerKm !== undefined ? fmtPaceSecPerKm(seg.paceSecPerKm) : "")}
-                    onChange={(e) => {
-                      const text = e.target.value;
-                      setPaceDrafts((prev) => ({ ...prev, [i]: text }));
+                {WARMUP_REP_TIME_KINDS.has(seg.kind) ? (
+                  <WarmupRepTimesInput
+                    label={WARMUP_SEGMENT_LABELS[seg.kind]}
+                    reps={seg.reps}
+                    timesSec={seg.timesSec}
+                    segmentIndex={i}
+                    onChange={(timesSec) =>
                       patchSegments(
-                        w.segments.map((s, j) =>
-                          j === i ? { ...s, paceSecPerKm: parsePaceToSecPerKm(text) } : s
-                        )
-                      );
-                    }}
-                    data-testid={`warmup-pace-${i}`}
+                        w.segments.map((s, j) => (j === i ? { ...s, timesSec } : s))
+                      )
+                    }
                   />
-                </label>
+                ) : (
+                  <WarmupPaceInput
+                    label={WARMUP_SEGMENT_LABELS[seg.kind]}
+                    valueSec={seg.paceSecPerKm}
+                    testId={`warmup-pace-${i}`}
+                    onChange={(paceSecPerKm) =>
+                      patchSegments(
+                        w.segments.map((s, j) => (j === i ? { ...s, paceSecPerKm } : s))
+                      )
+                    }
+                  />
+                )}
               </div>
             ))}
           </div>
