@@ -466,6 +466,67 @@ function weekTemplate(
 
 const DOW_BY_WEEK_INDEX: Dow[] = [1, 2, 3, 4, 5, 6, 0];
 
+/**
+ * 週の高負荷（`isSpecificCategory`）を**上限まで優先度で選ぶ**。
+ *
+ * 上限（`MAX_DEMANDING_DAYS_PER_WEEK`）自体は変えない。変えるのは**選び方**。
+ *
+ * これまでは日付順に見て「直前7日がもう埋まっていたらCVへ落とす」だけだった。
+ * 曜日を固定してポイントを2日にしても、フェーズのテンプレートは指定外の日にも
+ * 経済走を置くので候補が週3日になり、毎週どれか1日が落ちる。
+ * **どれが落ちるかは予定を作り始めた曜日で決まっていた。**
+ * 水・木から作り直すと週の1本目（高乳酸・レース再現）が落ち、
+ * 落ちた状態が翌週の条件になるので**ブロックが終わるまで戻らなかった**。
+ * レース再現が1本も入らない予定になる（実際に起きていた）。
+ *
+ * 残す順番:
+ *   1. レース再現（modeling）— この時期の主目的そのもの
+ *   2. 高乳酸（high_lactate）— 800mへの転移が最も大きい
+ *   3. 経済走（race_economy）
+ * 同じ優先度なら、**本人が曜日を指定した枠を残す**。指定していない枠が譲る。
+ *
+ * 譲った枠はCVにする。ジョグまで落とすと週の量が減る。
+ * 従来もどこか1日はCVに落ちていたので、量は変わらない。
+ */
+const DEMANDING_KEEP_ORDER: SessionCategory[] = [
+  "modeling",
+  "high_lactate",
+  "race_economy",
+];
+
+function limitDemandingDays(
+  template: (DayTemplate | null)[],
+  preference: WeekTemplate | undefined,
+  economyWeek: number
+): (DayTemplate | null)[] {
+  const out = [...template];
+  const demanding = out
+    .map((tpl, index) => ({ tpl, index }))
+    .filter((x): x is { tpl: DayTemplate; index: number } =>
+      x.tpl !== null && isSpecificCategory(x.tpl.category)
+    );
+  if (demanding.length <= MAX_DEMANDING_DAYS_PER_WEEK) return out;
+
+  const rank = (x: { tpl: DayTemplate; index: number }) => {
+    const byCategory = DEMANDING_KEEP_ORDER.indexOf(x.tpl.category);
+    // 表に無いカテゴリは最後に回す（残す優先度が一番低い）
+    const category = byCategory < 0 ? DEMANDING_KEEP_ORDER.length : byCategory;
+    const dow = DOW_BY_WEEK_INDEX[x.index];
+    const fixed = preference?.enabled && modeOf(preference, dow) === "fixed" ? 0 : 1;
+    return [category, fixed, x.index] as const;
+  };
+  const ordered = [...demanding].sort((a, b) => {
+    const ra = rank(a);
+    const rb = rank(b);
+    return ra[0] - rb[0] || ra[1] - rb[1] || ra[2] - rb[2];
+  });
+
+  for (const dropped of ordered.slice(MAX_DEMANDING_DAYS_PER_WEEK)) {
+    out[dropped.index] = categoryTemplate("cv", economyWeek) ?? out[dropped.index];
+  }
+  return out;
+}
+
 function templateForSlot(
   slot: ReturnType<typeof slotOf>,
   current: DayTemplate,
@@ -980,13 +1041,38 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
       athlete.pb800mSec
     );
     const grpBase = paceBasis.timeSec;
-    const template = applyWeekPreferences(
-      weekTemplate(phase, weekIndex % 2, economyWeek, emphasis),
-      input.weekTemplate,
-      phase,
-      economyWeek,
-      weekIndex % 2
-    );
+    const template = cycle
+      ? applyWeekPreferences(
+          weekTemplate(phase, weekIndex % 2, economyWeek, emphasis),
+          input.weekTemplate,
+          phase,
+          economyWeek,
+          weekIndex % 2
+        )
+      : limitDemandingDays(
+          applyWeekPreferences(
+            weekTemplate(phase, weekIndex % 2, economyWeek, emphasis),
+            input.weekTemplate,
+            phase,
+            economyWeek,
+            weekIndex % 2
+          ),
+          input.weekTemplate,
+          economyWeek
+        );
+
+    /*
+     * この週に置くと決めた高負荷の枠数。
+     * 下の振り替え（M-7）が「もう埋まっているか」を判断するのに使う。
+     *
+     * `demandingDaysEndingAt` は**後ろ向きの7日間**しか見ない。
+     * 週の頭の枠がまだ置かれていない時点では0に見えるので、
+     * 週の前半で振り替えを許してしまい、**週の1本目（高乳酸・レース再現）が
+     * 予算を使い切られて落ちる**。実際にこれが起きていた。
+     */
+    const weekDemandingPlanned = template.filter(
+      (t) => t !== null && isSpecificCategory(t.category)
+    ).length;
 
     for (let d = 0; d < 7; d++) {
       const date = addDays(w, d);
@@ -1111,7 +1197,13 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
           swapped !== undefined &&
           isSpecificCategory(upTarget.category) &&
           !isSpecificCategory(current.category) &&
-          demandingDaysEndingAt(date) >= MAX_DEMANDING_DAYS_PER_WEEK;
+          (demandingDaysEndingAt(date) >= MAX_DEMANDING_DAYS_PER_WEEK ||
+            /*
+             * **その週にもう2日置くと決まっているなら、3日目を作らない。**
+             * 後ろ向きの7日間だけを見ていると、週の前半では0に見えるので
+             * 振り替えが通り、後から来る週の1本目が代わりに落とされていた。
+             */
+            weekDemandingPlanned >= MAX_DEMANDING_DAYS_PER_WEEK);
         if (swapped && !wouldCrowd) {
           limiterSwaps.push({
             date,
