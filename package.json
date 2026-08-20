@@ -21,7 +21,7 @@
     "build:all:unsafe": "npm run build:pwa && npm run build:css && npm run build:static",
     "e2e": "node pwa/e2e.mjs",
     "e2e:update": "node pwa/e2e-update.mjs",
-    "verify": "npm run typecheck && npm test && npm run build:all && npm run e2e && npm run e2e:update",
+    "verify": "npm run typecheck && npm run test:coverage && npm run build:all && npm run e2e && npm run e2e:update",
     "typecheck:core": "tsc -p tsconfig.check.json",
     "ci:secrets": "node scripts/ci/check-secrets.mjs",
     "ci:forbidden": "node scripts/ci/check-forbidden-patterns.mjs",
