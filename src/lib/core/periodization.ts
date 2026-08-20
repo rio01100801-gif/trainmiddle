@@ -19,7 +19,7 @@ import type {
 import { addDays, diffDays, fmtPacePerKm, fmtTime, weekStart } from "./dates";
 import { guardedBaseTime } from "./cfe";
 import {
-  neuralPace, AerobicProfile, specificPace } from "./pace";
+  grpSecPerM, neuralPace, AerobicProfile, specificPace } from "./pace";
 import { rationaleFor } from "./rationale";
 import { buildSessionSpec, type TemplateHistoryEntry } from "./progression";
 import { isHighLoadCategory, isSpecificCategory } from "./trainingClassification";
@@ -1131,6 +1131,53 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
           transfer800m: 5,
           transfer1500m: 3,
           risk: "mid",
+        };
+      }
+      /*
+       * テーパー期: レース11日前にレースペース近傍を1本だけ置く。
+       *
+       * `taper.ts` の t14 は「総量は維持したまま**質を上げる**」と定義しているのに、
+       * 生成側は D-14〜D-9 にジョグ・流し・休養しか置いていなかった。
+       * 前の質から D-8 の最終高乳酸まで**10日以上**質に触れない期間ができ、
+       * 「落とすのは量であって速さではない」というテーパーの原則と食い違っていた。
+       * （レースの曜日を変えて測ると、7曜日中6曜日で D-14〜D-9 の質が0本だった）
+       *
+       * **400m×2・完全回復6分・GRP 103〜105%。** 総量0.8kmで、9日後のレースに疲労は残らない。
+       *
+       * 帯を99〜101%にしなかったのは、**分類器がその帯を高乳酸と読む**ため。
+       * 保存されたカテゴリが処方自身と食い違う（`prescriptionRoundTrip` が捕まえた）。
+       * カテゴリだけ `race_economy` と名付けてRULE-07を避けるのは、
+       * 「解釈は1か所に集める」という原則に反するうえ、あの規則が守っている
+       * 「14日以内に深い解糖系を2回置かない」という安全側の判断を骨抜きにする。
+       * 分類器の境界は **比1.02**（`bulkImport.ts` の `categoryFromTarget`）。
+       * 600m以下でそれ以下だと高乳酸と読むので、境界の外（103〜105%）に置く。
+       * v119で足した101〜103%の帯も分類器から見ると高乳酸側にあり、
+       * そちらは境界そのものを見直す必要がある（BACKLOG F-3）。
+       * 3本にすると総量1.2kmになり、D-8の最終高乳酸（300m×3＝0.9km）を上回る。
+       * **後に来る刺激より重いものを先に置くのは順序が逆**なので2本に留める。
+       *
+       * カテゴリは `race_economy`。`high_lactate` や `modeling` にすると
+       * RULE-07（14日前以降の高乳酸系は最大1回）が D-8 と合わせて2回と数えてERRORになる
+       * （`hasDeepGlycolyticCostCategory` がこの2つを数える）。
+       */
+      if (daysToTarget === 11 && phase === "Taper") {
+        tpl = {
+          category: "race_economy",
+          name: "レースペース確認（短縮版）",
+          buildPrescription: (g) => {
+            const grp = grpSecPerM(g);
+            const fast = 400 * grp * 1.03;
+            const slow = 400 * grp * 1.05;
+            return {
+              prescription: `400m × 2 @400m ${fast.toFixed(1)}〜${slow.toFixed(1)}秒 r6分（完全回復・感覚の確認）`,
+              targetPaces: [{ distanceM: 400, targetSecFast: fast, targetSecSlow: slow }],
+              durationMin: 40,
+              distanceKm: 5,
+            };
+          },
+          transfer800m: 6,
+          transfer1500m: 3,
+          risk: "low",
         };
       }
       /*
