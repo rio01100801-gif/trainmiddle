@@ -66,7 +66,12 @@ export function phaseForDaysToRace(days: number): Phase {
   if (days >= 84) return "Base"; // 12週〜
   if (days >= 56) return "Build"; // 8〜12週
   if (days >= 28) return "Specific"; // 4〜8週
-  if (days >= 14) return "Modeling"; // 2〜4週
+  /*
+   * 14日前は**テーパー初日**。`taperStage` の t14（「レース14日前〜」）と
+   * 同じ日から始める。以前はここが `>= 14` で、14日前だけ
+   * 「生成はModeling・段階はテーパー」と食い違っていた。
+   */
+  if (days >= 15) return "Modeling"; // 2〜4週
   return "Taper"; // 〜2週
 }
 
@@ -1125,9 +1130,13 @@ export function generatePlan(input: GeneratePlanInput): GeneratedPlan {
           risk: "mid",
         };
       }
-      // レース7日前以降は高負荷練習を置かない（RULE-08）: テンプレ側でneural/jogのみだが保険
+      /*
+       * レース7日前以降は高負荷練習を置かない（RULE-08）。テンプレ側でneural/jogのみだが保険。
+       * 以前は `< 7` だったので**7日前だけ穴**が空いていた。
+       * 8日前に最終高乳酸を置く設計なので、7日前は置かない側でそろえる。
+       */
       if (
-        daysToTarget < 7 &&
+        daysToTarget <= 7 &&
         ["high_lactate", "race_economy", "modeling", "cv", "threshold"].includes(
           tpl.category
         )

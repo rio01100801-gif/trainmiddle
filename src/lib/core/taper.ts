@@ -37,7 +37,14 @@ export const TAPER_STAGE_LABELS: Record<TaperStage, string> = {
 export function taperStage(date: string, raceDate: string): TaperStage {
   const d = diffDays(date, raceDate);
   if (d < 0) return "none";
-  if (d === 0) return "eve";
+  /*
+   * レース当日は「テーパーの段階」ではない。
+   * 以前は当日も `eve`（レース前日）を返していたので、
+   * 当日に何か足すと「レース前日」と表示された。
+   * 生成器は当日にセッションを置かないので普段は出ないが、
+   * 表示に出る値が事実と違うのは直す。
+   */
+  if (d === 0) return "none";
   if (d === 1) return "eve";
   if (d <= 3) return "t3";
   if (d <= 7) return "t7";
@@ -159,6 +166,22 @@ export function planTaper(
       }
       continue;
     }
+
+    /*
+     * **生成器が既にテーパーの形で置いた枠は、もう一度削らない。**
+     *
+     * 生成器はテーパー期の週の形（jog30/jog20/流し/休養）を置くだけでなく、
+     * **3日前以降は日ごとに中身を決めている**（3日前=調整ジョグ20分・
+     * 2日前=完全休養・前日=刺激入れ）。そこへ段階の比率を重ねると
+     * 同じ意図の削減が2回かかる。実際、3日前は生成器が20分に削った上へ
+     * さらに15分の案が出ていた（同じ日に2つの答えがある状態）。
+     *
+     * 14〜7日前は生成器が比率を持っていないので、ここで段階の比率を当てる。
+     * 重なるのは3日前以降だけなので、止めるのもそこだけにする。
+     *
+     * M-2 の量調整を `shouldSuppressVolumeAdjustment` で止めているのと同じ理由。
+     */
+    if (s.origin === "generated" && (stage === "t3" || stage === "eve")) continue;
 
     // 10日前以降: 有酸素の量を段階的に落とす
     if (s.category === "aerobic" && s.durationMin) {
