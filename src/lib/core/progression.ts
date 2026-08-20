@@ -840,17 +840,71 @@ function selectTemplate(
         entry.nextDayLegs === "heavy"
     ).length;
 
+  /*
+   * **到達した段は保つ。**
+   *
+   * 以前は「前回**実施した**段」から始めていた。ところが同じ形式には
+   * 14日のペナルティがかかるので、上の段にレシピが1つしか無いと
+   * 次はそれが避けられて下の段が選ばれ、**その次の希望値も下がる**。
+   * 上がっては落ちるを繰り返し、せっかく到達した段に留まれなかった
+   * （101〜103%帯が隔週でしか出ない状態になっていた）。
+   *
+   * 段を下げるのは**実施できなかったときだけ**にする（未達・高RPE・翌日の脚・中止）。
+   * 履歴は28日で切っているので、昔の一度きりの成功を持ち出すことはない。
+   */
   let desiredStage = Math.min(...candidates.map((candidate) => candidate.progressionStage));
   if (lastCompleted) {
+    /*
+     * 起点は「前回**実施した**段」。到達した最高段には**しない**。
+     * 崩れて1段下げたあと、次の週にいきなり最高段へ戻ってしまう。
+     * 下げたぶんは、下の段で2回こなしてから上がり直す。
+     */
     desiredStage = lastCompleted.progressionStage;
     if (input.trend === "ease" || strainedCount >= 2) {
       desiredStage = Math.max(0, desiredStage - 1);
+    } else if (
+      /*
+       * 次の段へ進むのは、**その段を2回続けてこなせたとき**だけ。
+       * 直近2回が成功でも、下の段での成功なら上の段の実績にはならない。
+       */
+      stableCount >= 2 &&
+      completed.slice(0, 2).every((entry) => entry.progressionStage >= desiredStage)
+    ) {
+      desiredStage++;
     }
-    else if (stableCount >= 2) desiredStage++;
   }
+  /*
+   * **無い段を希望しない。**
+   * 最上段をこなし続けると希望値がその上へ抜けてしまい、
+   * 「どの候補も等しく遠い」状態になって段の差が効かなくなる。
+   * そうなると同じ形式を避けるペナルティだけで決まり、下の段へ落ちる。
+   */
+  desiredStage = Math.min(
+    desiredStage,
+    Math.max(...candidates.map((candidate) => candidate.progressionStage))
+  );
+
+  /*
+   * 希望する段に選択肢が1つしか無いか。
+   *
+   * 「14日以内に同じ形式を繰り返さない」は**入れ替えられる相手がいる前提**の規則。
+   * 相手がいないのにこれを効かせると、繰り返しを避けるために**段を下げる**ことになる。
+   * 濃さを落としてまで形式を変えるのは、狙いが逆。
+   * 相手がいるときは従来どおり回す（ローテーションは段の中で効かせる）。
+   */
+  const aloneAtDesiredStage =
+    candidates.filter((candidate) => candidate.progressionStage === desiredStage).length === 1;
 
   const scored = candidates.map((candidate) => {
-    let score = -Math.abs(candidate.progressionStage - desiredStage) * 2;
+    /*
+     * **段のずれは、他のどの重みよりも重く見る。**
+     *
+     * 同じ形式を14日以内に繰り返すペナルティ（−4）のほうが大きいと、
+     * 上の段にレシピが1つしか無いときに毎回そこから外れる。
+     * ローテーションは**同じ段の中で**効かせるものであって、
+     * 段を下げる理由にはならない。
+     */
+    let score = -Math.abs(candidate.progressionStage - desiredStage) * 6;
     const reasons: string[] = [
       `${input.phase}期の${TRAINING_LOAD_LABELS[candidate.primaryStimulus]}候補`,
     ];
@@ -871,7 +925,9 @@ function selectTemplate(
     for (const entry of history) {
       if (!onDate) continue;
       const age = diffDays(entry.date, onDate);
-      if (entry.templateId === candidate.id && age <= 14) score -= 4;
+      const noAlternative =
+        aloneAtDesiredStage && candidate.progressionStage === desiredStage;
+      if (entry.templateId === candidate.id && age <= 14 && !noAlternative) score -= 4;
       else if (entry.variationGroup === candidate.variationGroup && age <= 14) score -= 1.5;
     }
     if (input.trend === "ease" && candidate.difficulty >= 4) score -= 2;
