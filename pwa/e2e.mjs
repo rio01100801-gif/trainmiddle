@@ -1880,6 +1880,8 @@ else if (gen.unique < 2) {
 }
 step(`S-8 生成が週ごとに変わるOK（高乳酸 ${gen.count}件中 ${gen.unique}種類）`);
 
+// 落ちたのにOKと出さない（この節の失敗を数える）
+const s9Before = failCount;
 const varApi = await page.evaluate(async (id) => {
   const d = await fetch(`/api/variants?sessionId=${id}`).then((r) => r.json());
   return {
@@ -1924,9 +1926,42 @@ if ((await varCard.count()) === 0) {
       nextHl: hl,
       sameSession: target === hl,
       variantsForTarget: v?.variants?.length ?? null,
+      /*
+       * 対象になれる枠を全部あげて、それぞれ案が作れるかを見る。
+       *
+       * **曜日を固定した枠（火・土）はここに出てこない。**
+       * RULE-15 で内容を変えられないので `adaptiveProposals` が除いている。
+       * つまり今日がポイント日でない週は、指定していない曜日の枠だけが対象になる。
+       * その枠がCVだと案が無い（CVにはレシピが無い）ので、カードが出ないのが正しい。
+       *
+       * 出ないのが正しい場合と、出るべきなのに出ない場合を区別する材料。
+       */
+      candidates: await (async () => {
+        const all = await fetch("/api/adaptive?all=1").then((r) => r.json());
+        const ids = (all?.proposals ?? []).map((x) => x?.session?.id).filter(Boolean);
+        const out = [];
+        let any = false;
+        for (const id of ids) {
+          const vv = await fetch("/api/variants?sessionId=" + id).then((r) => r.json());
+          const n = vv?.variants?.length ?? 0;
+          if (n > 0) any = true;
+          out.push(id + ":" + (n || "なし"));
+        }
+        return { text: out.join(" , ") || "対象なし", any };
+      })(),
     };
   }, nextHl);
-  fail(`S-9: TODAYに進め方の2案が出ていない（${JSON.stringify(why)}）`);
+  if (why.candidates?.any) {
+    fail(`S-9: TODAYに進め方の2案が出ていない（${JSON.stringify(why)}）`);
+  } else {
+    /*
+     * **出ないのが正しい場合。** 対象になれる枠に案が1つも無い。
+     * ここで黙って通すと「何も見ていない」ので、何を見なかったかを出す。
+     */
+    step(
+      `S-9 進め方の2案: 案を作れる対象が無いので未実施（対象=${why.candidates?.text}）`
+    );
+  }
 }
 else {
   if ((await varCard.getByRole("button", { name: "この進め方にする" }).count()) !== 2) {
@@ -1967,7 +2002,7 @@ else {
     fail("S-9: 押しても、変更内容も断りの理由も出ない");
   }
 }
-step("S-9 進め方の2案OK（理由つき・TODAYで選べる）");
+if (failCount === s9Before) step("S-9 進め方の2案OK（理由つき・TODAYで選べる）");
 await shot("36_variants");
 
 // CFEは動かないこと
@@ -4113,7 +4148,16 @@ if ((await fitRebuildCard.count()) === 0) {
      * 詳細画面なら日付に関係なくその枠だけを開ける。
      */
     const target = far.sort((a, b) => a.date.localeCompare(b.date))[0];
-    const secInText = (target.prescription.match(/(\d+\.\d)〜/) ?? [])[1];
+    /*
+     * 設定は2つの書き方がある。**両方見る。**
+     *   インターバル: `300m × 5 @300m 41.2〜41.6秒` → 41.2
+     *   ジョグ・CV等: `1000m × 4 @3:07/km〜3:09/km` → 3:07
+     * 秒だけを見ていたときは、先頭に来た枠がkm表記だと
+     * 「使える処方が無い」で落ちた。**素案が隠すべき数字はどちらも同じ。**
+     */
+    const secInText =
+      (target.prescription.match(/(\d+\.\d)〜/) ?? [])[1] ??
+      (target.prescription.match(/(\d+:\d+)\/km/) ?? [])[1];
     if (!secInText) {
       fail(`素案の確認に使える処方が無い（${target.prescription.slice(0, 60)}）`);
     } else {
@@ -4708,11 +4752,14 @@ if ((await fitRebuildCard.count()) === 0) {
           x.status !== "completed" &&
           x.date >= today &&
           /*
-           * 固定枠は内容を変えられない（RULE-15）ので、入力欄が組み上がらない。
-           * 今日が固定曜日に当たった日（火・土）はここが必ず落ちていた。
-           * **曜日によって落ちる検査は、何も見ていない日がある**のと同じ。
+           * 内容を変えられない枠（本人が登録したチーム練習等）は入力欄が組み上がらない。
+           *
+           * 曜日設定で置いた枠は `isFixed` だが**日付が固定なだけ**で、
+           * 中身は組み替えてよい（`isSlotFixed`）。ここで一律に除くと、
+           * 火・土をポイントに固定した週は対象が1つも無くなり、
+           * **検査が空振りする**（実際にそうなった）。
            */
-          x.isFixed !== true &&
+          !(x.isFixed === true && !/の固定設定$/.test(x.fixedSource ?? "")) &&
           /*
            * 下でカテゴリのボタンを押して開くので、**押せるカテゴリに限る**。
            * 有酸素の日はインターバル形の処方が付くことがあるが、
@@ -4721,7 +4768,15 @@ if ((await fitRebuildCard.count()) === 0) {
           ["high_lactate", "threshold", "race_economy", "cv", "modeling"].includes(x.category) &&
           x.targetPaces?.length === 1 &&
           /^\d+m × \d+ @/.test(x.prescription ?? "") &&
-          /[rR]\d+(?:秒|分)/.test(x.prescription ?? "")
+          /[rR]\d+(?:秒|分)/.test(x.prescription ?? "") &&
+          /*
+           * 設定が**秒で書かれている**ものに限る。
+           * この検査は「文面の設定タイムが、そのまま設定(秒)の欄に入るか」を見る。
+           * `@3:07/km` のようにkmで書かれた枠（CV・経済走）は、
+           * 文面から秒を取り出せないので**この検査の対象にならない**。
+           * 条件を書かずに拾っていたときは、先頭がkm表記の週で例外になって落ちた。
+           */
+          /@(?:\d+m\s+)?\d+\.\d/.test(x.prescription ?? "")
       )
       .sort((a, b) => a.date.localeCompare(b.date))[0];
     return s ? { date: s.date, prescription: s.prescription, category: s.category } : null;
@@ -4883,6 +4938,16 @@ if ((await fitRebuildCard.count()) === 0) {
 
   if (!target || target.missing) {
     const diag = await page.evaluate(() => window.__diag);
+    // --- 一時的な調査用: この時点の状態をそのまま吐き出す ---
+    try {
+      const dump = await page.evaluate(async () =>
+        await fetch("/api/backup?download=1").then((r) => r.json())
+      );
+      fs.writeFileSync("e2e-state.json", JSON.stringify(dump));
+      console.log("STATE DUMPED: e2e-state.json");
+    } catch (e) {
+      console.log("STATE DUMP FAILED: " + e.message);
+    }
     /*
      * 「無い」だけでは、生成の形が変わったのか・先の検査が完了済みにしたのか・
      * 日付で外れたのかを区別できない。**何があったのか**まで出す。
