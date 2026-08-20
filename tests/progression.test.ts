@@ -10,6 +10,7 @@ import {
   DENSITY_STEP,
   LOAD_CYCLE_WEEKS,
   MIN_REST_SEC,
+  restFloorSec,
   sessionVariants,
   sessionTemplateCandidates,
   weekStep,
@@ -336,4 +337,128 @@ describe("S-9 2案", () => {
   it("密度を上げる幅は決めた値どおり", () => {
     expect(DENSITY_STEP).toBe(0.2);
   });
+});
+
+/*
+ * レストの下限が2つの概念を兼ねていた。
+ *
+ *   完全回復を前提とする反復の下限（`MIN_REST_SEC` = 90秒）
+ *   分割走の繋ぎの時間（モデリング核の60秒）
+ *
+ * 同じ下限を当てていたので、密度を上げる週にモデリングのレストが
+ * **60秒から90秒へ伸びていた**。理由には「20%詰めます」と出る。
+ * 表示と実際が逆で、しかも起きるのはレース再現性が最も高い練習だった。
+ */
+describe("レストの下限が元のレストを上回らない", () => {
+  /*
+   * `MIN_REST_SEC` は「反復として成立する下限」であって、
+   * 「どのレシピでもここまで伸ばす」値ではない。
+   * 上回ると、詰めるつもりの操作で逆に伸びる。
+   *
+   * モデリング核は密度操作の対象から外したのでこの経路を通らないが、
+   * **同じ事故が別のレシピで起きないように**下限そのものを検査する。
+   */
+  it("元のレストが下限より短ければ、元のレストが下限になる", () => {
+    expect(restFloorSec(60, "specific")).toBe(60);
+    expect(restFloorSec(30, "lt")).toBe(30);
+  });
+
+  it("元のレストが下限より長ければ、下限が効く", () => {
+    expect(restFloorSec(300, "specific")).toBe(MIN_REST_SEC);
+    expect(restFloorSec(75, "lt")).toBe(45);
+  });
+
+  it("完全回復の反復と有酸素反復で下限が違う", () => {
+    expect(restFloorSec(600, "specific")).toBe(90);
+    expect(restFloorSec(600, "lt")).toBe(45);
+    expect(restFloorSec(600, "cv")).toBe(45);
+  });
+});
+
+describe("モデリング核のレストを伸ばさない", () => {
+  const modeling = (weekIndex: number) =>
+    buildSessionSpec({
+      category: "modeling",
+      phase: "Modeling",
+      weekIndex,
+      cfeSec: CFE,
+    })!;
+
+  const baseRest = modeling(0).restSec;
+
+  it("元のレストは60秒（レシピの前提。ここが変わったら下の検査の意味も変わる）", () => {
+    expect(baseRest).toBe(60);
+  });
+
+  it("密度を上げる週でもレストが元より伸びない", () => {
+    expect(weekStep(2)).toBe("density");
+    expect(modeling(2).restSec).toBeLessThanOrEqual(baseRest);
+  });
+
+  it("どの週でもレストが元より伸びない", () => {
+    for (const w of [0, 1, 2, 3, 4, 5, 6, 7]) {
+      expect(modeling(w).restSec, `${w}週目`).toBeLessThanOrEqual(baseRest);
+    }
+  });
+
+  it("進め方の案でもレストが元より伸びない", () => {
+    const base = modeling(0);
+    for (const trend of [undefined, "ease", "tighten"] as const) {
+      for (const limiter of ["endurance", "speed"] as const) {
+        for (const v of sessionVariants(base, { limiter, trend })) {
+          expect(v.spec.restSec, `${trend}/${limiter}/${v.key}`).toBeLessThanOrEqual(
+            base.restSec
+          );
+        }
+      }
+    }
+  });
+
+  it("レストを詰めていないのに「詰めます」と書かない", () => {
+    for (const w of [0, 1, 2, 3]) {
+      const s = modeling(w);
+      // 「詰めません」を拾わない。**詰めたと言っている**ときだけを見る
+      const saysTighten = s.reasons.some((r) => /詰めます|詰める(?!ません)/.test(r));
+      if (saysTighten) {
+        expect(s.restSec, `${w}週目は詰めたと書いてある`).toBeLessThan(baseRest);
+      }
+    }
+  });
+
+  it("進め方の案でも、詰めていないのに「詰める」と書かない", () => {
+    const base = modeling(0);
+    for (const v of sessionVariants(base, { limiter: "endurance" })) {
+      const saysTighten =
+        /詰めます|詰める(?!ません)/.test(v.label) ||
+        v.spec.reasons.some((r) => /詰めます|詰める(?!ません)/.test(r));
+      if (saysTighten) {
+        expect(v.spec.restSec, v.key).toBeLessThan(base.restSec);
+      }
+    }
+  });
+});
+
+/*
+ * 下限を分けたことで、元から90秒以上のレシピの挙動が変わっていないこと。
+ * 変わっていたら、直したつもりで別のものを壊している。
+ */
+describe("既存のレスト漸進は変わらない", () => {
+  for (const category of ["high_lactate", "race_economy"] as const) {
+    it(`${category} は密度週にレストが縮む`, () => {
+      const base = buildSessionSpec({ category, phase: "Specific", weekIndex: 0, cfeSec: CFE })!;
+      const dense = buildSessionSpec({ category, phase: "Specific", weekIndex: 2, cfeSec: CFE })!;
+      expect(base.restSec).toBeGreaterThanOrEqual(MIN_REST_SEC);
+      expect(dense.restSec).toBeLessThan(base.restSec);
+      expect(dense.restSec).toBeGreaterThanOrEqual(MIN_REST_SEC);
+    });
+
+    it(`${category} の進め方の案は従来どおり`, () => {
+      const base = buildSessionSpec({ category, phase: "Specific", weekIndex: 0, cfeSec: CFE })!;
+      const vs = sessionVariants(base, { limiter: "endurance" });
+      expect(vs).toHaveLength(2);
+      for (const v of vs) {
+        expect(v.spec.restSec).toBeGreaterThanOrEqual(MIN_REST_SEC);
+      }
+    });
+  }
 });
