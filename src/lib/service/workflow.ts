@@ -226,6 +226,7 @@ import {
   type AbortCriteria,
   type RepEvaluation,
 } from "../core/abort";
+import { isContentLocked } from "../core/sessionLock";
 
 // ---------------------------------------------------------------------------
 
@@ -2909,7 +2910,13 @@ export function editSession(
   if (!session) {
     return { ok: false, error: "セッションが見つかりません", applied: false, newViolations: [], violations: [], alternatives: [] };
   }
-  if (session.isFixed) {
+  /*
+   * 中身を変えられない枠（本人が登録した固定枠）と、
+   * **日付だけ固定の枠**（曜日・周期の設定で置いたもの）を分ける。
+   * 後者は中身を組み替えてよいが、置いた日から動かすのは設定に反する。
+   */
+  const movingDate = updates.date !== undefined && updates.date !== session.date;
+  if (isContentLocked(session) || (session.isFixed && movingDate)) {
     return {
       ok: false,
       error: "固定セッション（チーム練習等）は変更できません（RULE-15）。前後の自由枠を組み替えてください。",

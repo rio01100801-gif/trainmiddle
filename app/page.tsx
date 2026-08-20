@@ -383,9 +383,16 @@ function SessionVariants({
    * 「今日は出ないのが正しい」のかが区別できない。
    * 案が作れなかったときだけ、次のポイント練習（調整案カードと同じ選び方）へ移す。
    */
-  const [fellBack, setFellBack] = useState(false);
+  /*
+   * **stateではなくrefで持つ。**
+   * stateにすると、移す直前の `setFellBack(true)` で再描画が起き、
+   * effectの後片付けが走って探索中の非同期処理が自分で止まる
+   * （`alive` が false になって候補を1件も試せない）。
+   * 画面に出す値ではないので、描画を起こさない持ち方が正しい。
+   */
+  const fellBackRef = useRef(false);
   useEffect(() => {
-    setFellBack(false);
+    fellBackRef.current = false;
   }, [sessionId]);
 
   useEffect(() => {
@@ -394,34 +401,56 @@ function SessionVariants({
       return;
     }
     let alive = true;
-    fetch(`/api/variants?sessionId=${encodeURIComponent(target)}`)
-      .then((r) => r.json())
-      .then((x) => {
+    (async () => {
+      try {
+        const first = await fetch(
+          `/api/variants?sessionId=${encodeURIComponent(target)}`
+        ).then((r) => r.json());
         if (!alive) return;
-        if (x?.variants?.length) {
-          setD(x);
+        if (first?.variants?.length) {
+          setD(first);
           return;
         }
         setD(null);
         // 1回だけ移す。移した先にも無ければ、出さないのが正しい
-        if (fellBack) return;
-        fetch("/api/adaptive")
-          .then((r) => r.json())
-          .then((a) => {
-            if (!alive) return;
-            const next = a?.session?.id;
-            setFellBack(true);
-            if (next && next !== target) setTarget(next);
-          })
-          .catch(() => {});
-      })
-      .catch(() => {
+        if (fellBackRef.current) return;
+        fellBackRef.current = true;
+        /*
+         * **候補を1件ずつ当たる。**
+         *
+         * ここは以前 `/api/adaptive` をもう一度呼んでいた。
+         * あれは引数なしだと**さっきと同じ1件**を返すので、
+         * `next !== target` が成立せず、移った先が無いまま諦めていた。
+         * 「案が無いときは次のポイント練習へ移す」と書いてあるのに、
+         * 実際には一度も移れていなかった（CVが対象になった週で表に出た）。
+         *
+         * 候補の並びは `?all=1`（調整案カードと同じ選び方・日付順）。
+         * 案が作れる最初の1件まで進む。
+         */
+        const all = await fetch("/api/adaptive?all=1").then((r) => r.json());
+        if (!alive) return;
+        const ids: string[] = (all?.proposals ?? [])
+          .map((p: { session?: { id?: string } }) => p?.session?.id)
+          .filter((id: string | undefined): id is string => !!id && id !== target);
+        for (const id of ids) {
+          const x = await fetch(
+            `/api/variants?sessionId=${encodeURIComponent(id)}`
+          ).then((r) => r.json());
+          if (!alive) return;
+          if (x?.variants?.length) {
+            setTarget(id);
+            setD(x);
+            return;
+          }
+        }
+      } catch {
         if (alive) setD(null);
-      });
+      }
+    })();
     return () => {
       alive = false;
     };
-  }, [target, fellBack]);
+  }, [target]);
 
   if (!target || !d?.variants?.length) return null;
   // 今日の練習そのものではない場合は、どの練習の話かを見出しで断る

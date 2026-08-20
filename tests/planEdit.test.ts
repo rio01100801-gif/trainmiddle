@@ -255,3 +255,36 @@ describe("Q-2 不足カテゴリの入れ替え", () => {
     expect(repo.getSession(jog.id)!.category).toBe(jog.category);
   });
 });
+
+/*
+ * 曜日設定で置いた枠は「日付が固定」なだけ。
+ * 中身は組み替えてよいが、置いた日から動かすのは設定に反する。
+ */
+describe("曜日設定で置いた枠", () => {
+  const slotFixed = (repo: ReturnType<typeof setup>) => {
+    const s = hlSessions(repo)[0];
+    repo.saveSession({
+      ...s,
+      isFixed: true,
+      origin: "generated",
+      fixedSource: "火曜の固定設定",
+    });
+    return repo.getSession(s.id)!;
+  };
+
+  it("中身は変えられる", () => {
+    const repo = setup();
+    const s = slotFixed(repo);
+    const out = editSession(repo, s.id, { prescription: "300m × 4 @300m 41.0〜41.4秒 r5分" }, TODAY);
+    expect(out.ok).toBe(true);
+    expect(repo.getSession(s.id)?.prescription).toContain("300m × 4");
+  });
+
+  it("日付は動かせない（固定したのは曜日なので）", () => {
+    const repo = setup();
+    const s = slotFixed(repo);
+    const out = editSession(repo, s.id, { date: addDays(s.date, 1) }, TODAY);
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("固定");
+  });
+});

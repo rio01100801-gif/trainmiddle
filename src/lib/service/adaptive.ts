@@ -21,6 +21,7 @@ import { isHighLoadSession } from "../core/trainingClassification";
 import { DailyCheck, RuleViolation, Session, SessionChange } from "../core/types";
 import { Store } from "../db/store";
 import { buildRuleContext, trustedResults } from "./workflow";
+import { isContentLocked } from "../core/sessionLock";
 
 // ---------------------------------------------------------------------------
 // M-2 / M-3 / M-9 適応的な処方
@@ -179,7 +180,7 @@ export function adaptiveProposals(
         s.status !== "skipped" &&
         s.date >= today &&
         s.date <= until &&
-        !s.isFixed &&
+        !isContentLocked(s) &&
         isHighLoadSession(s) &&
         s.targetPaces.length > 0
     )
