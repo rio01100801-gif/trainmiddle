@@ -513,9 +513,12 @@ function limitDemandingDays(
   if (demanding.length <= MAX_DEMANDING_DAYS_PER_WEEK) return out;
 
   const rank = (x: { tpl: DayTemplate; index: number }) => {
-    const byCategory = DEMANDING_KEEP_ORDER.indexOf(x.tpl.category);
-    // 表に無いカテゴリは最後に回す（残す優先度が一番低い）
-    const category = byCategory < 0 ? DEMANDING_KEEP_ORDER.length : byCategory;
+    /*
+     * ここに来るのは `isSpecificCategory` が真のカテゴリだけで、
+     * それは高乳酸・モデリング・経済走の3つ。**全部この表に載っている。**
+     * 載っていない場合の分岐は書かない（通らない分岐は検査もできない）。
+     */
+    const category = DEMANDING_KEEP_ORDER.indexOf(x.tpl.category);
     const dow = DOW_BY_WEEK_INDEX[x.index];
     const fixed = preference?.enabled && modeOf(preference, dow) === "fixed" ? 0 : 1;
     return [category, fixed, x.index] as const;

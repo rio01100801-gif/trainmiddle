@@ -627,8 +627,47 @@ export function weekStep(weekIndex: number): "baseline" | "volume" | "density" |
 
 /** レストを詰める割合。1回で25%以上詰めると別の練習になる */
 export const DENSITY_STEP = 0.2;
-/** レストの下限（秒）。これ以下は回復が成立せず、狙った設定で走れない */
+/**
+ * **反復のレストの下限（秒）。**
+ *
+ * 完全回復を前提とする反復（300m×5 など）で、これ以下だと回復が成立せず
+ * 狙った設定で走れない。**この値は変えない。**
+ *
+ * 分割走のつなぎの時間とは別の概念。モデリング核（500m+300m を60秒でつなぐ）の
+ * 60秒は「回復してから次を走る」ための時間ではなく、**レースの一部を再現するための
+ * つなぎ**で、処方そのもの。ここを同じ下限で扱っていたため、密度を上げる週に
+ * レストが60秒→90秒へ**伸びて**いた（理由には「詰めます」と出る）。
+ * 最もレース再現性が高い練習が、最も特異性を失う方向に動いていた。
+ */
 export const MIN_REST_SEC = 90;
+
+/**
+ * レストそのものが処方の一部で、詰めても伸ばしても別の練習になるカテゴリ。
+ *
+ * モデリング核は800mを2本に割ってレースを再現する。
+ * つなぎを詰めれば高乳酸の反復に、伸ばせばただの分割走に変わる。
+ * **量でも密度でもなく「形」で決まっている**ので、漸進の対象にしない。
+ * 週を追って変わるのは設定タイムだけ（CFEに連動する）。
+ */
+export function restIsPrescription(category: SessionCategory): boolean {
+  return category === "modeling";
+}
+
+/**
+ * そのレシピでのレストの下限。
+ *
+ * **下限が元のレストを上回ってはいけない。** 上回ると、詰めるつもりの操作で
+ * 逆に伸びる。`MIN_REST_SEC` は「反復として成立する下限」であって
+ * 「どのレシピでもここまで伸ばす」値ではない。
+ */
+export function restFloorSec(
+  recipeRestSec: number,
+  paceSource: "specific" | "lt" | "cv"
+): number {
+  // 完全回復を前提とする特異的練習と、短い回復で行う有酸素反復を同じ下限にしない。
+  const byPaceSource = paceSource === "specific" ? MIN_REST_SEC : 45;
+  return Math.min(recipeRestSec, byPaceSource);
+}
 
 export interface TemplateHistoryEntry {
   date: string;
@@ -895,8 +934,7 @@ export function buildSessionSpec(input: BuildSpecInput): SessionSpec | undefined
     .sort((a, b) => b.date.localeCompare(a.date))[0];
   const formatChanged =
     previousTemplate !== undefined && previousTemplate.templateId !== recipe.id;
-  // 完全回復を前提とする特異的練習と、短い回復で行う有酸素反復を同じ下限にしない。
-  const minimumRestSec = recipe.paceSource === "specific" ? MIN_REST_SEC : 45;
+  const minimumRestSec = restFloorSec(recipe.restSec, recipe.paceSource);
   const protectSpecificVolume = ["high_lactate", "modeling", "race_economy"].includes(
     input.category
   );
@@ -916,10 +954,23 @@ export function buildSessionSpec(input: BuildSpecInput): SessionSpec | undefined
       reasons.push("形式を変更した週なので、本数・速度・レストは同時に進めない");
     } else {
       if (!protectSpecificVolume) blocks = bumpReps(blocks, 1);
-      restSec = roundRestSec(Math.max(minimumRestSec, restSec * (1 - DENSITY_STEP)));
-      reasons.push(
-        `${input.phase}期の3週目。量は保ったままレストを${Math.round(DENSITY_STEP * 100)}%詰めます`
-      );
+      if (restIsPrescription(input.category)) {
+        reasons.push(
+          `${input.phase}期の3週目。レース再現はつなぎの時間も処方なので詰めません（設定タイムだけが動きます）`
+        );
+      } else {
+        /*
+         * ここに来るレシピは必ず詰まる。
+         * 下限が元のレストと同じになるのは restFloorSec の作りから
+         * 「元のレストが下限以下」のときだけで、それに当たるのはモデリング核。
+         * そちらは上の分岐で先に返している。
+         * 「詰めていないのに詰めますと書く」ことは構造上起きない。
+         */
+        restSec = roundRestSec(Math.max(minimumRestSec, restSec * (1 - DENSITY_STEP)));
+        reasons.push(
+          `${input.phase}期の3週目。量は保ったままレストを${Math.round(DENSITY_STEP * 100)}%詰めます`
+        );
+      }
     }
   } else if (step === "recovery") {
     blocks = bumpReps(blocks, -1);
@@ -1080,6 +1131,48 @@ export function sessionVariants(
   const protectSpecificVolume = ["high_lactate", "modeling", "race_economy"].includes(
     base.category
   );
+  /*
+   * 密度側の案。
+   *
+   * **下限が元のレストを上回らない**ように `restFloorSec` を通す。
+   * 上回ると、詰めるつもりの操作で逆に伸びる（実際にモデリング核で起きていた）。
+   */
+  const densityOption = (ratio: number) => {
+    return {
+      restSec: roundRestSec(
+        Math.max(restFloorSec(base.restSec, "specific"), base.restSec * ratio)
+      ),
+      reason: `本数は保ち、レストを${Math.round((1 - ratio) * 100)}%詰めて密度を上げる`,
+      label: "密度を上げる",
+      why: "本数を増やさずに強度の密度だけを上げます。後半の維持を鍛える方向です。",
+    };
+  };
+
+  /*
+   * **レース再現の分割走には進め方の案を出さない。**
+   *
+   * 800mを2本に割って60秒でつなぐ、という形そのものが処方。
+   * つなぎを詰めれば高乳酸の反復に、伸ばせばただの分割走に、
+   * 本数を削れば単なる500mになる。どれも別の練習で、
+   * 「同じ練習の進め方」として並べられるものではない。
+   * 週を追って変わるのは設定タイムだけ（CFEに連動する）。
+   *
+   * 2案を機械的に出していたときは、密度案がレストを60秒→90秒へ**伸ばして**いた
+   * （ラベルは「レストを15%詰めて密度を上げる」）。
+   */
+  if (restIsPrescription(base.category)) {
+    return [
+      {
+        key: "hold",
+        label: "この形のまま実施する",
+        spec: base,
+        why: "レース再現は区間の長さもつなぎの時間も処方の一部です。ここを動かすと別の練習になるので、変えずに走ります。設定タイムはCFEに合わせて動きます。",
+        recommended: true,
+        appliesToCurrent: true,
+      },
+    ];
+  }
+
   const clone = (s: SessionSpec, blocks: RepBlock[], restSec: number, reasons: string[]): SessionSpec => ({
     ...s,
     blocks,
@@ -1127,10 +1220,8 @@ export function sessionVariants(
         ? "高乳酸・中距離特異的の本数は増やさず、次の2週の有酸素量で積み上げる"
         : "余裕があるので1本増やす",
     ]);
-    const b = clone(base, base.blocks, roundRestSec(Math.max(MIN_REST_SEC, base.restSec * 0.85)), [
-      ...base.reasons,
-      "本数は保ち、レストを15%詰めて密度を上げる",
-    ]);
+    const tighten = densityOption(0.85);
+    const b = clone(base, base.blocks, tighten.restSec, [...base.reasons, tighten.reason]);
     return [
       {
         key: "volume",
@@ -1144,9 +1235,9 @@ export function sessionVariants(
       },
       {
         key: "density",
-        label: "レストを詰める",
+        label: tighten.label,
         spec: b,
-        why: "回復を減らすので、後半の維持に直接効きます。総量は変わらないぶん、失敗したときの傷は浅く済みます。",
+        why: tighten.why,
         recommended: limiter === "endurance",
       },
     ];
@@ -1159,10 +1250,8 @@ export function sessionVariants(
       ? "高乳酸・中距離特異的の本数は据え置き、次の2週の有酸素量で積み上げる"
       : "量を1本ぶん増やす",
   ]);
-  const b = clone(base, base.blocks, roundRestSec(Math.max(MIN_REST_SEC, base.restSec * (1 - DENSITY_STEP))), [
-    ...base.reasons,
-    `レストを${Math.round(DENSITY_STEP * 100)}%詰める`,
-  ]);
+  const dense = densityOption(1 - DENSITY_STEP);
+  const b = clone(base, base.blocks, dense.restSec, [...base.reasons, dense.reason]);
   return [
     {
       key: "volume",
@@ -1176,9 +1265,9 @@ export function sessionVariants(
     },
     {
       key: "density",
-      label: "密度を上げる",
+      label: dense.label,
       spec: b,
-      why: "レストを詰めて、回復しきらないまま次に入ります。800mの終盤に近い状況を作れます。",
+      why: dense.why,
       recommended: limiter === "endurance",
     },
   ];
