@@ -31,7 +31,7 @@ import type {
 } from "./types";
 import type { Phase } from "./types";
 import type { AerobicProfile } from "./pace";
-import { specificPace } from "./pace";
+import { grpSecPerM, specificPace } from "./pace";
 import { diffDays } from "./dates";
 import type { Limiter } from "./limiter";
 import type { TrendVerdict } from "./adaptive";
@@ -98,6 +98,20 @@ export interface SessionTemplateCandidate {
   muscleDamageRisk: 1 | 2 | 3 | 4 | 5;
   recoveryDays: number;
   paceSource: "specific" | "lt" | "cv";
+  /**
+   * GRP比の上書き。**指定が無ければカテゴリの既定値**（`GRP_RATIOS`）を使う。
+   *
+   * 同じカテゴリの中で濃さの違う処方を置くために要る。
+   * 経済走は 104〜106% が既定だが、その先に 101〜103% の帯がある
+   * （レースペース付近を連続走で保つ枠。BACKLOG F-1）。
+   *
+   * `specificPace` の床（1.04）は動かさない。あれは
+   * **導入の到達点**（106%から入って週ごとに104%へ寄せる）であって、
+   * 経済走全体の下限ではない。床を下げると導入期の経済走が
+   * 週を追うだけで速くなり、導入の目的（レースペースに慣れる）から外れる。
+   * レシピ側に持たせれば、どの処方が何%なのかがレシピを見れば分かる。
+   */
+  grpRatio?: { fast: number; slow: number };
   blocks: RepBlock[];
   restSec: number;
   restType: RestType;
@@ -179,6 +193,60 @@ function raceEconomyCandidates(
       paceDistanceM: [400],
       durationMin: phase === "Modeling" ? 50 : 58,
       distanceKm: phase === "Modeling" ? 7 : 8,
+    },
+  ];
+}
+
+/**
+ * レースペース経済走の**先の段**（GRP比 101〜103%）。
+ *
+ * 設定ペースの帯に空白があった。高乳酸95〜97%、モデリング99〜100%、経済走104〜106%で、
+ * **101〜103% を連続走で走る枠が無かった**。モデリングは分割走（500m＋300m）なので、
+ * つなぎを挟まずレースペース付近を保つ練習が存在しない。
+ * 対象選手の制限因子は「後半の維持＝レースペース経済性」（`limiter.ts`）で、
+ * まさにその帯が抜けていた。
+ *
+ * **追加ではなく置換。** 同じ `race_economy` カテゴリの別レシピなので週の枠数は増えない。
+ * `progressionStage` を既存より1つ上に置き、**104〜106%を2回うまく実施したら**
+ * 次の段として選ばれる（`desiredStage` は前回の段から、安定2回で+1）。
+ * カレンダーで勝手に進まないので、実施できていないのに濃くなることはない。
+ *
+ * `variationGroup` を既存と分けるのは、同じだと `formatChanged` が立って
+ * その週の漸進が止まるため。
+ */
+function raceEconomyTempoCandidates(
+  phase: "Specific" | "Modeling"
+): SessionTemplateCandidate[] {
+  return [
+    {
+      id: `race-economy-tempo-600-${phase.toLowerCase()}`,
+      name: "レースペース経済走（600m・濃い帯）",
+      variationGroup: "race-economy-long-tempo",
+      // 既存の経済走（Specific=1 / Modeling=2）の1つ上
+      progressionStage: phase === "Specific" ? 2 : 3,
+      primaryStimulus: "middle_distance_specific",
+      secondaryStimuli: ["aerobic_high", "glycolytic"],
+      athleteTypes: ["lactate_tolerant", "speed"],
+      difficulty: 4,
+      neuralLoad: 3,
+      glycolyticLoad: 4,
+      aerobicLoad: 3,
+      muscleDamageRisk: 3,
+      /*
+       * 104〜106%（3日）より深く、高乳酸・モデリング（5日）よりは浅い。
+       * この値は配置間隔を直接決めるものではなく、準備度と候補選びに効く。
+       */
+      recoveryDays: 4,
+      paceSource: "specific",
+      // ここが本体。カテゴリ既定の 104〜106% ではなく 101〜103% を狙う
+      grpRatio: { fast: 1.01, slow: 1.03 },
+      blocks: [{ distanceM: 600, reps: 2 }],
+      // 完全回復6分。この帯は本数ではなく1本の質で効かせる
+      restSec: 360,
+      restType: "full",
+      paceDistanceM: [600],
+      durationMin: phase === "Modeling" ? 50 : 55,
+      distanceKm: 7,
     },
   ];
 }
@@ -583,8 +651,14 @@ const RECIPE_CATALOG: Partial<
   },
   race_economy: {
     Build: raceEconomyCandidates("Build", 420, 3),
-    Specific: raceEconomyCandidates("Specific", 360, 3),
-    Modeling: raceEconomyCandidates("Modeling", 420, 2),
+    Specific: [
+      ...raceEconomyCandidates("Specific", 360, 3),
+      ...raceEconomyTempoCandidates("Specific"),
+    ],
+    Modeling: [
+      ...raceEconomyCandidates("Modeling", 420, 2),
+      ...raceEconomyTempoCandidates("Modeling"),
+    ],
   },
   modeling: {
     // レースの形。前半を作って終盤に入る流れを再現する
@@ -882,6 +956,19 @@ function targetPacesFor(
   input: BuildSpecInput
 ): TargetPace[] | undefined {
   if (recipe.paceSource === "specific") {
+    if (recipe.grpRatio) {
+      /*
+       * レシピが比率を持っている場合は、導入の週番号を通さない。
+       * `economyWeek` は「106%から104%へ寄せる」ための引数で、
+       * 別の帯を狙う処方に当てると意味が混ざる。
+       */
+      const grp = grpSecPerM(input.cfeSec);
+      return recipe.paceDistanceM.map((distanceM) => ({
+        distanceM,
+        targetSecFast: distanceM * grp * recipe.grpRatio!.fast,
+        targetSecSlow: distanceM * grp * recipe.grpRatio!.slow,
+      }));
+    }
     return recipe.paceDistanceM.map((distanceM) =>
       specificPace(
         input.cfeSec,
