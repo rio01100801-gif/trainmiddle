@@ -6,6 +6,7 @@ import { runRuleEngine } from "@/lib/core/rules";
 import { ctx, makeRace, testAthlete } from "./helpers";
 import { isSpecificCategory } from "@/lib/core/trainingClassification";
 import { diffDays } from "@/lib/core/dates";
+import { addDays } from "@/lib/core/dates";
 import type { Goal, TemplateHistoryEntry } from "@/lib/core/types";
 
 /*
@@ -159,5 +160,65 @@ describe("追加ではなく置換", () => {
     const violations = runRuleEngine(ctx(plan.sessions, testAthlete(), "2026-06-01"));
     const errors = violations.filter((v) => v.level === "ERROR");
     expect(errors.map((v) => `${v.rule}: ${v.message}`)).toEqual([]);
+  });
+});
+
+/*
+ * 段は「到達したら留まる」。上がっては落ちるを繰り返さない。
+ *
+ * 以前は希望値が「前回**実施した**段」から始まっていた。上の段にレシピが1つしか
+ * 無いと、14日以内に同じ形式を避ける規則で下の段が選ばれ、その次の希望値も
+ * 下がる。結果、濃い帯が隔週でしか出なかった。
+ */
+describe("段は到達したら留まる", () => {
+  /** 週1回ずつ、指定の結果で実施していったときの帯（GRP比）の並び */
+  function ratios(count: number, opts: { fail?: (i: number) => boolean } = {}) {
+    const history: TemplateHistoryEntry[] = [];
+    const out: number[] = [];
+    let date = "2026-06-02";
+    for (let i = 0; i < count; i++) {
+      const spec = buildSessionSpec({
+        category: "race_economy",
+        phase: "Specific",
+        weekIndex: i,
+        cfeSec: TARGET,
+        athleteType: "lactate_tolerant",
+        templateHistory: history,
+        onDate: date,
+      })!;
+      const d = spec.blocks[0].distanceM;
+      out.push(Number((spec.targetPaces[0].targetSecFast / (d * GRP)).toFixed(3)));
+      const failed = opts.fail?.(i) ?? false;
+      history.push({
+        date,
+        category: "race_economy",
+        templateId: spec.templateId,
+        variationGroup: spec.variationGroup,
+        progressionStage: spec.progressionStage,
+        achievement: failed ? "partial" : "achieved",
+        rpe: failed ? 9 : 7,
+      });
+      date = addDays(date, 7);
+    }
+    return out;
+  }
+
+  it("きちんと実施し続ければ、濃い帯に上がってそこに留まる", () => {
+    const r = ratios(10);
+    // 2回こなしてから上がる
+    expect(r.slice(0, 2)).toEqual([1.04, 1.04]);
+    // 以降はずっと濃い帯。落ちない
+    expect(r.slice(2)).toEqual(new Array(8).fill(1.01));
+  });
+
+  it("未達が続けば上がらない", () => {
+    const r = ratios(10, { fail: () => true });
+    expect(r.every((x) => x === 1.04)).toBe(true);
+  });
+
+  it("途中から崩れたら降りる", () => {
+    const r = ratios(10, { fail: (i) => i >= 5 });
+    expect(r[4]).toBe(1.01); // 崩れる前は濃い帯
+    expect(r.at(-1)).toBe(1.04); // 崩れたあとは戻っている
   });
 });
