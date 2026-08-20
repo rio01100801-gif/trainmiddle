@@ -11,7 +11,7 @@
  *
  * リリースのたびに VERSION を必ず上げること（上げないと install が走らない）。
  */
-const VERSION = "forge-v120";
+const VERSION = "forge-v121";
 /*
  * 分割された chunk（遅延読み込みの画面・FIT解析）。
  *
